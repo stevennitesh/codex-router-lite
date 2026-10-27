@@ -304,11 +304,9 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         requireValue(['continue', 'send', 'observe', 'retain'].includes(config.operation), 'unexpected_browser_operation');
         if (fullContinuationPending) requireValue(config.operation === 'continue' && config.fullContinuation === true, 'full_continuation_required');
         else requireValue(config.fullContinuation !== true, 'unexpected_full_continuation');
-        if (expected && ['continue', 'send'].includes(config.operation)) {
-          if (config.operation === 'send') {
-            receipt.observedFamily = knownFamily(config.modelFamily);
-            receipt.observedPower = knownPower(config.power);
-          }
+        if (expected && config.operation === 'send') {
+          receipt.observedFamily = knownFamily(config.modelFamily);
+          receipt.observedPower = knownPower(config.power);
           requireValue(config.modelFamily === expected.selection.family && config.power === expected.selection.power, 'browser_model_or_power_mismatch');
         }
         if (['recall', 'ready', 'continuation'].includes(phase) && config.operation === 'send') requireValue(typeof config.prompt === 'string' && !config.prompt.includes(run.marker), 'marker_supplied_to_recall');

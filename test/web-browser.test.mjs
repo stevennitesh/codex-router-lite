@@ -6,6 +6,7 @@ import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserObservationBudget } from "../src/web-browser-state.mjs";
 import { WEB_MODEL_REGISTRY, webModelSelection } from "../src/web-models.mjs";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
@@ -176,6 +177,25 @@ test("input acknowledgement is a strict observe-only boolean in canonical browse
   }
 });
 
+test("Send requires explicit family and Power before a browser program can be dispatched", () => {
+  const { modelFamily, power, ...identity } = base;
+  for (const selection of [{}, { modelFamily }, { power }, { modelFamily: "", power },
+    { modelFamily, power: -1 }, { modelFamily, power: 5 }, { modelFamily, power: "0" }]) {
+    assert.throws(() => browserScript({ ...identity, operation: "send", prompt: "Request", ...selection }),
+      /requires explicit bounded model family and Power/u);
+  }
+  for (const operation of ["bootstrap", "open", "observe", "retain", "continue", "rollover"]) {
+    const options = { ...identity, operation, runtimeModule: "current-runtime.mjs",
+      ...(["continue", "rollover"].includes(operation) ? { expectedOwnerTurnIds: [base.turnId] } : {}),
+      ...(operation === "rollover" ? { previousChatUrl: "https://chatgpt.com/c/owned" } : {}) };
+    for (const selection of [{}, { modelFamily, power }]) {
+      assert.equal(readBrowserProgram(browserScript({ ...options, ...selection })).operation, operation);
+    }
+    assert.throws(() => browserScript({ ...options, power: 5 }), /Invalid bounded browser selection arguments/u);
+    assert.throws(() => browserScript({ ...options, modelFamily: "" }), /Invalid bounded browser selection arguments/u);
+  }
+});
+
 test("observer and mutation generations invalidate only their exact dependency sources and controls", async () => {
   const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
   const stateSource = readFileSync(new URL("../src/web-browser-state.mjs", import.meta.url), "utf8");
@@ -191,6 +211,9 @@ test("observer and mutation generations invalidate only their exact dependency s
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
     ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
     ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    { state: stateSource.replace(/(export function createBrowserAllowance\([^\n]*\) \{)/u, "$1\n  /* changed shared allowance owner */") },
+    { state: stateSource.replace("shortReadMs: observationFinishGraceMs - observationTransportMarginMs", "shortReadMs: observationFinishGraceMs - observationTransportMarginMs - 1") },
+    { state: stateSource.replace(/(export function createObservationBrowserState\([^\n]*\) \{)/u, "$1\n  /* changed semantic projection owner */") },
   ]) {
     const variant = await loadVariant(changed);
     assert.notEqual(variant.browserHelperVersion, browserHelperVersion);
@@ -308,7 +331,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     complete: false, attachedName: null, typed: [], sendClicks: 0, startNewChatClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: false, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
     familyText: "GPT-6", familyClicks: 0, familyExpanded: false, familyExpansionClicks: 0, clippedFamilyClicks: 0, familySwitches: 0,
-    sendEnabled: true, waitedMs: 0, actions: [],
+    sendEnabled: true, waitedMs: 0, actions: [], dispatches: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
@@ -368,7 +391,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   };
   const makeUnion = locators => ({
     or(other) { return makeUnion([...locators, other]); },
-    async evaluateAll(callback, argument) {
+    async evaluateAll(callback, argument, options) {
+      if (argument.observation || argument.indicator) {
+        ui.projectionRequests ??= [];
+        ui.projectionRequests.push({ at: now, timeoutMs: options.timeoutMs, indicator: argument.indicator });
+      }
       if (argument.mutation) {
         ui.mutationReads += 1;
         await ui.onMutationRead?.(argument);
@@ -376,8 +403,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       } else ui.observationReads += 1;
       if (!argument.mutation || locators.some(value => value.name?.startsWith('[data-turn-key],'))) {
         ui.replyReads += 1;
-        ui.onReplyRead?.(argument);
+        ui.onReplyRead?.(argument, options);
       }
+      // Resolve semantic guards before constructing the projected tree. The
+      // policy fixture rebuilds nodes; later guards must not reparent replies.
+      const matchingBodies = new Map(locators.filter(value => value.guardedBody).map(value => [value.guardedBody, value.guardedBody.resolve().length > 0]));
       const root = replyRoot(), body = domElement("body", {}, root);
       const document = { body, get URL() { return ui.url ?? "https://chatgpt.com/"; },
         defaultView: { getComputedStyle: element => ({ visibility: element.visibilityStyle ?? "visible" }) } };
@@ -400,12 +430,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       for (const composer of composers) Object.defineProperty(composer, "innerText", { configurable: true, get: () => ui.composerText });
       const elements = [];
       for (const { kind, name, scopeSelector, guardedBody } of locators) {
-        if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || guardedBody.resolve().length ? [body] : []
+        if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || matchingBodies.get(guardedBody) ? [body] : []
           : name.startsWith("span[app-mention") ? chip ? [chip] : [] : root.querySelectorAll(name)));
         else if (kind === "textbox" && name === "Ask ChatGPT" && argument.mutation) elements.push(...composers);
         else if (name === "Regenerate response") {
           const scope = scopeSelector ? root.querySelectorAll(scopeSelector) : [root];
-          const matches = scope.flatMap(element => element.querySelectorAll('[aria-label="Regenerate response"]'));
+          const matches = ui.observationControls?.[name] ?? scope.flatMap(element => element.querySelectorAll(browserDom.buttonSelector))
+            .filter(element => (element.sdkAccessibleName ?? element.getAttribute("aria-label") ?? element.textContent) === name);
           for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
           elements.push(...matches);
         } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
@@ -422,12 +453,18 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   });
   const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false) => ({
     kind, name, scopeSelector,
+    resolve() {
+      const explicit = ui.observationControls?.[name];
+      const values = explicit ?? (kind === "text" ? [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text })),
+        ...ui.texts.map(text => ({ text })), { text: ui.composerText }].filter(value => value.text === name)
+        : name === "Turn off temporary chat" ? ui.temporary ? [{}] : []
+          : name === "Temporary chat" ? ui.temporary && ui.temporaryHeadingVisible ? [{}] : [] : []);
+      return values.map(value => ({ ...value, visible: value.visible !== false && value.visibilityStyle !== "hidden"
+        && (!value.getBoundingClientRect || value.getBoundingClientRect().width > 0 && value.getBoundingClientRect().height > 0) }))
+        .filter(value => !visibleOnly || value.visible);
+    },
     or(other) { return makeUnion([this, other]); },
-    nth(index) { return { resolve: () => {
-      const count = ui.observationControls?.[name]?.length ?? Number(name === "Temporary chat"
-        ? ui.temporary && ui.temporaryHeadingVisible : name === "Turn off temporary chat" && ui.temporary);
-      return Array.from({ length: count }, () => ({})).slice(index, index + 1);
-    } }; },
+    nth(index) { return { resolve: () => this.resolve().slice(index, index + 1) }; },
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
     locator(selector) { return makeLocator("selector", selector); },
     filter({ hasText: text, visible, has, hasNot }) {
@@ -464,7 +501,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
     },
-    async click() {
+    async click(options = {}) {
+      ui.dispatches.push({ kind, name, at: now, timeoutMs: options.timeoutMs });
       if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.familyExpanded = false; ui.onModel?.(); }
       else if (name === "Select model" && kind === "menuitem") {
         assert.equal(ui.menu && !ui.familyExpanded, true);
@@ -516,6 +554,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async textContent() { ui.controlReads += 1; await ui.onControlRead?.({ kind, name, method: "textContent" }); return kind === "family-text" ? ui.familyText : name; },
     async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
+      ui.dispatches.push({ kind, name, key, at: now });
       if (name === "Power") {
         assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is operated in the visible Power view.');
         if (key === "Escape") ui.menu = false;
@@ -598,8 +637,9 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   // explicit fixture inputs; the installed-browser fixture covers real accname
   // and XPath/filter behavior independently.
   const stopControls = () => [
-    ...Array.from({ length: ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
-      name: "Stop", visible: ui.stop })),
+    ...Array.from({ length: ui.observationControls?.Stop?.length ?? ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
+      name: "Stop", visible: ui.observationControls?.Stop ? ui.observationControls.Stop[index].visibilityStyle !== "hidden"
+        && (!ui.observationControls.Stop[index].getBoundingClientRect || ui.observationControls.Stop[index].getBoundingClientRect().width > 0) : ui.stop })),
     ...Array.from({ length: ui.stop ? ui.idleDuringStop ?? 0 : ui.idleButtonCount }, (_, index) => ({ kind: "idle", index,
       name: browserIdleButtonExactName, visible: true })),
   ];
@@ -636,6 +676,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async click({ timeoutMs }) {
       assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      ui.stopClickTimeoutMs = timeoutMs;
       ui.stopRequests += 1;
       await ui.onStopRequest?.();
       const matches = this.resolve();
@@ -802,8 +843,8 @@ function assistantMessage(index, text, attributes = {}) {
   return replyElement(text, messageId(index), attributes).parentElement;
 }
 
-function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false } = {}) {
-  const action = domElement('button', { 'aria-label': 'Regenerate response' });
+function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false,
+  action = domElement('button', { 'aria-label': 'Regenerate response' }) } = {}) {
   return domElement('section', { 'data-turn-key': key }, domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' },
     domElement('h4', {}, domText('You said:')), domElement('div', {}, domText(prompt)),
     ...(actionFirst ? [action] : []), ...content, ...(!actionFirst && complete ? [action] : [])));
@@ -814,7 +855,7 @@ test("generation snapshots return only a marker match and do not read prior prom
   const marker = 'Router generation: native-turn';
   const turn = observedTurn(messageId(100), privatePrompt, [assistantMessage(20, 'Public answer')]);
   const root = domElement('main', {}, turn);
-  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector},${browserDom.buttonSelector}`);
   let promptReads = 0;
   Object.defineProperty(turn, 'textContent', { get() { promptReads += 1; return `${privatePrompt}\n${marker}`; } });
   const options = { assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
@@ -833,7 +874,7 @@ test("anchored projection reads only the owned body and completion metadata whil
   const historical = observedTurn(messageId(100), "Old request", [historicalAnswer]);
   const current = observedTurn(messageId(200), "Current request", [currentAnswer]);
   const root = domElement("main", {}, historical, current);
-  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector},${browserDom.buttonSelector}`);
   const oldBody = historicalAnswer.querySelector(scopedReplySelector), oldText = oldBody.childNodes[0];
   let historicalBodyReads = 0, historicalMetadataReads = 0, currentBodyReads = 0;
   Object.defineProperty(oldText, "textContent", { get() { historicalBodyReads += 1; return "Historical answer"; } });
@@ -1049,6 +1090,46 @@ test("every registered Web model and effort verifies its exact family and stepwi
       assert.equal(invalid.ui.sendClicks, 0);
     });
   }
+});
+
+test("every registered route and effort stops before mutation when shared Send allowance is consumed", async t => {
+  for (const model of WEB_MODEL_REGISTRY) for (const effort of Object.keys(model.efforts)) {
+    await t.test(`${model.slug} ${effort}`, async () => {
+      const selection = webModelSelection(model.slug, effort);
+      for (const switchFamily of [false, true]) for (const stage of ["family", "Power", "dispatch"]) {
+        const f = fixture({ fastTimers: true }); await f.ready();
+        f.ui.familyText = selection.family;
+        f.ui.checked = !switchFamily;
+        let delayed = false;
+        f.ui.onControlRead = ({ kind, name }) => {
+          if (delayed || stage === "dispatch") return;
+          if (stage === "family" && kind === "family-text" || stage === "Power" && name === browserDom.powerSliderSelector) {
+            delayed = true; f.advance(10001);
+          }
+        };
+        f.ui.onMutationRead = () => {
+          if (stage === "dispatch" && f.ui.mutationReads === 4) { delayed = true; f.advance(10001); }
+        };
+        await assert.rejects(f.run("send", { ...plugin, prompt: "Bounded request", modelFamily: selection.family, power: selection.power }), /deadline expired before dispatch; nothing sent/);
+        assert.equal(delayed, true, stage);
+        assert.equal(f.ui.sendClicks, 0, stage);
+        assert.equal(f.getState().sendClicked, false);
+        assert.equal(f.ui.dispatches.every(dispatch => dispatch.at < 10000), true, "No picker or Send mutation can start after expiry.");
+        await assert.rejects(f.run("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
+      }
+    });
+  }
+});
+
+test("Send dispatch uses the remaining shared allowance while reserving final ownership confirmation", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let delayed = false;
+  f.ui.onControlRead = ({ kind }) => {
+    if (!delayed && kind === "family-text") { delayed = true; f.advance(6000); }
+  };
+  await f.run("send", { ...plugin, prompt: "Leave confirmation headroom" });
+  assert.equal(f.ui.dispatches.find(dispatch => dispatch.name === "Send").timeoutMs, 2500);
+  assert.equal(f.ui.sendClicks, 1);
 });
 
 test("missing Power attributes prevent Send", async () => {
@@ -2217,14 +2298,14 @@ test("pending acceptance defers only content-free short reads until the original
     f.ui.onStopWait = () => { assert.fail("Observation must yield after its short coherent read."); };
     const pending = await f.run("observe", pendingAcceptance);
     assert.deepEqual(pending, { operation: "observe", ownershipPending: true });
-    assert.equal(f.ui.observationReads - reads, 1);
+    assert.equal(f.ui.observationReads - reads, 2, "The first inactive read probes active then inactive SDK profiles.");
     assert.deepEqual(f.getState().generationReplyIds, [], "Unowned text never becomes generation evidence.");
     assert.equal(f.getState().replyId, undefined);
     assert.equal(f.getState().completed, completed);
     f.ui.messageRoot = domElement("main", {}, historical(), owned());
     const observed = await f.run("observe", pendingAcceptance);
     assert.deepEqual([observed.assistantText, observed.completed, observed.generationTurnKey], ["Owned answer", true, sent.generationTurnKey]);
-    assert.equal(f.ui.observationReads - reads, 2, "Each call uses one fresh coherent reply read.");
+    assert.equal(f.ui.observationReads - reads, 3, "The later inactive call uses one fresh coherent reply read.");
     assert.equal(f.ui.stopWaits, 0);
     assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
     assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
@@ -3357,6 +3438,36 @@ test("interrupted continuation stops the preceding native owner and starts a new
   assert.equal(f.ui.newTabs, 1);
 });
 
+test("every registered route and effort shares interrupted Stop allowance without late dispatch or deadline reset", async t => {
+  for (const model of WEB_MODEL_REGISTRY) for (const effort of Object.keys(model.efforts)) {
+    await t.test(`${model.slug} ${effort}`, async () => {
+      for (const consumed of [8000, 9800, 10001]) {
+        const f = fixture({ fastTimers: true }); await f.ready();
+        const selection = webModelSelection(model.slug, effort);
+        f.ui.familyText = selection.family;
+        await f.run("send", { ...plugin, prompt: "Interrupted request", modelFamily: selection.family, power: selection.power });
+        f.ui.stop = true;
+        const owner = f.activeTurn();
+        let delayed = false;
+        f.ui.onStopRead = () => { if (!delayed) { delayed = true; f.advance(consumed); } };
+        const continuation = f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+        if (consumed === 8000) {
+          await continuation;
+          assert.equal(f.ui.stopClickTimeoutMs, 1700, "Stop reserves confirmation from the consumed original deadline.");
+          assert.equal(f.ui.stopClicks, 1);
+        } else {
+          await assert.rejects(continuation, /confirmation deadline expired/);
+          assert.equal(f.ui.stopRequests, 0);
+          assert.equal(f.ui.stopClicks, 0);
+          assert.equal(f.getState().reconciliationStop, undefined, "No dispatch receipt is recorded for an unattempted Stop.");
+          assert.equal(f.activeTurn(), owner);
+        }
+        assert.equal(f.ui.sendClicks, 1);
+      }
+    });
+  }
+});
+
 test("interrupted continuation rearms an SDK-capped readiness wait without replaying the saved chat", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.texts.push("Earlier answer");
@@ -3774,7 +3885,7 @@ test("a visual observation returns the current generation without an artificial 
   assert.equal(f.ui.handoffs, 2);
 });
 
-test("active, completed and retention reads batch exact controls with the owned reply and document URL", async () => {
+test("active, completed and retention reads use coherent SDK profiles with no per-control RPCs", async () => {
   for (const operation of ["active", "completed", "retain"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
     await f.run("send", { ...plugin, prompt: "Request" });
@@ -3787,7 +3898,8 @@ test("active, completed and retention reads batch exact controls with the owned 
     assert.deepEqual({ tabs: f.ui.tabReads - before.tabs, urls: f.ui.urlReads - before.urls,
       replies: f.ui.replyReads - before.replies, controls: f.ui.controlReads - before.controls,
       observations: f.ui.observationReads - before.observations, waits: f.ui.waitedMs - before.waits },
-    { tabs: 1, urls: 1, replies: 1, controls: 0, observations: 1, waits: 0 });
+    { tabs: 1, urls: 1, replies: operation === "completed" ? 2 : 1, controls: 0,
+      observations: operation === "completed" ? 2 : 1, waits: 0 });
     assert.deepEqual([result.assistantText, result.completed, result.stopVisible, result.url],
       ["Owned answer", operation !== "active", operation === "active", f.getState().savedUrl]);
     assert.equal(f.ui.handoffs - before.handoffs, operation === "retain" ? 1 : 0);
@@ -3795,11 +3907,106 @@ test("active, completed and retention reads batch exact controls with the owned 
   }
 });
 
-test("batched exact-control reads reject duplicate controls and unrecognized accessible-name markup", async () => {
+test("indicator reads tolerate either Stop transition and return only the fresh owned answer frame", async () => {
+  for (const phase of ["full", "error"]) for (const initiallyActive of [true, false]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = initiallyActive; f.ui.complete = !initiallyActive;
+    let transitions = 0;
+    f.ui.onReplyRead = argument => {
+      if (argument.indicator !== phase) return;
+      transitions += 1;
+      f.ui.stop = !initiallyActive; f.ui.complete = initiallyActive;
+      f.ui.texts = [`Fresh answer after ${phase}`];
+    };
+    const observed = await f.run("observe");
+    assert.equal(transitions, 1);
+    assert.deepEqual([observed.stopVisible, observed.statusComplete, observed.completed], [!initiallyActive, initiallyActive, initiallyActive]);
+    assert.equal(observed.assistantText, `Fresh answer after ${phase}`, "No pre-indicator answer frame can escape after the transition.");
+    assert.equal(observed.generationTurnKey, sent.generationTurnKey);
+    assert.equal(observed.requestError, undefined, "Quoted error text cannot reject a request.");
+    assert.equal(observed.conversationFull, false);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("indicator reads reject URL, native owner and generation changes before publishing a frame", async () => {
+  for (const phase of ["full", "error"]) for (const change of [
+    f => { f.ui.url = "https://chatgpt.com/c/foreign"; },
+    f => { f.activeTurn().turnId = "different-owner"; },
+    f => { f.getState().generationTurnKey = messageId(900); },
+  ]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = argument => { if (argument.indicator === phase) change(f); };
+    await assert.rejects(f.run("observe"), /normal saved URL|different native turn owns|generation changed/);
+    assert.notEqual(f.getState().completed, true);
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("indicator reads cannot publish an earlier owned frame after a foreign rendered generation replaces it", async () => {
+  for (const phase of ["full", "error"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = argument => {
+      if (argument.indicator !== phase) return;
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(901), "Foreign request", [assistantMessage(20, "Foreign answer")]));
+      f.ui.stop = false; f.ui.complete = true;
+    };
+    const observed = await f.run("observe");
+    assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest");
+    assert.equal(observed.completed, false);
+    assert.equal(observed.assistantText, "");
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("all semantic projections share one shrinking short-read deadline inside native finish headroom", async () => {
+  assert.equal(Object.isFrozen(browserObservationBudget), true);
+  assert.equal(browserObservationBudget.shortReadMs, browserObservationBudget.finishGraceMs - browserObservationBudget.transportMarginMs);
+  for (const slice of [650, 1000]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = (argument, { timeoutMs }) => {
+      if (argument.observation || argument.indicator) f.advance(Math.min(slice, timeoutMs));
+    };
+    await assert.rejects(f.run("observe"), /observation read deadline expired/);
+    const requests = f.ui.projectionRequests;
+    assert.deepEqual(requests.map(request => request.timeoutMs), slice === 650 ? [1000, 1000, 1000, 1000, 400] : [1000, 1000, 1000]);
+    assert.equal(requests.every(request => request.at < browserObservationBudget.shortReadMs
+      && request.timeoutMs <= browserObservationBudget.shortReadMs - request.at), true);
+    assert.equal(f.ui.waitedMs, browserObservationBudget.shortReadMs);
+    assert.notEqual(f.getState().completed, true); assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("the short-read deadline counts owned-tab preflight and rejects a late positive page proof", async () => {
+  for (const stage of ["preflight", "projection"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Owned answer"]; f.ui.complete = true;
+    f.getState().observedStopVisible = false;
+    if (stage === "preflight") {
+      const list = f.browser.tabs.list;
+      f.browser.tabs.list = async () => { f.advance(browserObservationBudget.shortReadMs); return list(); };
+    } else f.ui.onReplyRead = () => f.advance(browserObservationBudget.shortReadMs + 1);
+    await assert.rejects(f.run("observe"), /observation read deadline expired/);
+    assert.equal(f.ui.projectionRequests?.length ?? 0, stage === "preflight" ? 0 : 1);
+    assert.notEqual(f.getState().completed, true); assert.equal(f.getState().replyId, undefined);
+  }
+});
+
+test("semantic observation rejects duplicate mounted controls", async () => {
   const stop = attributes => domElement("button", { "aria-label": "Stop", ...attributes });
   for (const controls of [
     { Stop: [stop(), stop()] },
-    { Stop: [stop({ "aria-labelledby": "alternative-accessible-name" })] },
     { "Turn off temporary chat": [domElement("button", { "aria-label": "Turn off temporary chat" }), domElement("button", { "aria-label": "Turn off temporary chat" })] },
     { "Temporary chat": [domElement("h2", {}, domText("Temporary chat")), domElement("h2", {}, domText("Temporary chat"))] },
   ]) {
@@ -3809,6 +4016,50 @@ test("batched exact-control reads reject duplicate controls and unrecognized acc
     f.ui.observationControls = controls;
     await assert.rejects(f.run("observe"), /controls are unrecognized or ambiguous/);
     assert.notEqual(f.getState().completed, true);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("observation uses SDK exact accessible names for direct, text and labelledby controls", async () => {
+  for (const attributes of [{ "aria-label": "Stop" }, {}, { "aria-labelledby": "label" },
+    { "aria-labelledby": "label", "aria-label": "Conflicting direct name" }]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Owned answer"); f.ui.complete = true;
+    // Group membership is the public SDK fixture input, independent of markup.
+    f.ui.observationControls = { Stop: [domElement("button", attributes, domText("  Stop  "))] };
+    const active = await f.run("observe");
+    assert.deepEqual([active.stopVisible, active.completed], [true, false]);
+    f.ui.observationControls.Stop[0].getBoundingClientRect = () => ({ width: 0, height: 0 });
+    const inactive = await f.run("observe");
+    assert.deepEqual([inactive.stopVisible, inactive.completed], [false, true]);
+    assert.equal(f.ui.stopClicks, 0);
+  }
+  for (const attributes of [{ "aria-label": "Regenerate response" }, {}, { "aria-labelledby": "label" },
+    { "aria-labelledby": "label", "aria-label": "Conflicting direct name" }]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    const action = domElement("button", attributes, domText("Regenerate response"));
+    action.sdkAccessibleName = "Regenerate response";
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Request", [assistantMessage(20, "Owned answer")], { action }));
+    assert.equal((await f.run("observe")).completed, true);
+    action.sdkAccessibleName = "Other accessible name";
+    assert.equal((await f.run("observe")).completed, false, "A conflicting direct label cannot override the SDK's accessible name.");
+    action.sdkAccessibleName = "Regenerate response";
+    action.getBoundingClientRect = () => ({ width: 0, height: 0 });
+    assert.equal((await f.run("observe")).completed, false, "A hidden completion control cannot complete the answer.");
+  }
+});
+
+test("quoted Regenerate buttons do not supply or duplicate completion authority", async () => {
+  for (const legitimate of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    const quoted = domElement("button", { "aria-label": "Regenerate response" });
+    const answer = assistantMessage(20, domElement("div", { "data-markdown-text-style": "assistant-message" }, domText("Owned answer"), quoted));
+    const action = legitimate ? domElement("button", { "aria-label": "Regenerate response" }) : domElement("div");
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Request", [answer], { action }));
+    assert.equal((await f.run("observe")).completed, legitimate);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
@@ -3840,7 +4091,7 @@ test("a same-generation rejection after retention requires the exact restored vi
   composer.innerText = submitted;
   const reads = f.ui.observationReads;
   const rejected = await f.run("observe");
-  assert.equal(f.ui.observationReads, reads + 1, "The resumed operation must run the current browser reader.");
+  assert.equal(f.ui.observationReads, reads + 5, "An idle error read probes both quiet profiles, the known inactive profile, and both indicator unions.");
   assert.equal(rejected.generationTurnKey, completed.generationTurnKey);
   assert.equal(rejected.requestError, "unknown_error");
   assert.equal(JSON.stringify(rejected).includes(turnToken), false);
@@ -3894,7 +4145,7 @@ test("resident defaults and per-call UI overlays remain isolated from bootstrap 
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Completed answer"); f.ui.complete = true;
   const helper = f.getState().residentBrowser, controls = [];
-  f.ui.onReplyRead = argument => { controls.push(argument.ui); };
+  f.ui.onReplyRead = argument => { if (controls.at(-1) !== argument.ui) controls.push(argument.ui); };
   await f.run("observe", { ui: { stopButtonExactName: "Stop generating", futureControl: "Per call" } });
   assert.equal(controls[0].stopButtonExactName, "Stop generating");
   assert.equal(controls[0].futureControl, "Per call");

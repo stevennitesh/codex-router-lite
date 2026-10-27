@@ -35,7 +35,7 @@ function evidence(phase = 'ready') {
     const callId = `call_router_web_${String(++counter).padStart(32, '0')}`;
     const token = `frame_${String(counter).padStart(16, '0')}`;
     const options = { bindingId: baseline.bindingId, sessionId: threadId, turnId, operation, frameToken: token,
-      ...(operation === 'send' ? { prompt: 'a prompt without the private marker' } : {}),
+      ...(operation === 'send' ? { prompt: 'a prompt without the private marker', modelFamily: 'GPT-6', power: 0 } : {}),
       ...(operation === 'continue' ? { expectedOwnerTurnIds: ['prior-turn'], interruptedTurnId: 'prior-turn' } : {}) };
     const frame = { operation, normal: true, url: baseline.chatUrl, tabId: '1', ...fields };
     rows.push(row('response_item', { type: 'function_call', call_id: callId, name: 'mcp__node_repl.js', arguments: JSON.stringify({ code: browserScript(options) }) }));
@@ -92,10 +92,8 @@ function withModelIdentity(input, { model = 'chatgpt-web/gpt-6-sol', effort = 'm
   Object.assign(input.run, { model, effort, selection: { family, power } });
   const context = row('turn_context', { turn_id: turnId, model, effort });
   input.sessionRows.splice(2, 0, context);
-  for (const record of [input.continuation, input.send]) {
-    Object.assign(record.options, { modelFamily: family, power });
-    record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
-  }
+  Object.assign(input.send.options, { modelFamily: family, power });
+  input.send.call.arguments = JSON.stringify({ code: browserScript(input.send.options) });
   input.context = context;
   return input;
 }
@@ -223,8 +221,8 @@ test('model evidence rejects wrong or ambiguous native identity and mismatched b
   }
   const duplicated = withModelIdentity(evidence('native')); duplicated.sessionRows.push(structuredClone(duplicated.context));
   assert.equal(evaluateWebPhase(duplicated).receipt.code, 'ambiguous_native_model_context');
-  for (const operation of ['continuation', 'send']) for (const mutation of [{ modelFamily: 'GPT-5.6 Sol' }, { power: 4 }]) {
-    const input = withModelIdentity(evidence('native')), record = input[operation];
+  for (const mutation of [{ modelFamily: 'GPT-5.6 Sol' }, { power: 4 }]) {
+    const input = withModelIdentity(evidence('native')), record = input.send;
     Object.assign(record.options, mutation); record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
     assert.equal(evaluateWebPhase(input).receipt.code, 'browser_model_or_power_mismatch');
   }

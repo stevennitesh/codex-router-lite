@@ -67,7 +67,7 @@ function ordinary(turn = TURN, operation = 'observe') {
   const config = { bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD, turnId: turn, operation,
     frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule,
     ...(operation === 'continue' ? { expectedOwnerTurnIds: [TURN] } : {}),
-    ...(operation === 'send' ? { prompt: 'synthetic send fixture' } : {}) };
+    ...(operation === 'send' ? { prompt: 'synthetic send fixture', modelFamily: 'GPT-6', power: 0 } : {}) };
   const sandbox = { futureOpaque: ['private opaque value', { retained: true }], permissionProfile: { opaque: true } };
   return { name: 'js', arguments: { code: browserScript(config), timeout_ms: 30000 }, _meta: {
     threadId: APPROVED_THREAD, sessionId: SOURCE_SESSION, callId: `call_router_web_${'a'.repeat(32)}`,

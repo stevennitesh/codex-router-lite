@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { createStopBrowserState } from "../src/web-browser-state.mjs";
+import { browserDom, createObservationBrowserState, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { readBrowserReplies } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
 const fixtureRoute = "/web-stop-browser.html";
@@ -188,6 +189,73 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
     } catch (error) {
       results.push({ case: name, passed: false,
         code: typeof error?.contractCode === "string" ? error.contractCode : "browser_contract_operation_failed" });
+    }
+  }
+  return results;
+}
+
+/** Exercise the production semantic observation projection through the installed SDK. */
+export async function runWebObservationBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid observation contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The observation contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const results = [];
+  const readObservation = (state, stopVisible, quiet = true) => state.profile(stopVisible, quiet)
+    .or(tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`))
+    .or(state.regenerate).evaluateAll(readBrowserReplies, {
+      ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+      generationTurnKey, observation: true, stopVisible,
+    }, { timeoutMs });
+  const cases = [
+    ["labelledby-transition", "Labelledby transition", true, true],
+    ["normalized-transition", "Normalized names transition", true, true],
+    ["hidden-stop-idle", "Hidden Stop with idle", false, true],
+    ["duplicate-stop", "Duplicate Stop", false, false],
+    ["observation-labelledby", "Observation labelledby completion", false, true],
+    ["observation-text", "Observation text completion", false, true],
+    ["observation-temporary", "Observation labelledby temporary mode", false, false],
+    ["observation-quoted-control", "Observation quoted control", false, true],
+    ["observation-indicator-transition", "Observation indicator transition", true, true],
+  ];
+  for (const [name, button, stopVisible, recognized] of cases) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const state = createObservationBrowserState(tab, { ui: browserDom, generationTurnKey });
+      if (!recognized) {
+        requireContract(await state.profile(true).count() === 0 && await state.profile(false).count() === 0, "ambiguous_or_temporary_profile_accepted");
+        results.push({ case: name, passed: true, profileRejected: true });
+        continue;
+      }
+      const transition = name === "observation-indicator-transition";
+      const view = await readObservation(state, stopVisible, !transition);
+      requireContract(view?.observation?.url === fixtureUrl && view.observation.stopVisible === stopVisible
+        && view.observation.temporaryInactive === true && view.turns.length === 1, "semantic_projection_invalid");
+      if (transition) {
+        await tab.playwright.getByRole("button", { name: "Finish fixture generation", exact: true }).click({ timeoutMs });
+        const options = { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector, generationTurnKey };
+        const full = await state.indicatorBody.or(state.fullBanner).or(state.fullButton)
+          .evaluateAll(readBrowserReplies, { ...options, indicator: "full" }, { timeoutMs });
+        const error = await state.indicatorBody.or(tab.playwright.locator(browserDom.turnSelector))
+          .or(state.requestError).or(state.retry).or(state.composer)
+          .evaluateAll(readBrowserReplies, { ...options, indicator: "error" }, { timeoutMs });
+        const current = await readObservation(state, false, false);
+        requireContract(full?.url === fixtureUrl && full.conversationFull === false && error?.url === fixtureUrl
+          && error.requestError === undefined && current?.observation?.stopVisible === false
+          && current.turns[0].complete === true && current.replies[0]?.completionActionAfter === true,
+        "indicator_transition_not_reobserved");
+        results.push({ case: name, passed: true, transitionReobserved: true, quotedErrorRejected: true, projectionReads: 4 });
+        continue;
+      }
+      if (name.startsWith("observation-")) {
+        requireContract(view.replies.length === 1 && view.replies[0].answer === true
+          && view.replies[0].completionActionAfter === true && view.observation.regenerateVisible === true
+          && view.observation.regenerateCount === 1, "semantic_completion_not_proven");
+      }
+      results.push({ case: name, passed: true, stopVisible, projectionReads: 1 });
+    } catch (error) {
+      results.push({ case: name, passed: false, code: typeof error?.contractCode === "string" ? error.contractCode : "observation_contract_operation_failed" });
     }
   }
   return results;

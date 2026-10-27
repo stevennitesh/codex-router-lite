@@ -28,14 +28,21 @@
     <button type="button" data-scenario="click-idle-transition">Click restores idle</button>
     <button type="button" data-scenario="absent-unconfirmed">Absent unconfirmed</button>
     <button type="button" data-scenario="explicit-complete">Explicit complete</button>
+    <button type="button" data-scenario="observation-labelledby">Observation labelledby completion</button>
+    <button type="button" data-scenario="observation-text">Observation text completion</button>
+    <button type="button" data-scenario="observation-temporary">Observation labelledby temporary mode</button>
+    <button type="button" data-scenario="observation-quoted-control">Observation quoted control</button>
+    <button type="button" data-scenario="observation-indicator-transition">Observation indicator transition</button>
   </nav>
   <output id="contract-status" data-scenario="not-selected" data-stop-clicks="0" aria-live="polite">Choose a fixture scenario.</output>
   <section id="rendered-chat" aria-label="Rendered chat fixture"></section>
   <button type="button" id="advance-generation" hidden>Advance fixture generation</button>
+  <button type="button" id="complete-generation" hidden>Finish fixture generation</button>
   <script>
     const chat = document.querySelector('#rendered-chat');
     const status = document.querySelector('#contract-status');
     const advance = document.querySelector('#advance-generation');
+    const finish = document.querySelector('#complete-generation');
     let stopClicks = 0;
     let scenario = 'not-selected';
 
@@ -88,6 +95,53 @@
       stopClicks = 0;
       chat.replaceChildren(makeTurn('fixture-owned-generation', next === 'explicit-complete'));
       advance.hidden = next !== 'changed-generation';
+      finish.hidden = next !== 'observation-indicator-transition';
+      if (next.startsWith('observation-')) {
+        const turn = chat.querySelector('[data-turn-key]');
+        turn.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state',
+          next === 'observation-indicator-transition' ? 'running' : 'complete');
+        const message = document.createElement('div');
+        message.setAttribute('data-chatgpt-selection-message-id', '00112233-4455-6677-8899-aabbccddeeff');
+        const answer = document.createElement('p');
+        answer.setAttribute('data-markdown-text-style', 'assistant-message');
+        answer.textContent = next === 'observation-indicator-transition' ? 'Unknown error' : 'Semantic fixture answer';
+        message.append(answer);
+        turn.append(message);
+        const regenerate = document.createElement('button');
+        regenerate.type = 'button';
+        regenerate.textContent = 'Regenerate response';
+        if (next === 'observation-labelledby') {
+          const label = document.createElement('span');
+          label.id = 'regenerate-semantic-label';
+          label.textContent = 'Regenerate response';
+          turn.append(label);
+          regenerate.setAttribute('aria-labelledby', label.id);
+          regenerate.setAttribute('aria-label', 'Conflicting direct label');
+          regenerate.textContent = 'Different visible text';
+        }
+        if (next === 'observation-quoted-control') {
+          const quoted = regenerate.cloneNode(true);
+          answer.append(quoted);
+        }
+        turn.append(regenerate);
+        if (next === 'observation-indicator-transition') {
+          regenerate.hidden = true;
+          chat.append(makeControl('stop'));
+        }
+        if (next === 'observation-temporary') {
+          const label = document.createElement('span');
+          label.id = 'temporary-semantic-label';
+          label.textContent = 'Turn off temporary chat';
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.textContent = 'Different toggle text';
+          toggle.setAttribute('aria-labelledby', label.id);
+          toggle.setAttribute('aria-label', 'Conflicting direct label');
+          chat.append(label, toggle);
+        }
+        record();
+        return;
+      }
       if (next === 'hidden-stop-idle' || next === 'duplicate-idle') {
         const stop = makeControl('stop');
         stop.hidden = true;
@@ -108,6 +162,13 @@
     advance.addEventListener('click', () => {
       chat.append(makeTurn('fixture-successor-generation'));
       advance.hidden = true;
+      record();
+    });
+    finish.addEventListener('click', () => {
+      chat.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state', 'complete');
+      chat.querySelectorAll('[data-fixture-control="stop"]').forEach(control => { control.hidden = true; });
+      chat.querySelector('[data-turn-key] button').hidden = false;
+      finish.hidden = true;
       record();
     });
   </script>

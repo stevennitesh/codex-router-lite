@@ -1,6 +1,30 @@
 // Stop-only composer evidence stays separate from the resident observation helper.
 export const browserIdleButtonExactName = "Start Voice";
 
+const observationFinishGraceMs = 4000, observationTransportMarginMs = 1000;
+export const browserObservationBudget = Object.freeze({ finishGraceMs: observationFinishGraceMs,
+  transportMarginMs: observationTransportMarginMs, shortReadMs: observationFinishGraceMs - observationTransportMarginMs });
+
+// Host protocol facts shared by the runtime and its retained adapter. These do
+// not replace each operation's acceptance, answer, or cleanup proof.
+export const browserObservationOwnershipLost = value => ["duplicate-generation-turn", "generation-turn-not-latest",
+  "generation-message-not-latest"].includes(value?.replyUnavailableReason);
+export const browserObservationIdleComplete = value => value?.completed === true
+  || value?.statusComplete === true && value?.stopVisible === false;
+export const isBrowserOwnershipPending = value => value !== null && typeof value === "object" && !Array.isArray(value)
+  && Object.keys(value).length === 2 && Object.hasOwn(value, "operation") && Object.hasOwn(value, "ownershipPending")
+  && value.operation === "observe" && value.ownershipPending === true;
+
+// The caller owns the total deadline and any confirmation reserve. Every
+// dispatched mutation gets only its current remainder, never a fresh timeout.
+export function createBrowserAllowance(deadline, expired) {
+  return (reserve = 0, maximum = Infinity) => {
+    const remaining = Math.floor(deadline - Date.now() - reserve);
+    if (remaining < 1) throw expired();
+    return Math.min(maximum, remaining);
+  };
+}
+
 export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",
@@ -16,12 +40,40 @@ export const browserDom = Object.freeze({
   streamingStatusSelector: '[data-streaming-response-status]', reasoningSelector: '[data-testid^="cot-v5"]',
   turnStateSelector: '[data-talvt-turn-state]', turnStateAttribute: "data-talvt-turn-state", completeTurnState: "complete",
   labelSelector: '[aria-label]', labelAttribute: "aria-label", markdownCopyAttribute: "data-markdown-copy",
+  buttonSelector: 'button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]',
+  composerSelector: '[role="textbox"],[contenteditable="true"]',
+  controlContentSelector: '[data-message-author-role],pre,code,[contenteditable="true"],[role="textbox"],textarea,input',
   codeBlockCopyValue: "code-block", excludedCopyValue: "exclude", codeSelector: "code",
   codeEditorSelector: ".cm-content[data-language]", codeLineClass: "cm-line",
   contentEditableAttribute: "contenteditable", familySelector: '[role="menuitemradio"]', checkedAttribute: "aria-checked",
   powerValueAttribute: "aria-valuenow", powerMinimumAttribute: "aria-valuemin", powerMaximumAttribute: "aria-valuemax",
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
 });
+
+// The public SDK owns accessible-name resolution and mounted cardinality. A
+// guarded BODY lets one coherent projection distinguish Stop state while the
+// selected Regenerate nodes retain their exact DOM order after the answer.
+export function createObservationBrowserState(tab, { ui, generationTurnKey }) {
+  const role = (name, kind = "button") => tab.playwright.getByRole(kind, { name, exact: true });
+  const stop = role(ui.stopButtonExactName), toggle = role(ui.temporaryToggleName), heading = role(ui.temporaryHeadingName, "heading");
+  const fullBanner = tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true });
+  const requestError = tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true });
+  const guarded = tab.playwright.locator("body")
+    .filter({ hasNot: stop.nth(1) }).filter({ hasNot: toggle.nth(1) }).filter({ hasNot: heading.nth(1) })
+    .filter({ hasNot: toggle.filter({ visible: true }) }).filter({ hasNot: heading.filter({ visible: true }) });
+  const visibleStop = stop.filter({ visible: true });
+  return {
+    indicatorBody: guarded,
+    profile(stopVisible, quiet = true) {
+      const body = guarded.filter(stopVisible ? { has: visibleStop } : { hasNot: visibleStop });
+      return quiet ? body.filter({ hasNot: fullBanner }).filter({ hasNot: requestError }) : body;
+    },
+    regenerate: tab.playwright.locator(`[${ui.turnKeyAttribute}="${generationTurnKey}"]`)
+      .getByRole("button", { name: ui.regenerateButtonExactName, exact: true }),
+    fullBanner, requestError, fullButton: role(ui.startNewChatButtonName).filter({ visible: true }),
+    retry: role(ui.retryButtonExactName).filter({ visible: true }), composer: role(ui.composerName, "textbox"),
+  };
+}
 
 // Callers retain authority, deadline and decisive-proof checks. A nonpositive
 // nextTimeout permits only the final coherent read. Serialized callers inject

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { discoverBrowserExecutor, browserScript, isSavedChatUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
 import { webModelSelection } from "./web-models.mjs";
+import { browserObservationIdleComplete, browserObservationOwnershipLost } from "./web-browser-state.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
 import { decodeCompaction, renderCompactionValue } from "./compaction-checkpoint.mjs";
 import { readJsonFile } from "./file-probe.mjs";
@@ -610,7 +611,7 @@ export function createInAppWebRuntime({
   };
   const acceptObservation = (turn, value) => {
     const delivery = turn.pendingDelivery ?? turn.conversation;
-    if (["duplicate-generation-turn", "generation-turn-not-latest", "generation-message-not-latest"].includes(value.replyUnavailableReason)) {
+    if (browserObservationOwnershipLost(value)) {
       throw fail("The saved Web generation is no longer uniquely owned and latest. Its chat is retained; queued native actions will not be delivered or replayed.", "web_generation_ownership");
     }
     if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== delivery.chatUrl
@@ -737,7 +738,7 @@ export function createInAppWebRuntime({
       }
       // A structurally complete owned turn can lack a readable answer. Its
       // idle state still needs a bounded failure, rather than a generation wait.
-      const idleCompleted = value.completed === true || value.statusComplete === true && value.stopVisible === false;
+      const idleCompleted = browserObservationIdleComplete(value);
       if (idleCompleted && quietSnapshot) {
         turn.completedAnswerAttempts = (turn.completedAnswerAttempts ?? 0) + 1;
         if (turn.completedAnswerAttempts >= 3) {

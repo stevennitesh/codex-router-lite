@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildWebBridgeModels, webModelSelection } from "../src/web-models.mjs";
+import { buildWebBridgeModels, webModelSelection, WEB_ACCOUNT_CAPABILITY_KEYS } from "../src/web-models.mjs";
 
 const allCapabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: true };
 const model = "chatgpt-web/gpt-6-sol";
 
 test("Web catalog names the serving families and exposes only account-supported effort choices", () => {
+  assert.deepEqual(WEB_ACCOUNT_CAPABILITY_KEYS, ["solAvailable", "extraHighAvailable", "proAvailable"]);
+  assert.equal(Object.isFrozen(WEB_ACCOUNT_CAPABILITY_KEYS), true);
   const models = buildWebBridgeModels(allCapabilities);
   assert.equal(models.find(row => row.slug === "chatgpt-web/gpt-6-pro").displayName, "GPT-6 Astra Pro (Web)");
   assert.equal(models.find(row => row.slug === "chatgpt-web/gpt-5.6-pro").displayName, "GPT-5.6 Sol Pro (Web)");

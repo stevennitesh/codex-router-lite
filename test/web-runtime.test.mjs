@@ -65,6 +65,81 @@ function fakeBrowser() {
     temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map(), turns: [], savedTurns: new Map() };
   let completed = false;
   Object.defineProperty(ui, "complete", { get: () => completed, set(value) { completed = value; if (value) ui.stop = false; } });
+  // A locator union projects one rendered tree, as the SDK does. Semantic
+  // membership stays in the locator model; page readers see ordinary DOM nodes.
+  let currentRender;
+  const render = () => {
+    const control = (tag, name, visible = true, attributes = {}) => {
+      const element = domElement(tag, { "aria-label": name, ...attributes }, domText(name));
+      element.fixtureVisible = visible;
+      element.getBoundingClientRect = () => ({ width: visible ? 32 : 0, height: visible ? 32 : 0 });
+      return element;
+    };
+    let root = ui.observationRoot;
+    if (!root) {
+      const roots = ui.turns.map((turn, index) => domElement("section", { [browserDom.turnKeyAttribute]: turn.key },
+        domElement("div", { [browserDom.turnStateAttribute]: index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" },
+          domElement("div", {}, domText(turn.prompt)))));
+      const leadingUnowned = [], trailingUnowned = [];
+      let hasOwnedReply = false;
+      const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
+      const placed = new Set();
+      for (const [index, element] of elements.entries()) {
+        if (!element.getAttribute("data-markdown-text-style")) element.setAttribute("data-markdown-text-style", "assistant-message");
+        const wrapper = element.closest(browserDom.messageSelector), replyId = wrapper?.getAttribute(browserDom.messageIdAttribute);
+        if (!wrapper && ui.replyElements) {
+          // Preserve the existing detached-wrapper fault: the selected markdown
+          // root survives a renderer mutation before its wrapper is read.
+          const matches = element.matches.bind(element);
+          element.matches = selector => selector === browserDom.assistantFinalReplySelector || matches(selector);
+        }
+        let turn = roots[ui.turns.findLastIndex(value => !value.baselineIds.includes(replyId))];
+        const alternate = ui.replyTurnKeys?.[index];
+        if (alternate) {
+          turn = roots.find(value => value.getAttribute(browserDom.turnKeyAttribute) === alternate);
+          if (!turn) { turn = domElement("section", { [browserDom.turnKeyAttribute]: alternate }); roots.push(turn); }
+        }
+        const node = wrapper ?? element;
+        if (placed.has(node)) continue;
+        placed.add(node);
+        const content = element.commentary ? domElement("div", { "data-streaming-response-status": "active" }, node) : node;
+        if (turn) {
+          hasOwnedReply = true;
+          const target = turn.querySelector(browserDom.turnStateSelector) ?? turn;
+          target.childNodes.push(content); target.children.push(content); content.parentElement = target;
+        } else (hasOwnedReply ? trailingUnowned : leadingUnowned).push(content);
+      }
+      for (const turn of roots) {
+        const state = turn.querySelector(browserDom.turnStateSelector);
+        if (state?.getAttribute(browserDom.turnStateAttribute) !== "complete") continue;
+        const action = control("button", browserDom.regenerateButtonExactName);
+        state.childNodes.push(action); state.children.push(action); action.parentElement = state;
+      }
+      root = domElement("main", {}, ...(ui.orphanMarkdownBefore ?? []), ...leadingUnowned, ...roots, ...trailingUnowned, ...(ui.orphanMarkdownAfter ?? []));
+    }
+    const composer = control("div", browserDom.composerName, true, { role: "textbox", contenteditable: "true" });
+    composer.childNodes = [domText(ui.composer)]; composer.children = []; composer.innerText = ui.composer;
+    if (ui.chip) {
+      const chip = domElement("span", { "app-mention-display-name": "Current Codex Tools", "app-mention-path": "app://asdk_current_tools", contenteditable: "false" });
+      chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
+      composer.childNodes.push(chip); composer.children.push(chip); chip.parentElement = composer;
+    }
+    const controls = [
+      ...Array.from({ length: ui.stopCount ?? 1 }, () => control("button", "Stop", ui.stop && !ui.full)),
+      ...Array.from({ length: ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1) }, () => control("button", "Start Voice", ui.idleVisible ?? (!ui.stop || ui.full))),
+      ...(ui.temporaryControls ? [control("button", "Turn off temporary chat"), control("h2", "Temporary chat")] : []),
+      ...(ui.full ? [control("div", browserDom.conversationFullText), control("button", "Start new chat")] : []),
+      ...(!ui.observationRoot ? [composer] : []),
+    ];
+    const body = domElement("body", {}, root, ...controls);
+    body.ownerDocument = { body, URL: ui.url, querySelectorAll: selector => body.querySelectorAll(selector),
+      defaultView: { getComputedStyle: element => ({ visibility: element.fixtureVisible === false ? "hidden" : "visible" }) } };
+    const order = [];
+    const visit = element => { order.push(element); element.children.forEach(visit); };
+    visit(body);
+    for (const element of order) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+    return { body, order };
+  };
   const locator = (kind, name, visibleOnly = false, filters = [], offset, scope) => {
     const bodyQuery = kind === "selector" && (name === "body" || name.startsWith("xpath=//body["));
     const generationRoots = () => {
@@ -88,6 +163,11 @@ function fakeBrowser() {
         if (name.includes(browserDom.turnStateAttribute) && owned[0]?.querySelectorAll(browserDom.turnStateSelector)[0]?.getAttribute() !== "complete") count = 0;
       } else if (name === "Stop") count = ui.stopCount ?? 1;
       else if (name === "Start Voice") count = ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1);
+      else if (name === "Turn off temporary chat" || name === "Temporary chat" && kind === "heading") count = Number(ui.temporaryControls);
+      else if (kind === "text") {
+        const { order } = currentRender ?? render();
+        count = order.filter(element => element.textContent === name && !element.children.some(child => child.textContent === name)).length;
+      }
       else if (kind === "menuitemradio") count = 0;
       if (visibleOnly && (name === "Stop" && (!ui.stop || ui.full) || name === "Start Voice" && !(ui.idleVisible ?? (!ui.stop || ui.full)))) count = 0;
       if (filters.some(({ has, hasNot }) => has && !has.fixtureCount() || hasNot && hasNot.fixtureCount())) count = 0;
@@ -97,21 +177,25 @@ function fakeBrowser() {
     kind, name,
     fixtureCount: matched,
     or(other) {
-      if (!bodyQuery) return this;
       const first = this;
       const selections = [first, other];
       return {
         or(next) { selections.push(next); return this; },
         async evaluateAll(callback, args) {
-          if (!args?.mutation) return first.fixtureCount() ? first.evaluateAll(callback, args) : other.evaluateAll(callback, args);
-          const elements = [];
-          for (const selection of selections) elements.push(...await selection.evaluateAll(values => values, args));
-          return callback([...new Set(elements)], args);
+          const previous = currentRender;
+          currentRender = render();
+          try {
+            const elements = [];
+            for (const selection of selections) elements.push(...await selection.evaluateAll(values => values, args));
+            const selected = new Set(elements);
+            return callback(currentRender.order.filter(element => selected.has(element)), args);
+          } finally { currentRender = previous; }
         },
       };
     },
     nth: index => locator(kind, name, visibleOnly, filters, index, scope),
-    getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined, bodyQuery ? { fixtureCount: matched } : undefined), locator: selector => locator("selector", selector),
+    getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined,
+      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope), locator: selector => locator("selector", selector),
     filter({ hasText, visible, has, hasNot }) {
       if (visible !== undefined || has || hasNot) return locator(kind, name, visible ?? visibleOnly, [...filters, { has, hasNot }], offset, scope);
       assert.equal(kind, "selector");
@@ -168,94 +252,30 @@ function fakeBrowser() {
         assert.match(candidates[0].key, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu);
       } else assert.equal(await this.isVisible(), state === "visible");
     },
-    async evaluateAll(callback, ownedChipSelector) {
-      if (bodyQuery) {
-        const body = domElement("body"), document = { body, URL: ui.url, querySelectorAll: selector => selector === browserDom.turnSelector ? generationRoots() : [],
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        body.ownerDocument = document;
-        const value = callback(matched() ? [body] : [], ownedChipSelector);
-        ui.afterStopRead?.();
-        return value;
+    async evaluateAll(callback, options) {
+      const { body, order } = currentRender ?? render();
+      let selected;
+      if (bodyQuery) selected = matched() ? [body] : [];
+      else if (kind === "selector") {
+        selected = body.querySelectorAll(name);
+        if (name.includes(browserDom.assistantFinalReplySelector)) selected.push(...(ui.replyElements ?? [])
+          .filter(element => !element.closest(browserDom.messageSelector)));
       }
-      if (ownedChipSelector?.mutation && ["Stop", "Turn off temporary chat", "Temporary chat"].includes(name)) {
-        const present = name === "Stop" ? ui.stop && !ui.full : ui.temporaryControls;
-        return callback(present ? [domElement(kind === "heading" ? "h2" : "button", { "aria-label": name })] : [], ownedChipSelector);
+      else if (kind === "text") selected = order.filter(element => element.textContent === name
+        && !element.children.some(child => child.textContent === name));
+      else {
+        selected = order.filter(element => element.getAttribute("aria-label") === name
+          && (kind === "textbox" ? element.matches(browserDom.composerSelector)
+            : kind === "heading" ? /^(?:H[1-6])$/u.test(element.tagName) || element.getAttribute("role") === "heading"
+              : element.matches(browserDom.buttonSelector)));
+        if (scope?.selector) selected = selected.filter(element => element.closest(scope.selector));
+        if (scope && !scope.fixtureCount()) selected = [];
       }
-      if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
-      if (name === "Ask ChatGPT") {
-        const content = [domText(ui.composer)];
-        if (ui.chip) content.push(domElement("span", { "app-mention-display-name": "Current Codex Tools",
-          "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
-        const composer = domElement("div", { contenteditable: "true" }, ...content);
-        composer.innerText = ui.composer;
-        return callback([composer], ownedChipSelector);
-      }
-      if (ownedChipSelector?.mutation && name.startsWith("span[app-mention")) {
-        const chip = domElement("span", { "app-mention-display-name": "Current Codex Tools", "app-mention-path": "app://asdk_current_tools", contenteditable: "false" });
-        chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
-        return callback(ui.chip ? [chip] : [], ownedChipSelector);
-      }
-      if (ownedChipSelector?.observation && ui.observationRoot) {
-        const body = domElement("body", {}, ui.observationRoot);
-        body.ownerDocument = { body, URL: ui.url,
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        const selected = ui.observationRoot.querySelectorAll(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector},[aria-label]`);
-        for (const element of selected) element.getBoundingClientRect = () => ({ width: 32, height: 32 });
-        return callback([body, ...selected], ownedChipSelector);
-      }
-      assert.ok([browserDom.turnSelector, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]'].includes(name));
-      const roots = ui.turns.map((turn, index) => {
-        const action = { getAttribute: () => "Regenerate response", closest: () => null };
-        const root = { nodeType: 1, tagName: "DIV", textContent: turn.prompt, fixtureMarkdown: [],
-          getAttribute: key => key === "data-turn-key" ? turn.key : null,
-          matches: selector => selector === '[data-turn-key]', querySelector: () => null,
-          querySelectorAll: selector => selector === '[data-talvt-turn-state]' ? [{ getAttribute: () => index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" }]
-            : selector === '[aria-label]' ? [action]
-              : selector === '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"],[data-streaming-response-status],[aria-label]'
-                ? [...root.fixtureMarkdown, action] : [] };
-        return root;
-      });
-      const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
-      for (const [index, element] of elements.entries()) {
-        const wrapper = element.fixtureWrapper ?? element.closest('[data-chatgpt-selection-message-id]');
-        element.fixtureWrapper = wrapper;
-        const replyId = wrapper?.getAttribute('data-chatgpt-selection-message-id');
-        const ownerIndex = ui.turns.findLastIndex(turn => !turn.baselineIds.includes(replyId));
-        let turn = roots[ownerIndex];
-        if (ui.replyTurnKeys?.[index]) {
-          const key = ui.replyTurnKeys[index];
-          turn = roots.find(root => root.getAttribute('data-turn-key') === key);
-          if (!turn) {
-            turn = { getAttribute: () => key, textContent: "Another generation", matches: selector => selector === '[data-turn-key]', querySelector: () => null, querySelectorAll: () => [] };
-            roots.push(turn);
-          }
-        }
-        if (wrapper) wrapper.closest = selector => selector === '[data-turn-key]' ? turn
-          : selector === '[data-chatgpt-selection-message-id]' ? wrapper : null;
-        turn?.fixtureMarkdown?.push(element);
-        element.matches = selector => selector !== '[data-turn-key]';
-        element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
-      }
-      let selected = [...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])];
-      if (name === browserDom.turnSelector) selected = roots;
-      if (ownedChipSelector?.mutation) selected = selected.filter(element => element.matches(browserDom.turnSelector)
-        || element.matches(ownedChipSelector.assistantSelector));
-      if (ownedChipSelector?.observation) {
-        selected = selected.filter(element => element.matches("[data-turn-key]") || element.matches(ownedChipSelector.assistantSelector));
-        const body = domElement("body"), document = { body, URL: ui.url,
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        body.ownerDocument = document;
-        const control = (tag, label) => {
-          const element = domElement(tag, { "aria-label": label }, domText(label));
-          element.getBoundingClientRect = () => ({ width: 32, height: 32 });
-          return element;
-        };
-        selected.push(body, control("button", "Regenerate response"));
-        if (ui.stop && !ui.full) selected.push(control("button", "Stop"));
-        if (ui.temporaryControls) selected.push(control("button", "Turn off temporary chat"), control("h2", "Temporary chat"));
-        if (ui.full) selected.push(control("div", browserDom.conversationFullText), control("button", "Start new chat"));
-      }
-      return callback(selected, ownedChipSelector);
+      if (visibleOnly) selected = selected.filter(element => element.getBoundingClientRect().width > 0);
+      if (offset !== undefined) selected = selected.slice(offset, offset + 1);
+      const result = callback(selected, options);
+      if (bodyQuery) ui.afterStopRead?.();
+      return result;
     },
   };
   };

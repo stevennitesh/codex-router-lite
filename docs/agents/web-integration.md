@@ -61,6 +61,12 @@ rearm only within the original caller deadline, after a coherent state read.
 Send readiness includes the unique latest prompt marker and valid new turn
 identity; its final page proof remains authoritative. Failed confirmation keeps
 Send uncertain and reports a fixed failure stage, never another Send click.
+Paste readiness, picker verification, Send dispatch and its confirmation share
+the original Send deadline. Picker stages recheck its remaining allowance before
+another action; Send reserves its final ownership proof before dispatch. Interrupted
+continuation likewise gives Stop only its remaining confirmation allowance and
+keeps a final read reserve. Expired pre-dispatch work cannot click Send or Stop;
+an attempted action keeps its existing uncertainty and no-replay rules.
 
 Current-generation substantive assistant output or an authenticated current-token
 broker handler acknowledges input. Registration, declaration updates, Stop visibility
@@ -177,9 +183,23 @@ wait establishes anchor readiness without repeatedly scanning full history.
 Readiness alone does not acknowledge input or establish ownership.
 Mutation checks share a coherent semantic read within each phase; checks before
 and after model selection or handoff remain separate fresh observations.
-A semantic locator union reads
-the owned turn, controls and current URL together, between independent ownership
-and navigation checks. Each native browser read returns
+Public SDK exact-name locators own accessible-name resolution, including text,
+direct labels and `aria-labelledby`. SDK-guarded BODY profiles prove Stop state,
+mounted control cardinality and absence of temporary-chat controls in the same
+read as the owned turn, Regenerate nodes and current URL. Only semantic Regenerate
+nodes outside answer, user, reasoning, tool and code content can establish their
+position after the answer; quoted controls cannot supply or duplicate that proof.
+The last observed Stop state only orders profile probes. Ordinary active reads
+and steady inactive reads use one projection; a state transition can require a
+second profile. Exact site error or capacity text uses separate uncommon indicator
+projections rather than adding per-control RPCs to every read. These projections
+use normal-mode and cardinality guards independent of Stop state, then refresh the
+current Stop and answer frame before returning. Indicator evidence cannot survive
+loss of the unique latest generation. Every profile and indicator read spends the
+same short-read allowance, including owned-tab preflight; late positive proof is
+rejected. This allowance derives from the adapter's native finish headroom after
+its transport margin, with no new allowance for a second profile. These projections
+retain independent ownership and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
 With the Router MCP adapter installed, one pending native observation call spans
 those short reads. While input acceptance is pending, the first substantive
@@ -550,14 +570,17 @@ node scripts/test-web-stop-browser.mjs --serve
 It prints `fixtureUrl` and serves only the test HTML. In the current official
 browser REPL, import `scripts/test-web-stop-browser.mjs` by its absolute file URL,
 create a disposable blank tab with the documented SDK, and call
-`runWebStopBrowserContract({ tab, fixtureUrl })`. Require every returned row's
+`runWebStopBrowserContract({ tab, fixtureUrl })` and
+`runWebObservationBrowserContract({ tab, fixtureUrl })`. Require every returned row's
 `passed` value to be true. The harness refuses an existing non-fixture tab before
 navigation. Close that tab and stop the fixture server afterward.
 
 The cases cover hidden mounted Stop, accessible names from `aria-labelledby`,
 name normalization, ambiguous Stop/idle controls, a replacement generation,
 the acknowledged Stop-to-idle transition, missing positive inactivity evidence,
-and explicit completion. Fixture transitions use actual button clicks, not
+and explicit completion. Observation cases exercise the same SDK-backed profiles
+used in production, including labelledby Regenerate controls, temporary-mode
+rejection and quoted-content exclusion. Fixture transitions use actual button clicks, not
 sleep-driven state changes; timeouts are failure bounds. These checks expose SDK
 and markup assumptions, while the live check establishes the current ChatGPT
 path. Neither guarantees compatibility with arbitrary future updates.

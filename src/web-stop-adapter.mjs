@@ -7,6 +7,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { readBrowserProgram, parseBrowserOutput, isSavedChatUrl } from './web-browser.mjs';
+import { browserObservationBudget, browserObservationIdleComplete, browserObservationOwnershipLost, isBrowserOwnershipPending } from './web-browser-state.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
 import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_BUDGET, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 
@@ -27,8 +28,6 @@ const threadAllowed = (threadId, threadIds) => uuid(threadId) && (threadIds === 
 const turnKey = (threadId, turnId) => `${threadId}:${turnId}`;
 const OBSERVATION_INTERVAL_MS = 500;
 const OBSERVATION_WAIT_MS = 25_000;
-const OBSERVATION_FINISH_GRACE_MS = 4000;
-const OBSERVATION_TRANSPORT_MARGIN_MS = 1000;
 const MAX_BROKER_OBSERVATION_BYTES = 4096;
 
 function observationWait(config) {
@@ -413,8 +412,8 @@ export class AdapterBridge {
         // Renewal stops scheduling; it must not truncate a normal last read to
         // a few milliseconds and reset the official REPL's resident kernel.
         // Existing work gets the remaining host headroom, never a fresh budget.
-        executionDeadlineAt: startedAt + Math.min(this.observationWaitMs + OBSERVATION_FINISH_GRACE_MS,
-          Math.max(1, (message.params.arguments.timeout_ms ?? 30_000) - OBSERVATION_TRANSPORT_MARGIN_MS)),
+        executionDeadlineAt: startedAt + Math.min(this.observationWaitMs + browserObservationBudget.finishGraceMs,
+          Math.max(1, (message.params.arguments.timeout_ms ?? 30_000) - browserObservationBudget.transportMarginMs)),
         readCount: 0, active: false, reason: null, last: null, abort: new AbortController() };
       const state = pending.wait;
       state.deadline = setTimeout(() => this.wakeObservation(pending, 'deadline'), this.observationWaitMs);
@@ -561,19 +560,17 @@ export class AdapterBridge {
           }
         }
         const hasPending = value && own(value, 'ownershipPending');
-        state.ownershipPending = hasPending && state.config.inputAcknowledgementPending === true
-          && Object.keys(value).sort().join() === 'operation,ownershipPending'
-          && value.operation === 'observe' && value.ownershipPending === true;
+        state.ownershipPending = state.config.inputAcknowledgementPending === true && isBrowserOwnershipPending(value);
         if (hasPending && !state.ownershipPending) {
           state.last = { jsonrpc: '2.0', id: state.outerId,
             error: { code: -32603, message: 'Router browser observation ownership is unavailable.' } };
           state.reason = 'browser_error';
         }
         if (message.error || message.result?.isError === true) state.reason ??= 'browser_error';
-        if (!hasPending && value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.completed === true || value.conversationFull === true || value.requestError !== undefined
-            || value.statusComplete === true && value.stopVisible === false || value.normal !== true
+        if (!hasPending && value && (value.operation !== 'observe' || typeof value.completed !== 'boolean' || value.conversationFull === true || value.requestError !== undefined
+            || browserObservationIdleComplete(value) || value.normal !== true
             || state.config.inputAcknowledgementPending === true && typeof value.assistantText === 'string' && value.assistantText.trim()
-            || ['duplicate-generation-turn', 'generation-turn-not-latest', 'generation-message-not-latest'].includes(value.replyUnavailableReason))) state.reason ??= 'browser_ready';
+            || browserObservationOwnershipLost(value))) state.reason ??= 'browser_ready';
         if (this.now() >= state.deadlineAt && (!state.reason || state.reason === 'broker_activity')) state.reason = 'deadline';
         if (group?.pending === pending || pending.deferred) state.reason = 'cancelled';
         if (state.reason && !(state.reason === 'broker_activity' && state.ownershipPending)) await this.finishObservation(pending);

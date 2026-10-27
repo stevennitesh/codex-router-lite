@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -122,12 +122,59 @@ const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(brows
 // identity and its text come from the same DOM read.
 export function readBrowserReplies(elements, options) {
   const ui = options.ui, wrapperSelector = ui.messageSelector;
+  const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies.length === 1 ? bodies[0] : null;
+  if ((options.observation || options.indicator) && (!body || body.ownerDocument?.body !== body)) return null;
   const turns = elements.filter(element => element.matches(ui.turnSelector));
   const selectedElements = elements.filter(element => element.matches(options.assistantSelector));
+  const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
+    && !element.matches(options.assistantSelector));
+  const contentSelector = `${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector},${ui.controlContentSelector}`;
+  const visible = element => {
+    const rect = element.getBoundingClientRect(), style = body.ownerDocument.defaultView.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+  };
+  if (options.indicator) {
+    const normalized = element => (element.textContent ?? "").replace(/\s+/gu, " ").trim();
+    if (options.indicator === "full") {
+      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
+      const outside = element => visible(element) && !element.closest(excluded) && !element.querySelector(excluded);
+      const banners = controls.filter(element => normalized(element) === ui.conversationFullText);
+      const buttons = controls.filter(element => !banners.includes(element));
+      return { url: body.ownerDocument.URL, conversationFull: banners.some(outside) && buttons.some(outside) };
+    }
+    const owned = turns.filter(turn => turn.getAttribute(ui.turnKeyAttribute) === options.generationTurnKey);
+    const composers = controls.filter(element => element.matches(ui.composerSelector) && visible(element));
+    const errors = controls.filter(element => !composers.includes(element) && normalized(element) === ui.requestErrorText);
+    const retries = controls.filter(element => !composers.includes(element) && !errors.includes(element));
+    const clean = element => !element.closest(contentSelector) && !element.querySelector(contentSelector);
+    const before = (left, right) => elements.indexOf(left) >= 0 && elements.indexOf(left) < elements.indexOf(right);
+    const pairs = [];
+    if (owned.length === 1 && turns.at(-1) === owned[0] && composers.length === 1
+        && typeof options.generationMarker === "string" && options.generationMarker
+        && (owned[0].textContent ?? "").includes(options.generationMarker)
+        && typeof options.submittedComposerText === "string" && options.submittedComposerText.includes(options.generationMarker)
+        && composers[0].innerText === options.submittedComposerText) {
+      for (const error of errors.filter(element => visible(element) && clean(element))) {
+        for (const retry of retries.filter(element => visible(element) && clean(element))) {
+          let region = error;
+          while (region && !region.contains(retry)) region = region.parentElement;
+          if (!region || !clean(region)) continue;
+          const errorTurn = error.closest(ui.turnSelector), retryTurn = retry.closest(ui.turnSelector);
+          const inTurn = errorTurn === owned[0] && retryTurn === owned[0];
+          const afterTurn = !errorTurn && !retryTurn && !region.querySelector(ui.turnSelector)
+            && before(owned[0], error) && before(owned[0], retry)
+            && before(error, composers[0]) && before(retry, composers[0]);
+          if (inTurn || afterTurn) pairs.push(region);
+        }
+      }
+    }
+    return { url: body.ownerDocument.URL, ...(pairs.length === 1 ? { requestError: "unknown_error" } : {}) };
+  }
+  const completionControls = options.mutation ? [] : controls.filter(action => !action.closest(contentSelector));
   const turnOrders = new Map();
   const turnOrder = turn => {
     if (!turnOrders.has(turn)) {
-      const ordered = Array.from(turn.querySelectorAll(`${options.assistantSelector ?? ui.assistantSelector},${ui.streamingStatusSelector},${ui.labelSelector}`));
+      const ordered = Array.from(turn.querySelectorAll(`${options.assistantSelector ?? ui.assistantSelector},${ui.streamingStatusSelector},${ui.buttonSelector}`));
       turnOrders.set(turn, new Map(ordered.map((element, index) => [element, index])));
     }
     return turnOrders.get(turn);
@@ -212,9 +259,11 @@ export function readBrowserReplies(elements, options) {
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
-      group.reply.completionActionAfter = Boolean(finalRoot && turn && Array.from(turn.querySelectorAll(ui.labelSelector))
-        .some(action => action.getAttribute(ui.labelAttribute) === options.regenerateName
-          && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
+      // Only the SDK's exact Regenerate locator supplies these nodes. Text,
+      // direct labels, and labelledby all obey the same accessible-name owner.
+      group.reply.completionActionAfter = Boolean(finalRoot && turn && completionControls
+        .some(action => action.closest(ui.turnSelector) === turn
+          && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
     }
     const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
@@ -256,76 +305,11 @@ export function readBrowserReplies(elements, options) {
         chipVisible: chips.length === 1 && visible(chips[0]) };
     }
     if (options.observation) {
-      const bodies = elements.filter(element => element.tagName === "BODY");
-      const body = bodies.length === 1 ? bodies[0] : null, document = body?.ownerDocument;
-      if (!document || document.body !== body) throw new Error("The browser observation document is unavailable.");
-      const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
-        && !element.matches(options.assistantSelector));
-      // The semantic union selected each exact accessible control. Canonical
-      // direct labels or text identify its group without guessing aria-labelledby.
-      const name = element => element.getAttribute("aria-labelledby") ? null
-        : element.getAttribute("aria-label") || (element.textContent ?? "").replace(/\s+/gu, " ").trim();
-      const button = element => element.matches('button,[role="button"]');
-      const heading = element => /^(?:H[1-6])$/u.test(element.tagName) || element.getAttribute("role") === "heading";
-      const visible = element => {
-        const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
-      };
-      const groups = [
-        ["stop", ui.stopButtonExactName, button], ["regenerate", ui.regenerateButtonExactName, button],
-        ["temporaryToggle", ui.temporaryToggleName, button], ["temporaryHeading", ui.temporaryHeadingName, heading],
-        ["fullButton", ui.startNewChatButtonName, button], ["fullBanner", ui.conversationFullText, () => true],
-        ["requestError", ui.requestErrorText, () => true], ["retry", ui.retryButtonExactName, button],
-        ["composer", ui.composerName, element => element.getAttribute("role") === "textbox" || element.getAttribute("contenteditable") === "true"],
-      ];
-      const recognized = new Set(), values = {};
-      for (const [key, expected, kind] of groups) {
-        const matches = controls.filter(element => kind(element) && (key === "fullBanner"
-          ? (element.textContent ?? "").replace(/\s+/gu, " ").trim() : name(element)) === expected);
-        matches.forEach(element => recognized.add(element));
-        values[key] = { matches, count: matches.length, visible: matches.some(visible) };
-      }
-      if (recognized.size !== controls.length || ["stop", "temporaryToggle", "temporaryHeading"].some(key => values[key].count > 1)) {
-        throw new Error("The browser observation controls are unrecognized or ambiguous.");
-      }
-      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
-      const outside = key => values[key].matches.some(element => visible(element)
-        && !element.closest(excluded) && !element.querySelector(excluded));
-      // The site's error pair is evidence only in this new latest generation,
-      // with the exact submitted composer restored. Quoted errors, tool output,
-      // older turns and a restored draft by itself cannot reject a request.
-      const owned = turns.filter(turn => turn.getAttribute(ui.turnKeyAttribute) === options.generationTurnKey);
-      const composers = values.composer.matches.filter(visible);
-      const content = `[data-message-author-role],${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector},pre,code,[contenteditable="true"],[role="textbox"],textarea,input`;
-      const clean = element => !element.closest(content) && !element.querySelector(content);
-      const before = (left, right) => elements.indexOf(left) >= 0 && elements.indexOf(left) < elements.indexOf(right);
-      let requestError = false;
-      if (owned.length === 1 && turns.at(-1) === owned[0] && composers.length === 1
-          && typeof options.generationMarker === "string" && options.generationMarker
-          && (owned[0].textContent ?? "").includes(options.generationMarker)
-          && typeof options.submittedComposerText === "string" && options.submittedComposerText.includes(options.generationMarker)
-          && composers[0].innerText === options.submittedComposerText) {
-        const pairs = [];
-        for (const error of values.requestError.matches.filter(element => visible(element) && clean(element))) {
-          for (const retry of values.retry.matches.filter(element => visible(element) && clean(element))) {
-            let region = error;
-            while (region && !region.contains(retry)) region = region.parentElement;
-            if (!region || !clean(region)) continue;
-            const errorTurn = error.closest(ui.turnSelector), retryTurn = retry.closest(ui.turnSelector);
-            const inTurn = errorTurn === owned[0] && retryTurn === owned[0];
-            const afterTurn = !errorTurn && !retryTurn && !region.querySelector(ui.turnSelector)
-              && before(owned[0], error) && before(owned[0], retry)
-              && before(error, composers[0]) && before(retry, composers[0]);
-            if (inTurn || afterTurn) pairs.push(region);
-          }
-        }
-        requestError = pairs.length === 1;
-      }
-      projection.observation = { url: document.URL, stopVisible: values.stop.visible,
-        regenerateVisible: values.regenerate.visible, regenerateCount: values.regenerate.count,
-        temporaryInactive: !values.temporaryToggle.visible && !values.temporaryHeading.visible,
-        conversationFull: outside("fullBanner") && outside("fullButton"),
-        ...(requestError ? { requestError: "unknown_error" } : {}) };
+      // The guarded BODY proves Stop/cardinality and normal-chat controls in
+      // this same read. The only other controls selected here are Regenerate.
+      projection.observation = { url: body.ownerDocument.URL, stopVisible: options.stopVisible,
+        regenerateVisible: completionControls.some(visible), regenerateCount: completionControls.length,
+        temporaryInactive: true, conversationFull: false };
     }
     return projection;
   };
@@ -345,13 +329,16 @@ export function readBrowserReplies(elements, options) {
 
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-function createBrowserView(state, options, replyReader, savedUrl) {
+function createBrowserView(state, options, replyReader, savedUrl, createObservationState) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-    .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+  const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => {
+    let selection = tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
+    if (!projection) selection = selection.or(role(ui.regenerateButtonExactName, "button", tab));
+    return selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}),
       ...(projection ? { projection } : {}), ...(baselineTurnKeys ? { baselineTurnKeys } : {}) }, { timeoutMs: 1000 });
+  };
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
@@ -413,7 +400,7 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
     return current;
   };
-  const observeGeneration = async (ownedUrl) => {
+  const observeGeneration = async (ownedUrl, allowance) => {
     const generationTurnKey = state.generationTurnKey, generationUrl = state.savedUrl;
     const assertCurrent = () => {
       activeOwner([options.turnId], true);
@@ -422,26 +409,55 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     assertCurrent();
     const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === generationUrl;
     if (!normalUrl(ownedUrl)) throw new Error("The observed conversation left its normal saved URL.");
-    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${generationTurnKey}"]`);
-    const readView = async () => {
-      const value = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-        .or(state.tab.playwright.locator("body"))
-        .or(role(ui.stopButtonExactName)).or(role(ui.temporaryToggleName)).or(role(ui.temporaryHeadingName, "heading"))
-        .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
-        .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
-        .or(role(ui.startNewChatButtonName).filter({ visible: true }))
-        .or(state.tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true }))
-        .or(role(ui.retryButtonExactName).filter({ visible: true })).or(role(ui.composerName, "textbox"))
-        .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-          generationTurnKey, generationMarker: state.generationMarker,
-          submittedComposerText: state.submittedComposerText, observation: true }, { timeoutMs: 1000 });
+    const controls = createObservationState(state.tab, { ui, generationTurnKey });
+    const profiles = [state.observedStopVisible !== false, state.observedStopVisible === false];
+    const unavailable = () => new Error("The browser observation controls are unrecognized or ambiguous, or the conversation left its normal saved URL.");
+    const ownershipOf = value => ({ anchorCount: value.turns.filter(turn => turn.turnKey === generationTurnKey).length,
+      turnCount: value.turns.length, latestMatches: value.turns.at(-1)?.turnKey === generationTurnKey });
+    const read = async (selection, projection) => {
       assertCurrent();
-      if (!normalUrl(value.observation.url) || !value.observation.temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
+      const value = await selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
+        generationTurnKey, ...projection }, { timeoutMs: allowance(0, 1000) });
+      assertCurrent();
+      allowance();
+      if (projection.indicator && !value) throw unavailable();
+      if (value && !normalUrl(value.observation?.url ?? value.url)) throw new Error("The observed conversation left its normal saved URL.");
+      return value;
+    };
+    const readProfiles = async quiet => {
+      for (const stopVisible of profiles) {
+        const value = await read(controls.profile(stopVisible, quiet)
+          .or(state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)).or(controls.regenerate),
+        { observation: true, stopVisible });
+        if (value) return value;
+      }
+      return null;
+    };
+    const readView = async () => {
+      let value = await readProfiles(true);
+      if (!value) {
+        // Stop is irrelevant to site indicator facts and can change during
+        // these reads. Their BODY guard retains cardinality and normal mode.
+        const indicatorOptions = { generationMarker: state.generationMarker, submittedComposerText: state.submittedComposerText };
+        const full = await read(controls.indicatorBody.or(controls.fullBanner).or(controls.fullButton),
+          { ...indicatorOptions, indicator: "full" });
+        const error = await read(controls.indicatorBody.or(state.tab.playwright.locator(ui.turnSelector)).or(controls.requestError)
+          .or(controls.retry).or(controls.composer), { ...indicatorOptions, indicator: "error" });
+        // Return a fresh Stop/answer frame after the indicator reads. A prior
+        // active or completed frame cannot survive a renderer transition here.
+        value = await readProfiles(false);
+        if (value) {
+          const ownership = ownershipOf(value);
+          if (ownership.anchorCount === 1 && ownership.latestMatches) Object.assign(value.observation,
+            { conversationFull: full.conversationFull }, error.requestError ? { requestError: error.requestError } : {});
+        }
+      }
+      if (!value) throw unavailable();
+      state.observedStopVisible = value.observation.stopVisible;
       return value;
     };
     const view = await readView();
-    const ownership = { anchorCount: view.turns.filter(turn => turn.turnKey === generationTurnKey).length,
-      turnCount: view.turns.length, latestMatches: view.turns.at(-1)?.turnKey === generationTurnKey };
+    const ownership = ownershipOf(view);
     const pendingAcceptance = options.operation === "observe" && options.inputAcknowledgementPending === true;
     const baselineTurns = new Set(state.baselineTurnKeys ?? []);
     const foreignTurnCount = pendingAcceptance ? view.turns.filter(turn => turn.turnKey !== generationTurnKey
@@ -552,10 +568,13 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
 
 // Selection belongs to the mutation cache. These reads share a stable picker phase;
 // mutations and their required readback remain sequential.
-async function selectBrowserModel(state, options, role) {
+async function selectBrowserModel(state, options, role, allowance) {
   const { ui } = options;
+  const read = async action => { allowance(); const value = await action(); allowance(); return value; };
+  const click = async locator => { await locator.click({ timeoutMs: allowance() }); allowance(); };
+  const press = async (locator, key) => { allowance(); await locator.press(key); allowance(); };
   const menu = role(ui.modelMenuName, "menu");
-  if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
+  if (!(await read(() => menu.isVisible()))) await click(role(ui.modelButtonName));
   // The current picker renders the family as generic text inside an unnamed
   // radio menu item. Match its observed DOM text, then verify the full text.
   const familyLocator = () => menu.locator(ui.familySelector).filter({ hasText: options.modelFamily });
@@ -563,26 +582,26 @@ async function selectBrowserModel(state, options, role) {
   const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
   let family = familyLocator();
   const [familyCount, familyText, familyChecked] = await Promise.all([
-    family.count(), family.textContent(), family.getAttribute(ui.checkedAttribute),
+    read(() => family.count()), read(() => family.textContent()), read(() => family.getAttribute(ui.checkedAttribute)),
   ]);
   if (familyCount !== 1 || familyText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
   // Read the actual checked row before changing the picker. Collapsed rows
   // are readable but clipped over Power, so only click after expanding.
   if (familyChecked !== "true") {
-    if (await expand.isVisible()) await expand.click();
-    if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
-    await family.click();
-  } else if (!(await power.isVisible())) {
+    if (await read(() => expand.isVisible())) await click(expand);
+    if (await read(() => expand.isVisible()) || await read(() => power.isVisible())) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
+    await click(family);
+  } else if (!(await read(() => power.isVisible()))) {
     // An already-expanded list returns to Power when its selected row is clicked.
-    if (await expand.isVisible()) throw new Error("The selected model Power view is unavailable.");
-    await family.click();
+    if (await read(() => expand.isVisible())) throw new Error("The selected model Power view is unavailable.");
+    await click(family);
   }
   family = familyLocator();
-  const [selectedCount, selectedText] = await Promise.all([family.count(), family.textContent()]);
+  const [selectedCount, selectedText] = await Promise.all([read(() => family.count()), read(() => family.textContent())]);
   if (selectedCount !== 1 || selectedText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
   const slider = menu.locator(ui.powerSliderSelector);
   const readPower = async attribute => {
-    const value = await slider.getAttribute(attribute);
+    const value = await read(() => slider.getAttribute(attribute));
     if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
     return Number(value);
   };
@@ -593,14 +612,14 @@ async function selectBrowserModel(state, options, role) {
   if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
   for (let move = 0; value !== options.power && move < 4; move += 1) {
     const direction = value > options.power ? -1 : 1;
-    await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
+    await press(power, direction === -1 ? "ArrowLeft" : "ArrowRight");
     const after = await readPower(ui.powerValueAttribute);
     if (after !== value + direction) throw new Error("Power did not move exactly one step.");
     value = after;
   }
-  const [checked, text] = await Promise.all([family.getAttribute(ui.checkedAttribute), family.textContent()]);
+  const [checked, text] = await Promise.all([read(() => family.getAttribute(ui.checkedAttribute)), read(() => family.textContent())]);
   if (checked !== "true" || text?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
-  await power.press("Escape");
+  await press(power, "Escape");
 }
 
 async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
@@ -633,7 +652,7 @@ async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory
 
 // Interrupted continuation uses the same retained cancellation policy and shared
 // semantic state factory; ordinary continuation retains its lifecycle guards.
-async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness) {
+async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness, createAllowance) {
   const { ui } = options;
   const owner = activeOwner(owners, true), tab = state.tab, tabId = state.tabId, browser = state.browser,
     savedUrl = state.savedUrl, generationTurnKey = state.generationTurnKey;
@@ -663,16 +682,16 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   const browserState = createStopState(tab, { ui, generationTurnKey, stopName: owner.stopButtonName,
     idleName: options.recoveryIdleButtonExactName }, browserReadiness);
   const confirmationDeadline = Date.now() + 10000;
+  const allowance = createAllowance(confirmationDeadline, () => new Error("The interrupted generation confirmation deadline expired."));
   let receipt = state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
   const composerRestored = () => receipt?.acknowledged === true && receipt.idleAbsent === true;
   const inspect = async () => {
     const view = await browserState.inspect({ allowComposerRestored: composerRestored(), preferInactive: Boolean(receipt),
       beforeRead: () => {
         assertCurrent();
-        const remaining = confirmationDeadline - Date.now();
-        if (remaining < 200) throw new Error("The interrupted generation confirmation deadline expired.");
-        return Math.min(1000, remaining);
-      }, afterRead: assertCurrent });
+        allowance(199);
+        return allowance(0, 1000);
+      }, afterRead: () => { assertCurrent(); allowance(); } });
     if (view?.url !== savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
     if (view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot stop another generation.");
     if (!view.controlsRecognized || typeof view.stopVisible !== "boolean") throw new Error("The interrupted generation controls are unrecognized or ambiguous.");
@@ -689,9 +708,10 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   if (!view.inactive && view.stopVisible && !receipt) {
     // Record dispatch before awaiting it. Reconciliation retries may read
     // the result, but must never repeat a click whose outcome is uncertain.
-    receipt = state.reconciliationStop = { generationTurnKey, idleAbsent: view.idleAbsent === true, acknowledged: false };
     assertCurrent();
-    try { await browserState.stop.click({ timeoutMs: 10000 }); receipt.acknowledged = true; }
+    const timeoutMs = allowance(300);
+    receipt = state.reconciliationStop = { generationTurnKey, idleAbsent: view.idleAbsent === true, acknowledged: false };
+    try { await browserState.stop.click({ timeoutMs }); receipt.acknowledged = true; }
     catch { /* Only explicit completion may reconcile a rejected click. */ }
     assertCurrent();
     view = receipt.acknowledged
@@ -701,7 +721,7 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
 }
 
-async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState, browserReadiness) {
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState, browserReadiness, createAllowance) {
   const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
@@ -1029,7 +1049,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   }
   await state.tab.markHandoff();
   if (interrupted) {
-    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness);
+    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness, createAllowance);
     if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
     state.retained = true;
   } else if (!state.completed || !state.retained) throw new Error("The retained conversation is not ready for continuation.");
@@ -1099,7 +1119,7 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
   emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
 }
 
-async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel, createStopState, browserReadiness) {
+async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel, createStopState, browserReadiness, createAllowance) {
   const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
@@ -1141,11 +1161,13 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
   const send = role(ui.sendButtonExactName);
   const sendDeadline = Date.now() + 10000;
+  const allowance = createAllowance(sendDeadline, () => new Error("The Send deadline expired before dispatch; nothing sent."));
   const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
   // A large paste can become an attachment. Keep the current private tool
   // directive and nonsecret generation marker outside that payload so tools
   // use this turn's authority and Send owns one observable turn.
   await waitForSend();
+  allowance(1500);
   const settled = (await mutationSnapshot()).mutation;
   if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
@@ -1156,14 +1178,16 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const generationMarker = `\nRouter generation: ${options.turnId}`;
   const visibleSuffix = generationMarker + currentDirective;
   state.unsentDraft += visibleSuffix;
+  allowance(1500);
   await composer.press('End');
+  allowance(1500);
   await composer.type(visibleSuffix);
   state.unsentComposerText = await composer.innerText();
   if (state.unsentComposerText !== settledComposerText + visibleSuffix) throw new Error("The composer current-turn directive or generation marker changed or was transformed; nothing sent.");
   await waitForSend();
   // Attachment and paste can alter the picker. Select and verify the exact
   // requested family and Power once, using the current DOM before Send.
-  await selectModel(state, options, role);
+  await selectModel(state, options, role, () => allowance(1500));
   const verifyDraft = async () => {
     const current = (await mutationSnapshot()).mutation;
     if (current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
@@ -1171,14 +1195,16 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     if (!current.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   };
   await verifyDraft();
+  allowance(1500);
   activeOwner([options.turnId], true);
   await state.tab.markHandoff();
   activeOwner([options.turnId], true);
   await verifyDraft();
+  const sendTimeoutMs = allowance(1500);
   state.generationMarker = generationMarker.trim();
   state.submittedComposerText = state.unsentComposerText;
   state.sendClicked = true;
-  await send.click();
+  await send.click({ timeoutMs: sendTimeoutMs });
   state.hasSentMessage = true;
   await waitForState(async () => savedUrl(await state.tab.url()), sendDeadline,
     "The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
@@ -1258,7 +1284,8 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
 }
 
-async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory, defaultUi) {
+async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) {
+  const allowance = createAllowance(Date.now() + shortReadMs, () => new Error("The browser observation read deadline expired."));
   options = { ...options, ui: { ...defaultUi, ...options.ui } };
   const { operation } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
@@ -1266,19 +1293,21 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
   if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   const ownedUrl = await ensureOwned();
+  allowance();
   if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
-    // Return after one page read so native Interrupt and queued tools can run.
-    const observation = await observeGeneration(ownedUrl);
+    // Return after one bounded observation so native Interrupt and queued tools can run.
+    const observation = await observeGeneration(ownedUrl, allowance);
     if (observation.ownershipPending !== true) state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed) throw new Error("Only a successfully completed conversation can be retained.");
-    const observation = await observeGeneration(ownedUrl);
+    const observation = await observeGeneration(ownedUrl, allowance);
     state.completed = observation.completed;
     if (!observation.completed) throw new Error("Only a currently completed generation can be retained.");
     await state.tab.markHandoff();
     activeOwner([options.turnId], true);
+    allowance();
     state.retained = true;
     // Broker activity can reject this retention and resume the same generation.
     // Keep its rejection evidence until continuation resets the generation.
@@ -1293,7 +1322,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(residentBrowserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
+  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 // Use only the cache's public, source-checked dependencies: a closure could hide
@@ -1304,12 +1333,12 @@ async function runBrowserMutation(cache, options, nodeRepl) {
   const config = { ...options, ui: { ...cache.ui, ...options.ui } };
   const runner = options.operation === "continue" ? cache.continuation : cache.send;
   return runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext,
-    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness);
+    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness, cache.createAllowance);
 }
 
 const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
   createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
-  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness });
+  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance });
 export const browserMutationVersion = createHash("sha256")
   .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
@@ -1355,11 +1384,16 @@ export function browserScript(options) {
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const compact = ["observe", "retain"].includes(options.operation);
-  const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
-    modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
+  const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd };
   if (options.operation === "continue" && (options.recovery || options.interruptedTurnId !== undefined)) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
   else delete config.recoveryIdleButtonExactName;
-  if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
+  const sending = options.operation === "send";
+  if ((sending || config.power !== undefined) && (!Number.isInteger(config.power) || config.power < 0 || config.power > 4)
+      || (sending || config.modelFamily !== undefined) && (typeof config.modelFamily !== "string" || !config.modelFamily.trim())) {
+    throw failure(sending ? "Send requires explicit bounded model family and Power." : "Invalid bounded browser selection arguments.");
+  }
+  // Only Send selects a model. Other operations carry no implied selection.
+  if (!sending) { delete config.modelFamily; delete config.power; }
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
   for (const value of Object.values(config.ui)) if (typeof value !== "string" || !value || value.length > 512) throw failure("Invalid observed browser control name.");
@@ -1390,7 +1424,7 @@ export function browserScript(options) {
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
   const fullInstall = options.operation === "bootstrap" || options.operation === "continue" && options.fullContinuation === true;
   const resident = fullInstall
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState, defaultUi) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}));`
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState, defaultUi, createObservationState, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, createObservationState); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
   const sourceList = Object.keys(mutationFunctions).map(key => `cache.${key}`);
