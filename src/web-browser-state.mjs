@@ -23,9 +23,42 @@ export const browserDom = Object.freeze({
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
 });
 
+// Callers retain authority, deadline and decisive-proof checks. A nonpositive
+// nextTimeout permits only the final coherent read. Serialized callers inject
+// this self-contained helper explicitly instead of importing from native code.
+export async function waitForBrowserReadiness(locator, { nextTimeout, afterWait, inspect, ready: readyObservation, state = "visible" }) {
+  let timeoutMs = nextTimeout();
+  for (;;) {
+    let repeat = timeoutMs >= 1;
+    // Public SDK selector waits may cap their timeout below the caller's
+    // deadline. Rearm that same condition after a coherent unready read.
+    if (repeat) {
+      let error, timedOut = false;
+      try { await locator.waitFor({ state, timeoutMs }); }
+      catch (rejection) {
+        error = rejection;
+        // The SDK appends a "timed out" action label to every error and
+        // discards its structured code. Only the original timeout reason,
+        // optionally prefixed once with "Error: ", permits another wait;
+        // other failures get one decisive read unless the caller rejects them.
+        timedOut = typeof error?.message === "string"
+          && /^(?:Error: )?(?:Playwright selector deadline exceeded(?:\r?\n|$)|Timed out after \d+ms waiting for selector )/u.test(error.message);
+        repeat = timedOut;
+      }
+      afterWait?.({ error, timedOut });
+    }
+    const observation = await inspect();
+    if (readyObservation(observation) || !repeat) return observation;
+    // A matched locator can become active again before the state read.
+    // Readiness never replaces that read or authorizes another browser action.
+    timeoutMs = nextTimeout();
+    if (timeoutMs < 1) return observation;
+  }
+}
+
 // Serialized into the native runtime. Semantic locators own accessible names,
 // visibility and cardinality; the page reader only projects identity and state.
-export function createStopBrowserState(tab, { ui, generationTurnKey, stopName, idleName }) {
+export function createStopBrowserState(tab, { ui, generationTurnKey, stopName, idleName }, waitForReadiness = waitForBrowserReadiness) {
   const ownedTurn = `//*[@${ui.turnKeyAttribute}='${generationTurnKey}']`;
   const latestTurn = `(//*[@${ui.turnKeyAttribute}])[last()][@${ui.turnKeyAttribute}='${generationTurnKey}']`;
   const generationGuard = `count(${ownedTurn})=1 and ${latestTurn}`;
@@ -57,35 +90,7 @@ export function createStopBrowserState(tab, { ui, generationTurnKey, stopName, i
       latestTurnKey: turns.at(-1)?.getAttribute(ui.turnKeyAttribute) ?? null,
       complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
   };
-  return { stop, ready,
-    // Callers retain authority, deadline and decisive-proof checks. A
-    // nonpositive nextTimeout permits only the final coherent read.
-    async waitForReadiness(locator, { nextTimeout, afterWait, inspect, ready: readyObservation }) {
-      let timeoutMs = nextTimeout();
-      for (;;) {
-        let repeat = timeoutMs >= 1;
-        // Public SDK selector waits may cap their timeout below the caller's
-        // deadline. Rearm that same condition after a coherent unready read.
-        if (repeat) {
-          try { await locator.waitFor({ state: "visible", timeoutMs }); }
-          catch (error) {
-            // The SDK appends a "timed out" action label to every error and
-            // discards its structured code. Only the original timeout reason,
-            // optionally prefixed once with "Error: ", permits another wait;
-            // other failures get one decisive read.
-            repeat = typeof error?.message === "string"
-              && /^(?:Error: )?(?:Playwright selector deadline exceeded(?:\r?\n|$)|Timed out after \d+ms waiting for selector )/u.test(error.message);
-          }
-          afterWait?.();
-        }
-        const observation = await inspect();
-        if (readyObservation(observation) || !repeat) return observation;
-        // A matched locator can become active again before the state read.
-        // Readiness never replaces that read or authorizes another Stop click.
-        timeoutMs = nextTimeout();
-        if (timeoutMs < 1) return observation;
-      }
-    },
+  return { stop, ready, waitForReadiness,
     async inspect({ allowComposerRestored = false, preferInactive = false, timeoutMs = 1000, beforeRead, afterRead } = {}) {
       const read = async locator => {
         const allowance = beforeRead?.() ?? timeoutMs;

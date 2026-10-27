@@ -129,6 +129,7 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
           }
           await state.ready(true).waitFor({ ...options, timeoutMs: Math.min(3000, options.timeoutMs) });
         } }, {
+          state: "attached",
           nextTimeout: () => deadline - Date.now() - 1500,
           inspect: async () => {
             const view = await state.inspect({ allowComposerRestored: true, timeoutMs });
@@ -140,7 +141,7 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         const clicked = await status();
         requireContract(waits === 2 && after.inactive === true && after.stopVisible === false
           && clicked.stopClicks === 1, "capped_wait_did_not_rearm");
-        results.push({ case: name, passed: true, conditionWaits: waits, activeRead, stopClicks: clicked.stopClicks });
+        results.push({ case: name, passed: true, readinessState: "attached", conditionWaits: waits, activeRead, stopClicks: clicked.stopClicks });
       } else if (["labelledby-transition", "normalized-transition", "click-idle-transition"].includes(name)) {
         requireContract(before.stopVisible === true && before.inactive === false && before.idleAbsent === true,
           "preclick_state_not_active_without_idle");

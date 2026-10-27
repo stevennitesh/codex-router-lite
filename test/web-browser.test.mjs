@@ -201,6 +201,7 @@ test("observer and mutation generations invalidate only their exact dependency s
   const send = browserScript({ ...base, operation: "send", prompt: "Request" });
   for (const [changed] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
+    [{ state: stateSource.replace(/(export async function waitForBrowserReadiness\([^\n]*\) \{)/u, "$1\n  /* changed shared readiness owner */") }, true],
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
       "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
       "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
@@ -417,7 +418,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return callback([...new Set(elements)], argument);
     },
   });
-  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = []) => ({
+  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false) => ({
     kind, name, scopeSelector,
     or(other) { return makeUnion([this, other]); },
     nth(index) { return { resolve: () => {
@@ -430,7 +431,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     filter({ hasText: text, visible, has, hasNot }) {
       if (visible !== undefined) return makeLocator(kind, name, visible);
       if (name === '[data-turn-key]') return makeLocator(kind, name, visibleOnly, scopeSelector, text ?? hasText, Boolean(has) || hasIdentity,
-        hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys);
+        hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys,
+        globalGenerationGuard || Boolean(has?.name?.includes("count(")));
       assert.equal(kind, "selector");
       assert.equal(name, '[role="menuitemradio"]');
       return makeLocator("family-text", text);
@@ -539,15 +541,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           ui.generationWaits += 1;
           await ui.onGenerationWait?.({ marker: hasText, timeoutMs });
           if (ui.generationWaitError) throw ui.generationWaitError;
-          const ready = () => replyRoot().querySelectorAll(name).filter(turn => turn.textContent.includes(hasText)
-            && !excludedKeys.includes(turn.getAttribute('data-turn-key'))
-            && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.getAttribute('data-turn-key'))).length === 1;
+          const ready = () => {
+            const turns = replyRoot().querySelectorAll(name), markers = turns.filter(turn => turn.textContent.includes(hasText)
+              && !excludedKeys.includes(turn.getAttribute('data-turn-key')));
+            const valid = markers.filter(turn => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.getAttribute('data-turn-key')));
+            return valid.length === 1 && (!globalGenerationGuard || markers.length === 1 && markers[0] === turns.at(-1)
+              && turns.filter(turn => turn.getAttribute('data-turn-key') === markers[0].getAttribute('data-turn-key')).length === 1);
+          };
           if (!ready() && fastTimers) {
             // The SDK wait is one call. This harness advances its failure bound;
             // only a qualifying rendered marker/identity can satisfy readiness.
             now += timeoutMs; ui.waitedMs += timeoutMs; ui.onWait?.();
           }
-          if (!ready()) throw new Error("The generation marker did not attach with one valid identity.");
+          if (!ready()) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out");
           return;
         }
         ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint");
@@ -579,7 +585,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         return callback(ui.viewportElements ?? replyRoot().querySelectorAll(name), argument);
       }
       ui.replyReads += 1;
-      ui.onReplyRead?.();
+      ui.onReplyRead?.(argument);
       if (name === '[data-turn-key]' || name.startsWith('[data-turn-key],')) {
         return callback(replyRoot().querySelectorAll(name), argument);
       }
@@ -720,6 +726,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     await run("open");
   };
   return { ui, run, runFast: (operation, extra) => run(operation, extra, false), ready, tab, browser, agent, runtimeModule, getState: () => nativeContext[bindingName],
+    advance(milliseconds) { assert.equal(fastTimers, true); assert(Number.isSafeInteger(milliseconds) && milliseconds >= 0); now += milliseconds; ui.waitedMs += milliseconds; },
     loseBinding({ preserveOwner = false } = {}) { delete nativeContext[bindingName]; if (!preserveOwner) nativeContext.routerWebActiveTurns?.delete(sessionId); },
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
 }
@@ -867,10 +874,22 @@ test("Send projections read global identities and only new candidate markers wit
     [[messageId(10), messageId(100), ""], [messageId(20), messageId(200), ""]]);
   const anchor = readReplies([old, current], { ...options, projection: "anchor", generationMarker: "Router generation: current-turn",
     baselineTurnKeys: [messageId(100)] });
-  assert.deepEqual(anchor, { replies: [], turns: [{ turnKey: messageId(100), matchesGenerationMarker: false },
-    { turnKey: messageId(200), matchesGenerationMarker: true }] });
+  assert.deepEqual(anchor, { replies: [], turns: [{ turnKey: messageId(100), matchesGenerationMarker: false, nestedInTurn: false },
+    { turnKey: messageId(200), matchesGenerationMarker: true, nestedInTurn: false }] });
   assert.throws(() => readReplies([old, current, oldRoot, currentRoot], options), /historical text or completion metadata/,
     "Recovery keeps the full historical body and completion proof.");
+});
+
+test("anchor projection distinguishes nested turn elements using only bounded parent-ownership booleans", () => {
+  const nested = observedTurn(messageId(200), "Router generation: current-turn PRIVATE_NESTED_CANARY");
+  const outer = observedTurn(messageId(100), "Private historical prompt", [domElement("div", {}, nested)]);
+  const root = domElement("main", {}, outer);
+  const anchor = readReplies(root.querySelectorAll(browserDom.turnSelector), { projection: "anchor",
+    generationMarker: "Router generation: current-turn", baselineTurnKeys: [messageId(100)] });
+  assert.deepEqual(anchor.turns, [{ turnKey: messageId(100), matchesGenerationMarker: false, nestedInTurn: false },
+    { turnKey: messageId(200), matchesGenerationMarker: true, nestedInTurn: true }]);
+  assert.deepEqual(anchor.replies, []);
+  assert.doesNotMatch(JSON.stringify(anchor), /PRIVATE_NESTED_CANARY|Private historical prompt|Router generation:/u);
 });
 
 test("Send baseline retains global duplicate and malformed identity rejection without reading any answer body", async () => {
@@ -1274,7 +1293,7 @@ test("generation readiness waits for a rendered marker and settled UUID before i
       else pending.messageId = "settling-renderer-identity";
     };
     f.ui.onGenerationWait = ({ timeoutMs }) => {
-      assert.equal(timeoutMs, 10000);
+      assert.equal(timeoutMs, 8500);
       pending.messageId = messageId(1001);
       f.ui.userMessages = [pending];
     };
@@ -1303,6 +1322,162 @@ test("marker readiness cannot replace global turn uniqueness, latest ownership o
     await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/);
     assert.equal(f.ui.sendClicks, 1);
   }
+});
+
+const sendReadinessDiagnostic = error => JSON.parse(error.message.split("ROUTER_WEB_SEND_READINESS_DIAGNOSTIC ")[1]);
+
+test("Send rearms an SDK-capped selector wait inside its original deadline and accepts only the later complete ownership condition", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let pending;
+  const events = [], budgets = [], reads = f.ui.replyReads;
+  f.ui.onSend = () => { pending = f.ui.userMessages[0]; f.ui.userMessages = []; };
+  f.ui.onGenerationWait = ({ timeoutMs }) => {
+    budgets.push(timeoutMs);
+    if (f.ui.generationWaits === 1) {
+      events.push("sdk-cap"); f.advance(3000);
+      throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out");
+    }
+    assert(events.includes("unready-proof"), "A fresh anchor proof must separate selector waits.");
+    events.push("valid-marker"); f.ui.userMessages = [pending];
+  };
+  f.ui.onReplyRead = argument => {
+    if (argument?.projection === "anchor" && f.ui.generationWaits === 1) events.push("unready-proof");
+  };
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  assert.equal(sent.sent, true); assert.equal(sent.generationTurnKey, pending.messageId);
+  assert.deepEqual(events, ["sdk-cap", "unready-proof", "valid-marker"]);
+  assert.deepEqual(budgets, [8500, 5500], "The second wait spends the original remaining budget and preserves read headroom.");
+  assert.equal(f.ui.replyReads - reads, 3, "The ordinary baseline and each settled wait receive their own coherent proof.");
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.generationWaits, 2); assert.equal(f.ui.waitedMs, 3000);
+});
+
+test("Send rechecks a matched readiness condition and rearms after a renderer identity race without another click", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let pending, originalKey;
+  const events = [];
+  f.ui.onSend = () => { pending = f.ui.userMessages[0]; originalKey = pending.messageId; };
+  f.ui.onGenerationWait = () => {
+    events.push("selector-match");
+    if (f.ui.generationWaits > 1) pending.messageId = originalKey;
+  };
+  f.ui.onReplyRead = argument => {
+    if (argument?.projection !== "anchor") return;
+    if (f.ui.generationWaits === 1) { pending.messageId = "renderer-placeholder"; events.push("unready-proof"); }
+    else events.push("owned-proof");
+  };
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  assert.equal(sent.generationTurnKey, originalKey);
+  assert.deepEqual(events, ["selector-match", "unready-proof", "selector-match", "owned-proof"]);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.generationWaits, 2); assert.equal(f.ui.waitedMs, 0);
+});
+
+test("Send readiness keeps permanent missing, duplicate, foreign latest and malformed turns uncertain with bounded diagnostics", async () => {
+  for (const loss of ["missing", "duplicate marker", "duplicate key", "foreign latest", "invalid key"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => {
+      const current = f.ui.userMessages[0];
+      if (loss === "missing") f.ui.userMessages = [];
+      if (loss === "duplicate marker") f.ui.userMessages.push({ ...current, messageId: messageId(2000) });
+      if (loss === "duplicate key") f.ui.userMessages.push({ ...current, text: "Different private request" });
+      if (loss === "foreign latest") f.ui.userMessages.push({ ...current, messageId: messageId(2000), text: "Different private request" });
+      if (loss === "invalid key") current.messageId = "renderer-placeholder";
+    };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "PRIVATE_REQUEST" }), error => {
+      const diagnostic = sendReadinessDiagnostic(error);
+      assert.equal(diagnostic.stage, "selector-timeout");
+      assert.equal(diagnostic.markerCount, loss === "missing" ? 0 : loss === "duplicate marker" ? 2 : 1);
+      assert.equal(diagnostic.latestMatches, !["missing", "duplicate marker", "duplicate key", "foreign latest"].includes(loss));
+      assert.doesNotMatch(error.message, /PRIVATE_REQUEST|Different private|renderer-placeholder|https:|[a-f0-9]{8}-/iu);
+      return true;
+    });
+    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1);
+    assert.equal(f.ui.waitedMs, 8500);
+    assert.equal(f.getState().sendConfirmed, false);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/u);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("Send never rescues a settled later turn that appears between selector match and final proof", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onGenerationWait = () => { assert.equal(f.ui.generationWaits, 1, "A positively superseded Send cannot rearm after its proof."); };
+  f.ui.onReplyRead = argument => {
+    if (argument?.projection === "anchor") f.ui.userMessages.push({ ...f.ui.userMessages[0], messageId: messageId(2000), text: "Later manual request" });
+  };
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
+    assert.deepEqual(sendReadinessDiagnostic(error), { stage: "final-proof", turnCount: 2, markerCount: 1,
+      validMarkerCount: 1, latestMatches: false, keyCount: 1, nestedTurnCount: 0, latestNestedInTurn: false, markerNestedInTurn: false });
+    return true;
+  });
+  assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 0);
+});
+
+test("Send failure diagnostics expose nested widget shape without retaining marker text, turn keys or extra page reads", async () => {
+  for (const quotesMarker of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const reads = f.ui.replyReads;
+    let currentKey;
+    f.ui.onSend = () => {
+      const current = f.ui.userMessages[0]; currentKey = current.messageId;
+      const widget = observedTurn(messageId(2000), quotesMarker ? current.text : "PRIVATE_WIDGET_CANARY");
+      f.ui.messageRoot = domElement("main", {}, observedTurn(current.messageId, current.text, [domElement("div", {}, widget)]));
+    };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "PRIVATE_MARKER_CANARY" }), error => {
+      const diagnostic = sendReadinessDiagnostic(error);
+      assert.equal(diagnostic.nestedTurnCount, 1);
+      assert.equal(diagnostic.latestNestedInTurn, true);
+      assert.equal(diagnostic.markerNestedInTurn, quotesMarker);
+      assert.equal(diagnostic.turnCount, 2); assert.equal(diagnostic.markerCount, quotesMarker ? 2 : 1);
+      assert(Object.entries(diagnostic).every(([key, value]) => key === "stage" || value === null || typeof value === "boolean" || Number.isSafeInteger(value)));
+      const serialized = JSON.stringify(error, Object.getOwnPropertyNames(error));
+      assert.doesNotMatch(serialized, /PRIVATE_WIDGET_CANARY|PRIVATE_MARKER_CANARY|Router generation:|https:\/\//u);
+      assert.equal(serialized.includes(currentKey) || serialized.includes(messageId(2000)), false);
+      return true;
+    });
+    assert.equal(f.ui.replyReads - reads, 2, "Nesting metadata shares the existing baseline and anchor proof reads.");
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
+  }
+});
+
+test("Send keeps native selector failures and cancellation terminal without exposing raw errors or retrying their timeout labels", async () => {
+  for (const message of ["Native browser disconnected.\nlocator.waitFor(attached) timed out", "Operation aborted by native cancellation.",
+    "Error: Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const rejection = new Error(`${message}\nPRIVATE_SELECTOR_CANARY https://private.invalid/chat web_turn_private_token`);
+    f.ui.onGenerationWait = () => { throw rejection; };
+    const reads = f.ui.replyReads;
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
+      assert.equal(error.cause, undefined);
+      assert.equal(sendReadinessDiagnostic(error).stage, "selector-error");
+      assert.doesNotMatch(JSON.stringify(error, Object.getOwnPropertyNames(error)), /disconnected|Operation aborted|Error: Error:|PRIVATE_SELECTOR_CANARY|private\.invalid|web_turn_private_token/u);
+      return true;
+    });
+    assert.equal(f.ui.replyReads - reads, 1, "A rejected native wait cannot trigger a replacement browser observation.");
+    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 0);
+  }
+});
+
+test("Send reads an already settled anchor when only final-proof headroom remains without starting another selector wait", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  const reads = f.ui.replyReads;
+  f.ui.onSend = () => { f.advance(8800); };
+  f.ui.onGenerationWait = () => { assert.fail("The remaining budget permits final proof, not another selector wait."); };
+  const sent = await f.run("send", { ...plugin, prompt: "Already settled request" });
+  assert.equal(sent.sent, true); assert.equal(f.getState().sendConfirmed, true);
+  assert.equal(f.ui.replyReads - reads, 2, "The existing baseline and one final coherent anchor proof establish Send.");
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 8800);
+});
+
+test("Send deadline exhaustion before readiness cannot start a new wait or extend the original budget", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onSend = () => { f.advance(9500); };
+  await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
+    assert.deepEqual(sendReadinessDiagnostic(error), { stage: "deadline-before-wait", turnCount: null, markerCount: null,
+      validMarkerCount: null, latestMatches: null, keyCount: null, nestedTurnCount: null, latestNestedInTurn: null, markerNestedInTurn: null });
+    return true;
+  });
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 9500);
+  assert.equal(f.getState().sendConfirmed, false);
 });
 
 test("a long paste waits for Send readiness, types its payload and short marker once, and sends once", async () => {
@@ -1428,7 +1603,8 @@ test("paste readiness, saved URL and generation proof consume one shared Send de
       }
     };
     await assert.rejects(f.run("send", { ...plugin, prompt: "Shared deadline" }), /its effect is uncertain/);
-    assert.equal(f.ui.waitedMs, 10000);
+    assert.equal(f.ui.waitedMs, delayed === "generation" ? 8500 : 10000,
+      "Generation readiness preserves the final proof allowance inside the original Send deadline.");
     assert.equal(f.getState().sendConfirmed, false);
     assert.equal(f.ui.sendClicks, 1);
     await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);

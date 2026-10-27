@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
+import { waitForBrowserReadiness } from "../src/web-browser-state.mjs";
 import { readStopResult, stopCode } from "../src/web-stop-adapter.mjs";
 import { STOP_BUDGET } from "../src/web-stop-contract.mjs";
 
@@ -613,6 +614,47 @@ test("delayed site cancellation stays unknown in the old window and confirms onl
     assert.equal(repeated.clickAttempted, false);
     assert.equal(f.first.state.reconciliationStop, receipt);
     assert.equal(clicked(f).length, 1, "A larger allowance never authorizes a second click.");
+  }
+});
+
+test("attached readiness keeps its caller deadline and original timeout across an SDK-capped wait", async () => {
+  const reasons = ["Playwright selector deadline exceeded", "Timed out after 3000ms waiting for selector owned-anchor: no match"];
+  for (const reason of reasons) for (const prefix of ["", "Error: "]) {
+    const rejection = new Error(`${prefix}${reason}\nlocator.waitFor(attached) timed out`);
+    let now = 0, attempts = 0, reads = 0;
+    const requested = [], settled = [];
+    const observation = await waitForBrowserReadiness({ waitFor: async options => {
+      assert.equal(options.state, "attached"); requested.push(options.timeoutMs);
+      if (++attempts === 1) { now = 3000; throw rejection; }
+    } }, {
+      state: "attached", nextTimeout: () => 6000 - now,
+      afterWait: result => settled.push(result),
+      inspect: async () => { reads += 1; return { ownedAnchorReady: attempts === 2 }; },
+      ready: value => value.ownedAnchorReady,
+    });
+    assert.deepEqual(observation, { ownedAnchorReady: true }); assert.deepEqual(requested, [6000, 3000]);
+    assert.equal(reads, 2); assert.equal(settled[0].error, rejection); assert.equal(settled[0].timedOut, true);
+    assert.equal(settled[1].error, undefined); assert.equal(settled[1].timedOut, false);
+  }
+});
+
+test("a caller can preserve an unknown attached-wait error before any decisive read or retry", async () => {
+  for (const reason of [
+    "Error: strict mode violation: private selector",
+    "Browser error: Playwright selector deadline exceeded",
+    "Error: Error: Timed out after 3000ms waiting for selector private selector",
+  ]) {
+    const rejection = new Error(`${reason}\nlocator.waitFor(attached) timed out`), events = [];
+    await assert.rejects(waitForBrowserReadiness({ waitFor: async ({ state }) => {
+      assert.equal(state, "attached"); events.push("wait"); throw rejection;
+    } }, {
+      state: "attached", nextTimeout: () => 6000,
+      afterWait: ({ error, timedOut }) => {
+        assert.equal(error, rejection); assert.equal(timedOut, false); events.push("reject"); throw error;
+      },
+      inspect: async () => { events.push("inspect"); return true; }, ready: Boolean,
+    }), error => error === rejection);
+    assert.deepEqual(events, ["wait", "reject"]);
   }
 });
 

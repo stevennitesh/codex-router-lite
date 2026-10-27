@@ -56,6 +56,11 @@ anchors observation and immediate Stop. It does not prove that ChatGPT accepted
 the input: optimistic turns can be followed by a site rejection and restored
 draft. Router starts ordinary observation immediately after this anchor, without
 waiting inside Send for a native tool that observation must deliver.
+Send and Stop use the same bounded selector-wait helper. A capped SDK wait can
+rearm only within the original caller deadline, after a coherent state read.
+Send readiness includes the unique latest prompt marker and valid new turn
+identity; its final page proof remains authoritative. Failed confirmation keeps
+Send uncertain and reports a fixed failure stage, never another Send click.
 
 Current-generation substantive assistant output or an authenticated current-token
 broker handler acknowledges input. Registration, declaration updates, Stop visibility

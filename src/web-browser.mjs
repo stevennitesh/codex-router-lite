@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -220,7 +220,8 @@ export function readBrowserReplies(elements, options) {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.projection === "identities" || options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
       if (options.projection === "anchor") return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
-        && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)) };
+        && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)),
+        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)) };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
@@ -649,7 +650,7 @@ async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory
 
 // Interrupted continuation uses the same retained cancellation policy and shared
 // semantic state factory; ordinary continuation retains its lifecycle guards.
-async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState) {
+async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness) {
   const { ui } = options;
   const owner = activeOwner(owners, true), tab = state.tab, tabId = state.tabId, browser = state.browser,
     savedUrl = state.savedUrl, generationTurnKey = state.generationTurnKey;
@@ -677,7 +678,7 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   if (!state.hasSentMessage || !state.sendAttempted || !state.sendClicked || !savedUrl
       || typeof generationTurnKey !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(generationTurnKey)) throw new Error("Interrupted continuation requires the exact confirmed browser generation.");
   const browserState = createStopState(tab, { ui, generationTurnKey, stopName: owner.stopButtonName,
-    idleName: options.recoveryIdleButtonExactName });
+    idleName: options.recoveryIdleButtonExactName }, browserReadiness);
   const confirmationDeadline = Date.now() + 10000;
   let receipt = state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
   const composerRestored = () => receipt?.acknowledged === true && receipt.idleAbsent === true;
@@ -717,7 +718,7 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
 }
 
-async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState) {
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState, browserReadiness) {
   const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
@@ -1045,7 +1046,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   }
   await state.tab.markHandoff();
   if (interrupted) {
-    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState);
+    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness);
     if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
     state.retained = true;
   } else if (!state.completed || !state.retained) throw new Error("The retained conversation is not ready for continuation.");
@@ -1113,7 +1114,7 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
   emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
 }
 
-async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel) {
+async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel, createStopState, browserReadiness) {
   const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
@@ -1210,24 +1211,59 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (precedingIdentities.length) markerTurn = markerTurn.filter({ hasNot: state.tab.playwright.locator(
     `xpath=self::*[${precedingIdentities.map(key => `${attribute}='${key}'`).join(" or ")}]`) });
   const validIdentity = `string-length(${attribute})=36 and substring(${attribute},9,1)='-' and substring(${attribute},14,1)='-' and substring(${attribute},19,1)='-' and substring(${attribute},24,1)='-' and string-length(translate(${attribute},'-',''))=32 and translate(${attribute},'0123456789abcdefABCDEF-','')=''`;
-  const readyTurn = markerTurn.filter({ has: state.tab.playwright.locator(`xpath=self::*[${validIdentity}]`) });
-  activeOwner([options.turnId], true);
-  const remaining = sendDeadline - Date.now();
-  if (remaining <= 0) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-  try { await readyTurn.waitFor({ state: "attached", timeoutMs: remaining }); }
-  catch { throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain."); }
-  activeOwner([options.turnId], true);
-  const afterSend = await snapshot(state.tab, generationMarker.trim(), undefined, "anchor", [...baselineTurns]);
-  const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey) && value.matchesGenerationMarker);
-  const latestTurn = afterSend.turns.at(-1);
-  const anchor = candidates.length === 1 && candidates[0] === latestTurn
-      && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
-      && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1 ? latestTurn.turnKey : null;
-  activeOwner([options.turnId], true);
-  if (!(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
-  activeOwner([options.turnId], true);
-  if (!anchor) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-  state.generationTurnKey = anchor;
+  const turnsPath = `//*[@${ui.turnKeyAttribute}]`, latestPath = `(${turnsPath})[last()]`;
+  const markerPath = `${turnsPath}[contains(., '${generationMarker.trim()}')${precedingIdentities.length
+    ? ` and not(${precedingIdentities.map(key => `${attribute}='${key}'`).join(" or ")})` : ""}]`;
+  const readyTurn = markerTurn.filter({ has: state.tab.playwright.locator(`xpath=self::*[${validIdentity} and count(${markerPath})=1 and count(${markerPath} | ${latestPath})=1 and count(//*[@${ui.turnKeyAttribute}=${latestPath}/@${ui.turnKeyAttribute}])=1]`) });
+  const sentTab = state.tab, sentTabId = state.tabId;
+  const assertSendOwner = () => {
+    activeOwner([options.turnId], true);
+    if (state.tab !== sentTab || state.tabId !== sentTabId || state.savedUrl !== confirmedUrl
+        || !state.sendAttempted || !state.sendClicked || state.sendConfirmed) throw new Error("The active browser Send changed while confirming its turn; its effect is uncertain.");
+  };
+  let lastProof, lastWaitTimedOut = false;
+  const readinessFailure = stage => new Error(`The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain. ROUTER_WEB_SEND_READINESS_DIAGNOSTIC ${JSON.stringify({
+    stage, turnCount: lastProof?.turnCount ?? null, markerCount: lastProof?.markerCount ?? null,
+    validMarkerCount: lastProof?.validMarkerCount ?? null, latestMatches: lastProof?.latestMatches ?? null,
+    keyCount: lastProof?.keyCount ?? null, nestedTurnCount: lastProof?.nestedTurnCount ?? null,
+    latestNestedInTurn: lastProof?.latestNestedInTurn ?? null, markerNestedInTurn: lastProof?.markerNestedInTurn ?? null })}`);
+  const nextTimeout = () => {
+    assertSendOwner();
+    // Reserve the existing one-second anchor read and its URL/control proof.
+    return Math.floor(sendDeadline - Date.now() - 1500);
+  };
+  assertSendOwner();
+  if (sendDeadline - Date.now() < 1000) throw readinessFailure("deadline-before-wait");
+  const proof = await browserReadiness(readyTurn, { state: "attached", nextTimeout,
+    afterWait: ({ error, timedOut }) => {
+      assertSendOwner();
+      lastWaitTimedOut = timedOut;
+      if (error && !timedOut) throw readinessFailure("selector-error");
+    },
+    inspect: async () => {
+      assertSendOwner();
+      if (sendDeadline - Date.now() < 1000) throw readinessFailure(lastWaitTimedOut ? "selector-timeout" : "final-proof");
+      const afterSend = await snapshot(sentTab, generationMarker.trim(), undefined, "anchor", [...baselineTurns]);
+      assertSendOwner();
+      const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey) && value.matchesGenerationMarker);
+      const latestTurn = afterSend.turns.at(-1);
+      const valid = value => typeof value?.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.turnKey);
+      const keyCount = candidates.length === 1 ? afterSend.turns.filter(value => value.turnKey === candidates[0].turnKey).length : 0;
+      const anchor = candidates.length === 1 && candidates[0] === latestTurn && valid(latestTurn) && keyCount === 1 ? latestTurn.turnKey : null;
+      lastProof = { turnCount: afterSend.turns.length, markerCount: candidates.length,
+        validMarkerCount: candidates.filter(valid).length, latestMatches: candidates.length === 1 && candidates[0] === latestTurn, keyCount,
+        nestedTurnCount: afterSend.turns.filter(value => value.nestedInTurn).length,
+        latestNestedInTurn: latestTurn?.nestedInTurn ?? null, markerNestedInTurn: candidates.some(value => value.nestedInTurn) };
+      if (!(await normal())) throw readinessFailure("final-proof");
+      assertSendOwner();
+      if (Date.now() > sendDeadline) throw readinessFailure(lastWaitTimedOut ? "selector-timeout" : "final-proof");
+      const blocked = candidates.length > 1 || keyCount > 1 || candidates.length === 1 && valid(candidates[0]) && valid(latestTurn) && candidates[0] !== latestTurn;
+      return { anchor, blocked };
+    }, ready: value => Boolean(value.anchor) || value.blocked,
+  });
+  assertSendOwner();
+  if (!proof.anchor) throw readinessFailure(lastWaitTimedOut ? "selector-timeout" : "final-proof");
+  state.generationTurnKey = proof.anchor;
   state.sendConfirmed = true;
   delete state.unsentDraft;
   delete state.unsentComposerText;
@@ -1282,12 +1318,12 @@ async function runBrowserMutation(cache, options, nodeRepl) {
   const config = { ...options, ui: { ...cache.ui, ...options.ui } };
   const runner = options.operation === "continue" ? cache.continuation : cache.send;
   return runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext,
-    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState);
+    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness);
 }
 
 const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
   createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
-  createStopState: createStopBrowserState });
+  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness });
 export const browserMutationVersion = createHash("sha256")
   .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");

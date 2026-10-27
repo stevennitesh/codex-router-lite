@@ -1,13 +1,13 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isSavedChatUrl } from "./web-browser.mjs";
-import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 import { STOP_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
 // and runtimeModule; Router's atomic ledger writer preserves its private ACL.
-async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState) {
+async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState, waitForState) {
   const { threadId: nativeThread, turnId: nativeTurn, sessionId: nativeSession } = identity;
   const started = Date.now(), deadline = started + budgetMs;
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -184,7 +184,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // The SDK owns semantic names and visibility; no direct-label decoder is
     // allowed to reinterpret the controls selected by those locators.
     const browserState = createBrowserState(tab, { ui: config.ui, generationTurnKey,
-      stopName: config.stopButtonExactName, idleName: config.idleButtonExactName });
+      stopName: config.stopButtonExactName, idleName: config.idleButtonExactName }, waitForState);
     const { stop, ready } = browserState;
     const readAllowanceMs = 200;
     let receipt = !absent && state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
@@ -327,5 +327,5 @@ export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnI
     ...(delivery === undefined ? {} : { delivery }),
     ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
       .map(name => [name, browserDom[name]])) };
-  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()});`;
+  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()}, ${waitForBrowserReadiness.toString()});`;
 }
