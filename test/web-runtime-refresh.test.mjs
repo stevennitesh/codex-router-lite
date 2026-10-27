@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { installWebStopAdapter, rollbackWebStopAdapter } from "../src/web-stop-adapter-install.mjs";
-import { discoverWebRuntimeAnchors, refreshWebRuntime } from "../src/web-runtime-refresh.mjs";
+import { discoverWebRuntimeAnchors, refreshWebRuntime, inspectWebRuntimeMaintenance } from "../src/web-runtime-refresh.mjs";
 import { createAdapterHook } from "../src/web-stop-contract.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
@@ -71,6 +71,8 @@ function fixture(t, { threadIds = null } = {}) {
   rmSync(path.join(root, "old"), { recursive: true });
   let serviceHeld = false, catalogHeld = false;
   const dependencies = { adapter, isPrivate: () => true,
+    assertProcessesAbsent() {}, // Policy fixtures; real Windows census has separate coverage.
+    async assertClosedAdmission() {},
     writePrivate(file, contents) { effects.push("settings"); write(file, contents); },
     codexIdentity: () => ({ binary: current.officialCli.path, version: "fixture", fingerprint: "fixture-fingerprint" }),
     assertCodexIdentity(identity) { assert.equal(identity.binary, current.officialCli.path); },
@@ -293,6 +295,122 @@ test("an offline Router permits coordinated refresh without online Web activity 
   f.dependencies.drain = async () => ({ status: "offline" });
   const result = await refreshWebRuntime({ ...f.options, apply: true });
   assert.equal(result.applied, true); assert.equal(result.routerReloaded, true);
+});
+
+function uncertainLedger(f) {
+  const threadId = "01a156bc-82f7-7b91-9b78-367425c87efe", turnId = "01a1473b-9b4e-7302-a80c-2f3dd5e3d2a0";
+  const ledgerPath = path.join(f.stateDir, "web-in-app", "conversations", `${threadId}.json`);
+  f.write(ledgerPath, json({ version: 1, threadId, bindingId: "bfixture", browserOwnerTurnIds: [turnId],
+    uncertainSend: true, unresolvedCoding: [], lastTurn: { turnId, sendState: "uncertain", completed: false } }));
+  return ledgerPath;
+}
+
+const settledForce = () => ({ status: "forced", state: "closed", activeRequests: 0,
+  webRuntime: { known: true, activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 } });
+
+test("forced maintenance preserves durable uncertain Send bytes and forwards force to the closed-admission restart", async t => {
+  const f = fixture(t), ledgerPath = uncertainLedger(f), bytes = readFileSync(ledgerPath), before = f.snapshot();
+  const sidecar = path.join(path.dirname(ledgerPath), "retained-recovery-copy.json"), sidecarBytes = Buffer.from('{"unresolvedCoding":"opaque historical copy"}');
+  f.write(sidecar, sidecarBytes);
+  let proofs = 0, restarts = 0;
+  f.dependencies.drain = async ({ force }) => { assert.equal(force, true); return settledForce(); };
+  f.dependencies.assertProcessesAbsent = adapter => {
+    proofs++; assert.equal(adapter.currentRuntime.node.path, f.old.node.path);
+    assert.equal(adapter.candidate.node.path, f.current.node.path);
+    assert.equal(existsSync(adapter.currentRuntime.node.path), false, "old protected manifest retains removed anchors");
+  };
+  f.dependencies.restart = async options => {
+    assert.equal(options.force, true); assert.deepEqual(options.closedAdmission, settledForce());
+    assert.equal(typeof options.beforeMutation, "function"); options.beforeMutation(); restarts++; return 0;
+  };
+  const result = await refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true });
+  assert.equal(result.applied, true); assert.equal(restarts, 1); assert.ok(proofs >= 4);
+  assert.deepEqual(readFileSync(ledgerPath), bytes);
+  assert.deepEqual(readFileSync(sidecar), sidecarBytes);
+  assert.equal(readFileSync(f.keyPath, "utf8"), before.key);
+  assert.equal(JSON.parse(readFileSync(ledgerPath)).uncertainSend, true, "the replay blocker remains set");
+});
+
+test("forced uncertainty rejects incomplete work, missing evidence and failed process proof before mutation", async t => {
+  for (const branch of ["active", "unresolved", "unknown", "negative", "infinite", "missing-count", "active-request", "open-admission", "no-ledger", "invalid-ledger", "unprotected-ledger", "live-or-unknown-process"]) {
+    await t.test(branch, async subtest => {
+      const f = fixture(subtest), file = uncertainLedger(f), before = f.snapshot(), drain = settledForce();
+      if (branch === "active") drain.webRuntime.activeTurns = 1;
+      if (branch === "unresolved") drain.webRuntime.unresolvedActions = 1;
+      if (branch === "unknown") drain.webRuntime.known = false;
+      if (branch === "negative") drain.webRuntime.uncertainSends = -1;
+      if (branch === "infinite") drain.webRuntime.uncertainSends = Infinity;
+      if (branch === "missing-count") delete drain.webRuntime.unresolvedActions;
+      if (branch === "active-request") drain.activeRequests = 1;
+      if (branch === "open-admission") drain.state = "open";
+      if (branch === "no-ledger") rmSync(file);
+      if (branch === "invalid-ledger") f.write(file, '{"uncertainSend":true}');
+      if (branch === "unprotected-ledger") f.dependencies.isPrivate = target => target !== file;
+      if (branch === "live-or-unknown-process") f.dependencies.assertProcessesAbsent = () => { throw new Error("live or unreadable process"); };
+      f.dependencies.drain = async () => drain;
+      await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }));
+      assert.deepEqual(f.snapshot(), before); assert.equal(f.effects.includes("restart"), false);
+    });
+  }
+});
+
+test("forced maintenance fences an early reopen and ledger changes at selection mutation", async t => {
+  for (const branch of ["reopen", "ledger-change"]) await t.test(branch, async subtest => {
+    const f = fixture(subtest), file = uncertainLedger(f), before = f.snapshot(); let proofs = 0;
+    f.dependencies.drain = async () => settledForce();
+    f.dependencies.assertProcessesAbsent = () => {
+      if (++proofs === 3) {
+        if (branch === "reopen") throw new Error("new host generation");
+        f.write(file, `${readFileSync(file, "utf8")}\n`);
+      }
+    };
+    await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }));
+    assert.deepEqual(f.snapshot(), before); assert.equal(f.effects.includes("restart"), false);
+    assert.equal(f.effects.at(-1), "resume", "unchanged protected selections allow admission recovery");
+  });
+});
+
+test("forced maintenance keeps recovery strict when a restart fails with retained uncertainty", async t => {
+  const f = fixture(t), file = uncertainLedger(f), bytes = readFileSync(file); let drains = 0;
+  f.dependencies.drain = async ({ force }) => {
+    if (++drains === 1) { assert.equal(force, true); return settledForce(); }
+    assert.equal(force, false); throw new Error("uncertain Web workflow");
+  };
+  f.dependencies.restart = async () => 1;
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }), /rollback deferred/u);
+  assert.equal(drains, 2); assert.deepEqual(readFileSync(file), bytes);
+  assert.equal(f.effects.includes("resume"), false);
+});
+
+test("forced maintenance rejects durable unloaded native actions even when serving counters are all zero", async t => {
+  for (const uncertainSends of [0, 1]) await t.test(`serving uncertainty: ${uncertainSends}`, async subtest => {
+    const f = fixture(subtest), file = uncertainLedger(f), value = JSON.parse(readFileSync(file));
+    value.unresolvedCoding = [{ callId: "retained-native-call", outputType: "function_call_output" }];
+    f.write(file, json(value));
+    const bytes = readFileSync(file), before = f.snapshot(), drain = settledForce(); drain.webRuntime.uncertainSends = uncertainSends;
+    f.dependencies.drain = async () => drain;
+    await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }), /no unresolved native action/u);
+    assert.deepEqual(f.snapshot(), before); assert.deepEqual(readFileSync(file), bytes); assert.equal(f.effects.includes("restart"), false);
+  });
+});
+
+test("independent maintenance binds the reviewed candidate through internal planning before any forced drain", async t => {
+  const f = fixture(t), expectedMaintenance = inspectWebRuntimeMaintenance(f.options), before = f.snapshot();
+  f.write(f.current.runtimeModule, "export const current = 'new valid runtime bytes';\n");
+  let drains = 0; f.dependencies.drain = async () => { drains++; return settledForce(); };
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true, expectedMaintenance }), /candidate changed/u);
+  assert.equal(drains, 0); assert.deepEqual(f.snapshot(), before);
+});
+
+test("forced maintenance checks process absence again after candidate compilation and before launch selection publication", async t => {
+  const f = fixture(t), file = uncertainLedger(f), bytes = readFileSync(file), before = f.snapshot(); let reopened = false;
+  f.dependencies.drain = async () => settledForce();
+  f.dependencies.adapter.compileEntry = (_source, output) => { f.write(output, "unsigned fixture launcher"); reopened = true; };
+  f.dependencies.assertProcessesAbsent = () => { if (reopened) throw new Error("new native host during compilation"); };
+  await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }), /new native host/u);
+  assert.deepEqual(f.snapshot(), before); assert.deepEqual(readFileSync(file), bytes);
+  assert.equal(f.effects.includes("restart"), false);
+  assert.equal(f.effects.at(-1), "resume", "an abort before selection publication restores admission");
 });
 
 test("failure after settings publication restores exact prior generation and settings without resetting original baseline", async t => {

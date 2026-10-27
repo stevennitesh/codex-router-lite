@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-10-27",
+  "sourceBase": "5501c45748172fdc101a2ce4bd574b92e2f4d24b",
+  "installedRouterAtReview": "982bcf236fce57621d115a62266fc7ce11b32d31",
+  "native": {
+    "appVersion": "26.1023.6123.0",
+    "cliVersion": "0.165.0-alpha.1.2",
+    "cliSignature": "Valid OpenAI signature",
+    "appToolsVersion": "26.1023.50603",
+    "catalogModelsParsed": 18,
+    "catalogCompatibility": "passed",
+    "routerHealth": "passed",
+    "webRuntime": "The update removed the configured browser runtime. Coordinated refresh and subsequent live qualification remained pending at review."
+  },
+  "routerUpstream": {
+    "reviewBaseline": "9945d74354ab07942f171be329cf81c9478fc5e2",
+    "fetchedHead": "ae5fbc91fb5b27fdd1c55065727835b0c28a684d",
+    "newCommits": 107,
+    "scope": "Selected retained-owner changes; not a complete disposition of all commits. The review baseline was not advanced.",
+    "ported": [
+      "4792ba29af5a52c6f64cd2b44e7731a626d09616: preserve APPDATA and LOCALAPPDATA in the sanitized Windows ACL-helper environment without forwarding credentials.",
+      "6d1292e0dd26325a624c120de468e05d0c520f02: preserve competing skill files and replacement directories, rotate publication tokens, and durably relinquish stale deletion authority. A synthetic concurrent publication reproduced actual deletion before repair."
+    ],
+    "alreadyCovered": [
+      "955645840771efbb0e689d395d753e9168143d19: native catalog client-version cache identity",
+      "dee06b17441c4fc6ef2a69d3ded94d58459eb532: failed-spawn cleanup ownership",
+      "a2450e2e4d44042bde6cd58c253689f9bf1cb4bf: inference redirect refusal",
+      "e454b39f7e778db022880857da7f67f450bd0be4: explicit direct Responses selection"
+    ],
+    "deferred": [
+      "e56da02b59cced1ec232125cb9794ab88838d9a0: a forced supervisor-exit timeout needs evidence and adaptation to retained child, batch-cleanup and catalog custody.",
+      "2385edfa: empty function-call history mutation requires retained-endpoint evidence before changing replay semantics."
+    ],
+    "excluded": "Generic providers, retained-tool archives, UI, other clients and non-Windows distribution are outside retained owners."
+  },
+  "switchyardUpstream": {
+    "retainedPin": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "fetchedHead": "b57c5927f6d9e186df23697247a38a7b7fc7eb14",
+    "newCommits": 131,
+    "orderedPatchCheck": "The required contribution conflicts with current upstream; compatibility-layer applicability was not tested.",
+    "disposition": "Retain the existing pin. Reviewed cross-family replay, fallback-list, diagnostics, classifier and platform changes did not establish a required current native-GPT route repair."
+  },
+  "focusedVerification": {
+    "windowsAclTests": "33 passed in the normal Windows user context",
+    "skillPublicationTests": "18 passed, including six conflict, replacement and crash-recovery regressions",
+    "independentSourceReview": "No actionable findings for the four-file upstream repair candidate",
+    "liveProvider": "Not established by these source, catalog, health or fixture checks."
+  },
+  "officialReleaseNotes": {
+    "url": "https://learn.chatgpt.com/docs/changelog",
+    "observed": "The fetched page documented CLI 0.164.0, but did not document the installed 0.165.0-alpha.1.2 build.",
+    "compressedRollouts": "Session-resume changes identify a surface to investigate if current active-session evidence fails; release notes alone do not establish a cancellation defect."
+  }
+}

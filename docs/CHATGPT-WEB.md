@@ -169,9 +169,49 @@ Candidate validation happens before the coordinator drains work, and it resumes
 admission if installation fails before reload and prior state is restored.
 The serving Router must support Web-aware drain checks: active
 generations, uncertain Sends and unresolved native actions postpone the refresh.
-The override still requires all three Web counters to be known and zero.
-If an older Router cannot supply that proof, deploy and reload the current Router
-before applying the runtime refresh. Fully quit and reopen Codex normally when the command reports that
+Normal refresh requires all three Web counters to be known and zero. Forced
+maintenance may retain an uncertain Send only after active turns and unresolved
+actions are known zero, all Router requests have settled, and a fresh complete
+process census proves the full Codex host, managed adapter and both old and new
+official runtime cohorts have exited. Unreadable process identities fail closed.
+The registered SYSTEM sandbox broker can remain running; its actual tool-job
+descendants must settle. Confirmed process exits are distinct from denied
+inspection. The protected saved conversation records must have valid durable
+action-risk fields and remain byte-identical;
+the uncertain Send remains blocked from replay. Any saved unresolved native action
+blocks forced maintenance even if the serving Router has not loaded that record.
+Older history that cannot resume under the current browser contract can still
+be preserved when those risk fields are valid. Maintenance never migrates that
+history or makes it resumable.
+
+When missing old runtime files also prevent deployment, prepare the reviewed
+clean source candidate through the independent maintenance entrypoint:
+
+```powershell
+.\maintenance\deploy-web-runtime-candidate.ps1 -ExpectedRouterCommit <reviewed-full-commit> -CandidateBinary 'C:\absolute\switchyard-server.exe' -ExpectedBinarySha256 <reviewed-binary-sha256>
+```
+
+This checkout workflow requires its recorded installed root and binds the
+reviewed existing Switchyard binary and hash. It validates the candidate while
+Codex is open and returns protected result and log paths for an independent hidden
+worker. Its result reports `waiting-for-codex-exit` after worker validation. Fully quit Codex normally after the
+worker is prepared. The worker waits on actual process exit handles, revalidates
+the candidate, refreshes runtime selections, runs the existing guarded in-process
+Switchyard/Router checkout deployment without a second independent worker,
+then replans the adapter and applies only a changed final generation. It does not
+quit or launch Codex. Reopen Codex only after `result.json` reports
+`succeeded: true`; a timeout, new app generation, changed candidate or unknown
+work stops the remaining maintenance. Keep the result/log paths for inspection
+after reopening. The default exit wait is thirty minutes and can be bounded with
+`-ExitTimeoutSeconds`.
+The acceptance includes the underlying checkout deployment receipt and durable
+rollback locations, the final adapter/runtime identities and preserved ledger
+digest. The final adapter must retain the reviewed official runtime cohort.
+The underlying deployment also retains its ordinary completed recovery owner
+before later Web checks, so its backup remains discoverable if those checks fail.
+
+An older Router without known Web counters cannot use the uncertainty exception.
+Fully quit and reopen Codex normally when the command reports that
 the adapter needs to reload. An unchanged Interrupt hook retains its trust. If the
 refresh reports a changed hook definition, review and trust it in Settings → Hooks;
 verify tools, Stop and same-chat continuation after activation.

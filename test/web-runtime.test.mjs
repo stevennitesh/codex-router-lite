@@ -945,6 +945,27 @@ test("unsupported saved mappings fail before browser effects and preserve the or
   });
 });
 
+test("historical unsent V1 history remains non-resumable after maintenance risk validation", async t => {
+  const { validWebConversationRisk } = await import("../src/web-runtime.mjs");
+  for (const emptyCheckpoint of [false, true]) await t.test(`empty checkpoint: ${emptyCheckpoint}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Original completed historical answer");
+    await h.restartRuntime(); h.loseKernel();
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    saved.lastTurn = { turnId, sendState: "unsent", completed: false };
+    saved.uncertainSend = false; saved.unresolvedCoding = [];
+    if (emptyCheckpoint) saved.checkpoint = [];
+    for (const field of ["sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted"]) delete saved[field];
+    assert.equal(validWebConversationRisk(saved, threadId), true, "maintenance can preserve known risk without accepting old execution fields");
+    const original = JSON.stringify(saved); writeFileSync(h.stateFile, original, "utf8");
+    const sends = h.browser.ui.sends.length, navigations = h.browser.ui.navigations;
+    h.newTurn(followupId, "Continue only if current saved history is valid.");
+    await assert.rejects(h.request(), { code: "web_conversation_state" });
+    assert.equal(readFileSync(h.stateFile, "utf8"), original);
+    assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.browser.ui.navigations, navigations);
+  });
+});
+
 test("native observation validation rejects old, missing, changed or unpaired reply identity evidence", async t => {
   for (const [label, change] of [
     ["old reply", value => ({ ...value, replyId: messageId(0), assistantText: "Old answer", completed: true })],

@@ -32,7 +32,12 @@ try {
   $acceptance = $null
   if ($request.requireAcceptance) {
     $acceptance = Get-Content -Raw -LiteralPath $acceptancePath -Encoding UTF8 | ConvertFrom-Json
-    if ($acceptance.version -ne 1 -or $acceptance.accepted -ne $true -or
+    if ($request.acceptanceKind -eq 'web-runtime-maintenance') {
+      & node (Join-Path $PSScriptRoot 'web-runtime-maintenance.mjs') accept $parameters['ExpectedRouterCommit'] $parameters['CandidateBinary'] $parameters['ExpectedBinarySha256'] $parameters['ExpectedCandidateSha256'] $acceptancePath
+      if ($LASTEXITCODE -ne 0) { throw 'Web runtime maintenance acceptance validation failed.' }
+    } elseif ($request.acceptanceKind -and $request.acceptanceKind -ne 'switchyard') {
+      throw 'Unsupported independent deployment acceptance owner.'
+    } elseif ($acceptance.version -ne 1 -or $acceptance.accepted -ne $true -or
         $acceptance.routerCommit -ne $parameters["ExpectedRouterCommit"].ToLowerInvariant() -or
         $acceptance.switchyardBinarySha256 -ne $parameters["ExpectedBinarySha256"].ToLowerInvariant() -or
         -not $acceptance.checks -or -not @($acceptance.checks.PSObject.Properties).Count -or

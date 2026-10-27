@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { prepareRouterServiceMutation } from "../src/service-drain.mjs";
+import { prepareRouterServiceMutation, assertRouterAdmissionStillClosed } from "../src/service-drain.mjs";
 import { RouterAdmission } from "../src/router-admission.mjs";
 
 function response(status, body) {
@@ -131,5 +131,42 @@ test("invalid drain budgets fail before probing or mutating the runtime", async 
     await assert.rejects(prepareRouterServiceMutation({
       timeoutMs, fetchImpl: async () => assert.fail("invalid budget must not reach the runtime"),
     }), /Drain timeout must be an integer/u);
+  }
+});
+
+test("coordinated forced restart revalidates closed admission and an owned live process without another drain", async () => {
+  const expected = { status: "forced", state: "closed", activeRequests: 0, webRuntime: { known: true, activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 } };
+  const process = { pid: 1234, processIdentity: "100|C:\\node.exe", sourceRoot: "fixture" };
+  const result = await assertRouterAdmissionStillClosed(expected, {
+    internalKey: "fixture", readProcess: () => process, ownsProcess: () => true,
+    fetchImpl: async (url, init) => {
+      assert.ok(url.endsWith("/internal/lifecycle")); assert.equal(init.method, undefined);
+      assert.equal(init.headers.authorization, "Bearer fixture");
+      return response(200, { ...expected, capability: "drain-v1" });
+    },
+  });
+  assert.equal(result, expected);
+});
+
+test("closed-admission restart rejects new, unknown or active work, lost ownership and changed process generations", async t => {
+  for (const branch of ["open", "active-request", "active-turn", "new-uncertainty", "unresolved", "unknown", "missing", "negative", "foreign", "reused-pid", "unauthenticated", "wrong-capability"]) {
+    await t.test(branch, async () => {
+      const expected = { status: "forced", state: "closed", activeRequests: 0, webRuntime: { known: true, activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 } };
+      const observed = { ...structuredClone(expected), capability: "drain-v1" }; let reads = 0;
+      if (branch === "open") observed.state = "open";
+      if (branch === "active-request") observed.activeRequests = 1;
+      if (branch === "active-turn") observed.webRuntime.activeTurns = 1;
+      if (branch === "new-uncertainty") observed.webRuntime.uncertainSends = 2;
+      if (branch === "unresolved") observed.webRuntime.unresolvedActions = 1;
+      if (branch === "unknown") observed.webRuntime.known = false;
+      if (branch === "missing") delete observed.webRuntime.uncertainSends;
+      if (branch === "negative") observed.webRuntime.uncertainSends = -1;
+      if (branch === "wrong-capability") observed.capability = "unknown";
+      await assert.rejects(assertRouterAdmissionStillClosed(expected, {
+        internalKey: "fixture", ownsProcess: () => branch !== "foreign",
+        readProcess: () => ({ pid: 1234, processIdentity: `${branch === "reused-pid" && ++reads > 1 ? "101" : "100"}|C:\\node.exe`, sourceRoot: "fixture" }),
+        fetchImpl: async () => response(branch === "unauthenticated" ? 401 : 200, observed),
+      }), /no longer closed/u);
+    });
   }
 });

@@ -380,15 +380,18 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
       ...(found && !same(found.hook, hook) ? { priorHook: found.hook } : {}) });
     if (refreshTransaction) Object.assign(refreshTransaction, { desired, preparedText, installedText, nextHooksText });
     // Durable private baseline precedes both the hook file and User overrides.
+    refreshTransaction?.beforeMutation?.();
     writeCompared(ctx, ctx.receiptPath, previous?.text ?? null, preparedText);
     const transaction = { beforeEnvironment, desired, beforeHooksText, nextHooksText, preparedText, installedText };
     let result = { broadcast: null };
     try {
+      refreshTransaction?.beforeMutation?.();
       writeCompared(ctx, ctx.hooksPath, beforeHooksText, nextHooksText);
+      refreshTransaction?.beforeMutation?.();
       if (!same(beforeEnvironment, desired)) result = ctx.environment.compareExchangePair(beforeEnvironment, desired);
       if (!same(pair(ctx.environment.readPair()), desired)) throw new Error("Adapter User environment activation readback failed.");
       writeCompared(ctx, ctx.receiptPath, preparedText, installedText);
-    } catch (error) { restoreFailedInstall(ctx, transaction, error); }
+    } catch (error) { if (error.runtimeRefreshRollbackAllowed === false) throw error; restoreFailedInstall(ctx, transaction, error); }
     return installResult(ctx, installed, result.broadcast, hookDefinitionChanged);
 }
 
@@ -401,10 +404,10 @@ export function installWebStopAdapter(options = {}) {
 function ownedRefreshState(ctx) {
   const receipt = loadReceipt(ctx);
   if (receipt?.state !== "installed") throw new Error("Runtime refresh requires an installed owned Web Stop adapter; finish adapter setup or recovery first.");
-  verifyManaged(ctx, receipt, { external: false });
+  const managed = verifyManaged(ctx, receipt, { external: false });
   const environment = pair(ctx.environment.readPair()), hooksText = readText(ctx.hooksPath);
   ensureInstallOwnership(receipt, environment, parseHooks(hooksText));
-  return { receipt, environment, hooksText };
+  return { receipt, environment, hooksText, currentRuntime: managed.plan };
 }
 
 export function ownedWebStopAdapterEntry(options = {}) {
@@ -412,7 +415,7 @@ export function ownedWebStopAdapterEntry(options = {}) {
 }
 
 function inspectRefresh(ctx, options) {
-  const { receipt, environment, hooksText } = ownedRefreshState(ctx);
+  const { receipt, environment, hooksText, currentRuntime } = ownedRefreshState(ctx);
   let manifest = options.manifestPath ? absolute(options.manifestPath) : options.manifest;
   if (!manifest && options.anchors) {
     const anchors = options.anchors, paths = [anchors.node, anchors.officialCli, anchors.officialNodeRepl].map(absolute);
@@ -430,12 +433,13 @@ function inspectRefresh(ctx, options) {
   const candidate = inspectManifest(ctx, manifest);
   if (path.dirname(candidate.node.path) !== path.dirname(candidate.officialNodeRepl.path)) throw new Error("Web runtime refresh requires Node and Node REPL from the same official runtime directory.");
   if (options.allowThreadScopeChange !== true && !same(candidate.threadIds, receipt.threadIds ?? null)) throw new Error("Runtime refresh must preserve the installed adapter thread scope.");
-  return { manifest, candidate, candidateGeneration: stageInputs(ctx, candidate).generation, receipt, environment, hooksText };
+  return { manifest, candidate, candidateGeneration: stageInputs(ctx, candidate).generation, receipt, environment, hooksText, currentRuntime };
 }
 
 export function inspectWebStopAdapterRuntimeRefresh(options = {}) {
   const ctx = context(options), observed = inspectRefresh(ctx, options);
   return { manifest: observed.manifest, candidate: observed.candidate, candidateGeneration: observed.candidateGeneration, generation: observed.receipt.generation,
+    currentRuntime: observed.currentRuntime, managedEntryPath: observed.receipt.entryPath,
     threadIds: observed.receipt.threadIds ?? null, receiptSha256: hash(observed.receipt.text),
     hooksSha256: hash(observed.hooksText ?? ""), environment: observed.environment,
     hookDefinitionChanged: !same(observed.receipt.hook, createAdapterHook()),
@@ -453,11 +457,13 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
         || !same(options.expected.environment, before.environment)
         || options.expected.candidateGeneration !== before.candidateGeneration
         || !same(options.expected.candidate, before.candidate))) throw new Error("Web runtime refresh plan changed; retry before applying.");
-    const transaction = { expectedGeneration: before.candidateGeneration };
+    const transaction = { expectedGeneration: before.candidateGeneration, beforeMutation: options.beforeMutation };
     try {
+      options.beforeMutation?.();
       const result = installUnlocked(ctx, options.manifestPath ? absolute(options.manifestPath) : options.manifest, transaction);
       return await operation(result);
     } catch (cause) {
+      if (cause.runtimeRefreshSelectionsUnchanged === true) throw cause;
       // A reloaded Router can already be admitting calls. The coordinator
       // withholds compensation if a fresh idle drain cannot be established.
       if (cause.runtimeRefreshRollbackAllowed === false) throw cause;

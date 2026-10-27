@@ -769,11 +769,60 @@ capabilities and runtime-key storage. It preserves an unchanged hook definition;
 The current generation
 remains fixed during admitted calls, and failed refreshes preserve or restore
 still-owned prior state. A reported Codex restart is needed to load the new adapter.
-Online refresh requires explicit known-idle Web counters from the serving Router,
-including the gaps between native HTTP requests. Older drain replies do not
-establish this proof; deploy and reload the new Router before refreshing runtime
-selections. Recovery requires the same idle proof before restoring prior state;
+Normal online refresh requires explicit known-idle Web counters from the serving
+Router, including the gaps between native HTTP requests. Forced maintenance can
+retain uncertain Sends when the authenticated closed drain reports zero active
+requests, known zero active turns and unresolved actions, and finite nonnegative
+uncertainty. It additionally requires a fresh complete Windows process census
+showing no full Codex/ChatGPT host, managed adapter, or official process beneath
+either runtime's CLI/Node/browser roots, including code-mode hosts and descendant
+tool processes. The old cohort comes from the retained protected
+adapter manifest, even when its external app files were removed; the validated
+new candidate owns the current anchors. Generic Router Node processes are not
+browser-child proof. Inaccessible or incomplete process identities fail closed.
+HTTP request completion and cancellation events alone never prove child exit.
+The census distinguishes positive exit from denied live inspection. The
+registered SYSTEM sandbox broker is verified through Windows service/registry
+ownership, its package image and service-manager ancestry; it is not an app/tool
+client that must exit. Its actual tool descendants remain relevant and no service
+is stopped for maintenance.
+
+The coordinator validates protected conversation ledgers with the runtime's shared
+durable-risk projection, rejects every unresolved native action even when its
+record is not loaded by the serving Router, requires durable evidence for each
+reported uncertain Send, and verifies
+their original hashes at selection changes and after reload. It never clears an
+uncertainty bit or replays Send.
+Historical V1 history fields remain opaque and byte-preserved when the risk
+projection is valid. The full resume validator retains its stricter current
+history/binding requirements; preservation does not make older history executable.
+Only exact UUID mapping filenames carry current conversation risk. Protected
+bounded regular recovery sidecars are hashed and preserved as opaque bytes;
+their historical contents never become executable state. Links, directories and
+unreadable sidecars remain failures, and changes to either mappings or sidecars
+withhold maintenance acceptance.
+The forced restart revalidates closed admission,
+the same Web counters and the live owned Router process before bypassing only its
+redundant drain; it cannot force a newly opened admission state. Recovery still
+requires the ordinary known-zero Web proof before restoring prior state;
 new or uncertain work defers compensation and retains the refreshed generation.
+Older drain replies establish neither the normal proof nor this forced exception.
+The [independent maintenance entrypoint](../CHATGPT-WEB.md#refresh-after-a-codex-update)
+uses the existing protected WMI worker/request/result lifecycle to await a full
+normal quit, with actual exit handles followed by a fresh complete census. It
+validates the reviewed clean candidate before waiting and after exit, refreshes
+before the existing in-process guarded checkout deployment, and applies a final
+adapter plan only if changed. The initial refresh compares its own prepared
+candidate with the reviewed plan before effects; the final plan must retain that
+official runtime cohort. Acceptance records the actual final identities and the
+underlying deployment's acceptance and durable rollback receipts.
+The successful underlying checkout deployment publishes its ordinary protected
+completed owner immediately, independently of the outer Web result. Existing
+recovery discovery therefore retains backup custody even if a later Web check fails.
+An early reopen aborts before the next selection change. No app auto-launch or
+runtime patch is involved. Retained generations are preserved for recovery;
+removed official runtime files mean the old adapter alone is not a usable Web
+rollback, and its live recovery must be verified separately.
 The explicit `stop install-adapter` command routes an installed, locally owned
 replacement through this same coordinator, including its manifest validation and
 browser update. Unresolved ownership or prepared recovery is rejected before

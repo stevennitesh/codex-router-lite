@@ -115,17 +115,29 @@ configuration cannot identify a unique valid candidate. See
 [Web refresh](../CHATGPT-WEB.md#refresh-after-a-codex-update); live readiness still
 requires verification after the reported Codex restart.
 
-When an app update removed the configured Web files, refresh the currently
-installed source before selecting a candidate with different dependency inputs.
-The coordinator needs that source to match its installed dependencies; catalog
-publication and startup still require valid runtime files. After deployment,
-refresh the adapter again if its resident helper changed, then reopen Codex once
-after the final generation is installed. When explicitly authorized to interrupt
-blocking Router requests, use
+When an app update removed the configured Web files, catalog publication and
+startup can reject deployment before it can repair the stale runtime. Use the
+[independent Web maintenance entrypoint](../CHATGPT-WEB.md#refresh-after-a-codex-update)
+from a reviewed clean source candidate to refresh the validated runtime first,
+then run the existing guarded checkout deployment in-process and replan the adapter against the
+installed dependencies. It applies only a changed final adapter. Prepare its
+hidden independent worker while Codex is open, fully quit normally, and reopen
+once after the protected result reports success. The worker revalidates source
+and runtime identities around the exit wait and retains all rollback artifacts;
+it does not auto-launch Codex or claim live Web rollback qualification.
+When explicitly authorized to interrupt blocking Router requests, the direct
+coordinator remains
 `model-router.ps1 codex web refresh-runtime --apply --force-service-replacement`
-to keep replacement within the coordinator. The override requires `--apply`;
-known-zero Web counters still govern runtime replacement, including active turns,
-uncertain Sends and unresolved native actions. Do not run a separate forced drain
+for replacement. The override requires `--apply`. Normal refresh keeps all three
+Web counters known zero. Forced maintenance can preserve uncertain Send records
+only after known zero active turns and unresolved actions, settled Router
+requests, and fresh positive absence proof for the full native host and both
+old/current adapter and official child cohorts. Unknown process inspection or
+work counters withhold mutation. Protected valid ledgers remain byte-identical,
+saved unresolved native actions block every forced branch, and replay protection
+stays active. Candidate binding is checked again inside refresh; the final plan
+must retain the reviewed official cohort. Recovery remains strict about new active or
+unknown work. Do not run a separate forced drain
 before refresh: candidate validation must finish before admission closes, and
 the coordinator must own admission recovery if installation fails before reload.
 
