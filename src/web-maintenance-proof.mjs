@@ -10,9 +10,23 @@ import { validWebConversationRisk } from "./web-runtime.mjs";
 const helper = fileURLToPath(new URL("./web-maintenance-processes.ps1", import.meta.url));
 const normalize = value => path.resolve(value).toLowerCase();
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
-const failure = () => Object.assign(new Error("Forced Web maintenance requires a fresh complete census proving Codex, its managed adapter and both official runtime cohorts have exited."), { code: "ERR_WEB_MAINTENANCE_PROOF" });
+const failure = (phase = "classification", reason = "unconfirmed", details = {}) => Object.assign(new Error(
+  `Forced Web maintenance requires a fresh complete census proving Codex, its managed adapter and both official runtime cohorts have exited. Process proof: ${phase}/${reason}.${Object.keys(details).length ? ` ${JSON.stringify(details)}` : ""}`),
+{ code: "ERR_WEB_MAINTENANCE_PROOF", diagnostic: { phase, reason, ...details } });
 const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", helper];
 const shell = () => path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+
+function helperFailure(phase, stderr, fallback) {
+  try {
+    const value = JSON.parse(stderr);
+    if (value.phase === phase && ["enumeration-failed", "row-inspection-failed", "broker-inspection-failed", "invalid-budget", "process-open-unknown",
+      "handle-open-unknown", "identity-read-unknown", "exit-wait-unknown"].includes(value.reason)
+        && ["none", "native-host", "official-helper", "official-repl", "node-or-adapter", "descendant"].includes(value.role)) {
+      return failure(phase, value.reason, { role: value.role });
+    }
+  } catch { /* Arbitrary helper/shell error text is never diagnostic output. */ }
+  return failure(phase, fallback);
+}
 
 function registeredSystemSandboxBroker(row, rows) {
   const service = row.service, parent = rows.find(item => item.pid === row.parentPid);
@@ -37,9 +51,10 @@ function registeredSystemSandboxBroker(row, rows) {
 export function readWebMaintenanceProcesses({ spawn = spawnSync } = {}) {
   try {
     const result = spawn(shell(), args, { input: '{"action":"census"}', encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
-    if (result.error || result.status !== 0) throw failure();
+    if (result.error) throw failure("census", result.error.code === "ETIMEDOUT" ? "timeout" : "launch-failed");
+    if (result.status !== 0) throw helperFailure("census", result.stderr, "helper-failed");
     return JSON.parse(result.stdout);
-  } catch { throw failure(); }
+  } catch (error) { if (error?.code === "ERR_WEB_MAINTENANCE_PROOF") throw error; throw failure("census", "invalid-response"); }
 }
 
 // Old paths come from the protected installed manifest, even if the app updater
@@ -86,17 +101,22 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
     // descendants remain relevant; no service is stopped or treated as a job.
     if (row.probeState === "absent" || brokers.has(row.pid)) return false;
     if (!row.identity || !row.commandLine?.trim() || !row.executablePath
-        || normalize(row.identity.split("|")[1]) !== normalize(row.executablePath)) throw failure();
+        || normalize(row.identity.split("|")[1]) !== normalize(row.executablePath)) throw failure("classification", "matching-identity-unknown", {
+      role: /^(?:codex|chatgpt)\.exe$/iu.test(row.name) ? "native-host" : /^codex.*\.exe$/iu.test(row.name) ? "official-helper"
+        : /^node_repl\.exe$/iu.test(row.name) ? "official-repl" : /^(?:node|entry)\.exe$/iu.test(row.name) ? "node-or-adapter" : "descendant",
+      probeState: row.probeState, missingIdentity: !row.identity, missingCommand: !row.commandLine?.trim(), missingPath: !row.executablePath,
+    });
     return true;
   });
 }
 
 export function assertWebMaintenanceAbsent(adapter, { census = readWebMaintenanceProcesses, ownPid } = {}) {
-  if (relevantWebMaintenanceProcesses(census(), adapter, { ownPid }).length) throw failure();
+  const live = relevantWebMaintenanceProcesses(census(), adapter, { ownPid });
+  if (live.length) throw failure("classification", "live-processes", { count: live.length });
 }
 
 export async function waitForWebMaintenanceExit(adapter, { timeoutMs = 30 * 60_000,
-  census = readWebMaintenanceProcesses, wait = waitForGenerations, now = Date.now, ownPid } = {}) {
+  census = readWebMaintenanceProcesses, wait = waitForWebMaintenanceGenerations, now = Date.now, ownPid } = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60 * 60_000) throw new Error("Invalid bounded Codex exit wait.");
   const deadline = now() + timeoutMs;
   while (true) {
@@ -110,14 +130,18 @@ export async function waitForWebMaintenanceExit(adapter, { timeoutMs = 30 * 60_0
   }
 }
 
-async function waitForGenerations(processes, timeoutMs) {
-  const child = execFile(shell(), args, { encoding: "utf8", windowsHide: true, timeout: timeoutMs + 20_000, maxBuffer: 128 * 1024 });
-  const completion = new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", status => status === 0 ? resolve() : reject(failure()));
+export async function waitForWebMaintenanceGenerations(processes, timeoutMs) {
+  await new Promise((resolve, reject) => {
+    const child = execFile(shell(), args, { encoding: "utf8", windowsHide: true, timeout: timeoutMs + 20_000, maxBuffer: 128 * 1024 }, (error, stdout, stderr) => {
+      if (error) { reject(helperFailure("wait", stderr, error.killed ? "timeout" : "helper-failed")); return; }
+      try {
+        if (JSON.parse(stdout).waited !== true) throw failure("wait", "invalid-response");
+        resolve();
+      } catch { reject(failure("wait", "invalid-response")); }
+    });
+    child.stdin.once("error", () => reject(failure("wait", "request-write-failed")));
+    child.stdin.end(JSON.stringify({ action: "wait", processes: processes.map(({ pid, identity, name }) => ({ pid, identity, name })), timeoutMs }));
   });
-  child.stdin.end(JSON.stringify({ action: "wait", processes, timeoutMs }));
-  await completion;
 }
 
 export function snapshotWebConversationLedgers(stateDir, { isPrivate = privateFileIsProtected } = {}) {

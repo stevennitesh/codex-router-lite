@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { readWebMaintenanceProcesses, relevantWebMaintenanceProcesses, assertWebMaintenanceAbsent, waitForWebMaintenanceExit, snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } from "../src/web-maintenance-proof.mjs";
 import { validWebConversationRisk } from "../src/web-runtime.mjs";
+import { processStartIdentity } from "../src/process-identity.mjs";
 
 const base = path.resolve(".tmp", "web-maintenance-proof");
 const plan = name => ({ node: { path: path.join(base, name, "node.exe") }, officialCli: { path: path.join(base, name, "codex.exe") },
@@ -109,6 +111,83 @@ function Get-Process { [CmdletBinding()]param($Id)
   }
 });
 
+test("actual wait preserves positive exit between process lookup and handle acquisition", { skip: process.platform !== "win32", timeout: 30_000 }, async t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "wait-exit-"));
+  const signal = path.join(directory, "release-exit"), program = path.join(directory, "child.mjs"), script = path.join(directory, "wait.ps1");
+  writeFileSync(program, `import {watch,existsSync} from 'node:fs';const watcher=watch(${JSON.stringify(directory)},()=>{if(existsSync(${JSON.stringify(signal)})){watcher.close();clearTimeout(deadline);}});const deadline=setTimeout(()=>{watcher.close();process.exitCode=1;},20000);console.log('ready');`);
+  const child = spawn(process.execPath, [program], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const closed = once(child, "close");
+  try {
+    await once(child.stdout, "data");
+    const identity = processStartIdentity(child.pid); assert.ok(identity);
+    const prefix = `
+$script:intercepted = $false
+function Get-Process { [CmdletBinding()]param($Id)
+  $observed = Microsoft.PowerShell.Management\\Get-Process -Id $Id -ErrorAction Stop
+  if (-not $script:intercepted) {
+    $script:intercepted = $true
+    [IO.File]::WriteAllText('${signal.replaceAll("'", "''")}', 'exit')
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+      try { $probe = Microsoft.PowerShell.Management\\Get-Process -Id $Id -ErrorAction Stop; $probe.Dispose() }
+      catch { if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { break }; throw }
+      if ($deadline.ElapsedMilliseconds -gt 5000) { throw 'Fixture exit was not observed.' }
+    }
+  }
+  return $observed
+}
+`;
+    writeFileSync(script, prefix + readFileSync(path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1"), "utf8"));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+      input: JSON.stringify({ action: "wait", processes: [{ pid: child.pid, identity }], timeoutMs: 1000 }),
+      encoding: "utf8", windowsHide: true, timeout: 15_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).waited, true);
+  } finally {
+    writeFileSync(signal, "exit"); await closed;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wait reconciliation rejects denied live generations and distinguishes confirmed PID replacement", { skip: process.platform !== "win32" }, t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "wait-state-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const scenario of ["denied", "replaced", "exit-before-starttime"]) {
+    const script = path.join(directory, `${scenario}.ps1`);
+    const prefix = `
+$script:lookups = 0
+function Get-Process { [CmdletBinding()]param($Id)
+  $script:lookups++
+  if ('${scenario}' -eq 'exit-before-starttime' -and $script:lookups -gt 1) {
+    $PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new([ArgumentException]::new('Fixture exited.'), 'NoProcessFoundForGivenId', [Management.Automation.ErrorCategory]::ObjectNotFound, $Id))
+  }
+  $ticks = if ('${scenario}' -eq 'replaced' -and $script:lookups -gt 1) { 101 } else { 100 }
+  $process = [pscustomobject]@{ HasExited = $false; Path = 'C:\\fixture\\node_repl.exe'; StartTime = [DateTime]::new($ticks, [DateTimeKind]::Utc) }
+  if ('${scenario}' -eq 'exit-before-starttime') {
+    $process | Add-Member -NotePropertyName Handle -NotePropertyValue 1
+    $process | Add-Member -MemberType ScriptProperty -Name StartTime -Value { throw 'PRIVATE_WAIT_CANARY'; } -Force
+  } else {
+    $process | Add-Member -MemberType ScriptProperty -Name Handle -Value { throw 'PRIVATE_WAIT_CANARY'; }
+  }
+  $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
+  return $process
+}
+`;
+    writeFileSync(script, prefix + readFileSync(path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1"), "utf8"));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+      input: JSON.stringify({ action: "wait", processes: [{ pid: 1234, identity: "100|C:\\fixture\\node_repl.exe", name: "node_repl.exe" }], timeoutMs: 1000 }),
+      encoding: "utf8", windowsHide: true, timeout: 15_000,
+    });
+    assert.doesNotMatch(result.stderr, /PRIVATE_WAIT_CANARY/u);
+    if (scenario === "denied") {
+      assert.equal(result.status, 1); const diagnostic = JSON.parse(result.stderr);
+      assert.equal(diagnostic.phase, "wait"); assert.equal(diagnostic.role, "official-repl");
+      assert.match(diagnostic.reason, /unknown$/u);
+    } else { assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).waited, true); }
+  }
+});
+
 test("maintenance validates durable risks and preserves historical non-resumable V1 history bytes", t => {
   mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "ledgers-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -171,6 +250,17 @@ test("failed, partial, malformed and inaccessible censuses cannot prove absence"
     assert.throws(() => readWebMaintenanceProcesses({ spawn: () => result }), /fresh complete census/u);
   }
   assert.deepEqual(readWebMaintenanceProcesses({ spawn: () => ({ status: 0, stdout: '{"complete":true,"processes":[]}' }) }), census([]));
+});
+
+test("process proof failures retain fixed owner categories without shell errors or private fields", () => {
+  for (const [result, expected] of [
+    [{ status: null, error: { code: "ETIMEDOUT" } }, { phase: "census", reason: "timeout" }],
+    [{ status: 1, stderr: JSON.stringify({ phase: "census", reason: "broker-inspection-failed", role: "official-helper", private: "PRIVATE_CENSUS_CANARY" }) },
+      { phase: "census", reason: "broker-inspection-failed", role: "official-helper" }],
+    [{ status: 1, stderr: "PRIVATE_CENSUS_CANARY arbitrary shell failure" }, { phase: "census", reason: "helper-failed" }],
+  ]) assert.throws(() => readWebMaintenanceProcesses({ spawn: () => result }), error => {
+    assert.deepEqual(error.diagnostic, expected); assert.doesNotMatch(error.message, /PRIVATE_CENSUS_CANARY/u); return true;
+  });
 });
 
 test("independent exit wait retains process identities and recenses replacement generations", async () => {

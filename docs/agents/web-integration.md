@@ -819,8 +819,14 @@ underlying deployment's acceptance and durable rollback receipts.
 The successful underlying checkout deployment publishes its ordinary protected
 completed owner immediately, independently of the outer Web result. Existing
 recovery discovery therefore retains backup custody even if a later Web check fails.
-An early reopen aborts before the next selection change. No app auto-launch or
-runtime patch is involved. Retained generations are preserved for recovery;
+An early reopen aborts before the next selection change. The optional
+`-ReopenCodexOnSuccess` records the registered desktop package, manifest and
+AppUserModelId at preparation. After all acceptance is validated, the completed
+success is durable and the deployment lock is released, it revalidates that exact
+registration and invokes Windows registered-app activation with no app arguments.
+The separate reopen outcome cannot roll back accepted deployment. Other flows
+and this command without the flag never auto-launch Codex. No runtime patch or
+global startup hook is involved. Retained generations are preserved for recovery;
 removed official runtime files mean the old adapter alone is not a usable Web
 rollback, and its live recovery must be verified separately.
 The explicit `stop install-adapter` command routes an installed, locally owned

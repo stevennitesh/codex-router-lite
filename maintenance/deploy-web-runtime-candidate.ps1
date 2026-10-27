@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory = $true)][string]$CandidateBinary,
   [Parameter(Mandatory = $true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedBinarySha256,
   [ValidateRange(1, 3600)][int]$ExitTimeoutSeconds = 1800,
+  [switch]$ReopenCodexOnSuccess,
   [switch]$InProcess,
   [string]$ExpectedCandidateSha256,
   [string]$AcceptancePath
@@ -17,8 +18,13 @@ if (-not $InProcess) {
   $preview = & node $helper plan $ExpectedRouterCommit $candidatePath $ExpectedBinarySha256
   if ($LASTEXITCODE -ne 0) { throw 'Web maintenance candidate validation failed; no worker was prepared.' }
   $plan = $preview | ConvertFrom-Json
+  $reopen = $null
+  if ($ReopenCodexOnSuccess) {
+    . (Join-Path $PSScriptRoot 'codex-app-activation.ps1')
+    $reopen = Get-CodexMaintenanceReopenIdentity
+  }
   . (Join-Path $PSScriptRoot 'deployment-runner.ps1')
-  Start-IndependentDeployment -ScriptPath $PSCommandPath -RepoRoot $repoRoot -RequireAcceptance -AcceptanceKind 'web-runtime-maintenance' -Parameters @{
+  Start-IndependentDeployment -ScriptPath $PSCommandPath -RepoRoot $repoRoot -RequireAcceptance -AcceptanceKind 'web-runtime-maintenance' -ReopenCodex $reopen -Parameters @{
     ExpectedRouterCommit = $ExpectedRouterCommit; CandidateBinary = $candidatePath; ExpectedBinarySha256 = $ExpectedBinarySha256.ToLowerInvariant()
     ExitTimeoutSeconds = $ExitTimeoutSeconds; ExpectedCandidateSha256 = $plan.candidateSha256
   }

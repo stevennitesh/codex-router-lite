@@ -10,6 +10,9 @@ $deploymentLock = $null
 $completion = $null
 try {
   $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($null -ne $request.reopenCodex -and (-not $request.requireAcceptance -or $request.acceptanceKind -ne 'web-runtime-maintenance')) {
+    throw 'Codex reopen is restricted to accepted Web runtime maintenance.'
+  }
   foreach ($property in $request.environment.PSObject.Properties) {
     [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, "Process")
   }
@@ -56,5 +59,19 @@ try {
   if ($transcribing) { Stop-Transcript | Out-Null }
   if ($deploymentLock) { $deploymentLock.Dispose() }
 }
+if ($null -ne $request.reopenCodex) {
+  $completion['reopen'] = @{ requested = $true; attempted = $false; succeeded = $false; status = $(if ($exitCode -eq 0) { 'pending' } else { 'not-attempted' }) }
+}
 Write-DeploymentJson $resultPath $completion
+if ($exitCode -eq 0 -and $null -ne $request.reopenCodex) {
+  # Acceptance is validated and durable, and finally released the deployment
+  # lock above. Activation is a separate outcome and cannot trigger rollback.
+  try {
+    . (Join-Path $PSScriptRoot 'codex-app-activation.ps1')
+    $completion['reopen'] = Complete-CodexMaintenanceReopen $request.reopenCodex $resultPath
+  } catch {
+    $completion['reopen'] = @{ requested = $true; attempted = $false; succeeded = $false; status = 'failed'; failure = 'activation-helper-unavailable' }
+  }
+  Write-DeploymentJson $resultPath $completion
+}
 exit $exitCode

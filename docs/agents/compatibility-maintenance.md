@@ -124,7 +124,10 @@ installed dependencies. It applies only a changed final adapter. Prepare its
 hidden independent worker while Codex is open, fully quit normally, and reopen
 once after the protected result reports success. The worker revalidates source
 and runtime identities around the exit wait and retains all rollback artifacts;
-it does not auto-launch Codex or claim live Web rollback qualification.
+With `-ReopenCodexOnSuccess` it revalidates the prepared registered app identity
+and asks Windows to reopen Codex only after durable accepted success and lock
+release. Activation has a separate outcome and cannot undo accepted software;
+the default remains manual reopen. It does not claim live Web rollback qualification.
 When explicitly authorized to interrupt blocking Router requests, the direct
 coordinator remains
 `model-router.ps1 codex web refresh-runtime --apply --force-service-replacement`

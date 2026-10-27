@@ -1,13 +1,49 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$failurePhase = 'request'
+$failureReason = 'invalid-request'
+$failureRole = 'none'
+
+function Get-WebMaintenanceExitState([int]$ProcessId, [object]$Observed, [string]$ExpectedIdentity) {
+  # Property/handle access can lose a process after successful lookup. A live
+  # unreadable generation is still unknown; only an actual exit, positive PID
+  # absence or a fully identified replacement settles the recorded generation.
+  try { if ($Observed -and $Observed.HasExited) { return 'exited' } } catch {}
+  $current = $null
+  try {
+    $current = Get-Process -Id $ProcessId -ErrorAction Stop
+    if ($current.HasExited) { return 'exited' }
+    if ($ExpectedIdentity -and $current.Path) {
+      $identity = $current.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $current.Path
+      if ($identity -ne $ExpectedIdentity) { return 'replaced' }
+    }
+  } catch {
+    if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { return 'absent' }
+    try { if ($current -and $current.HasExited) { return 'exited' } } catch {}
+  } finally { if ($current) { $current.Dispose() } }
+  return 'unknown'
+}
+
+function Get-WebMaintenanceProcessRole([string]$Name) {
+  if ($Name -match '^(?:Codex|ChatGPT)\.exe$') { return 'native-host' }
+  if ($Name -match '^codex.*\.exe$') { return 'official-helper' }
+  if ($Name -eq 'node_repl.exe') { return 'official-repl' }
+  if ($Name -match '^(?:node|entry)\.exe$') { return 'node-or-adapter' }
+  return 'descendant'
+}
+
 try {
   $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
   if ($request.action -eq 'census') {
+    $failurePhase = 'census'
+    $failureReason = 'enumeration-failed'
     # Query the full candidate set. An inaccessible generation is unknown;
     # enumeration and property errors must never look like an empty census.
     $rows = @()
     $candidates = @(Get-CimInstance Win32_Process -ErrorAction Stop)
     foreach ($candidate in $candidates) {
+      $failureReason = 'row-inspection-failed'
+      $failureRole = Get-WebMaintenanceProcessRole $candidate.Name
       $identity = $null
       $probeState = 'unknown'
       $executablePath = $candidate.ExecutablePath
@@ -35,8 +71,7 @@ try {
           $probeState = 'unknown'
           # A denied property and a generation that exited during inspection
           # are different observations. Only positive absence permits omission.
-          try { $again = Get-Process -Id $candidate.ProcessId -ErrorAction Stop; if ($again.HasExited) { $probeState = 'absent' } }
-          catch { if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { $probeState = 'absent' } }
+          if ((Get-WebMaintenanceExitState $candidate.ProcessId $process '') -in @('exited', 'absent')) { $probeState = 'absent' }
         }
       } finally {
         if ($process) { $process.Dispose() }
@@ -44,6 +79,8 @@ try {
       }
       $service = $null
       if ($candidate.Name -ieq 'codex-windows-sandbox-service.exe' -and $probeState -ne 'absent') {
+        $failureReason = 'broker-inspection-failed'
+        $failureRole = 'official-helper'
         $registered = @(Get-CimInstance Win32_Service -Filter "ProcessId = $($candidate.ProcessId)" -ErrorAction Stop)
         if ($registered.Count -eq 1 -and $registered[0].Name -ceq 'CodexSandboxService.OpenAI.Codex') {
           $owner = $registered[0]
@@ -63,29 +100,39 @@ try {
     }
     [Console]::Out.Write((@{ complete = $true; processes = @($rows) } | ConvertTo-Json -Depth 5 -Compress))
   } elseif ($request.action -eq 'wait') {
+    $failurePhase = 'wait'
+    $failureReason = 'invalid-budget'
     $budget = [int]$request.timeoutMs
     if ($budget -lt 1 -or $budget -gt 60000) { throw 'Invalid exit wait budget.' }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     foreach ($generation in $request.processes) {
+      $failureRole = Get-WebMaintenanceProcessRole $generation.name
+      $failureReason = 'process-open-unknown'
       try { $process = Get-Process -Id $generation.pid -ErrorAction Stop }
       catch {
-        if ($_.FullyQualifiedErrorId -like 'NoProcessFoundForGivenId,*') { continue }
+        if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { continue }
         throw
       }
       try {
         # Opening Handle before checking identity retains this exact generation
         # through exit, including PID reuse. This never signals a process.
+        $failureReason = 'handle-open-unknown'
         $null = $process.Handle
+        $failureReason = 'identity-read-unknown'
         $identity = $process.StartTime.ToUniversalTime().Ticks.ToString() + '|' + $process.Path
         if (-not $process.Path) { throw 'Incomplete process identity.' }
         if ($identity -ne $generation.identity) { continue }
         $remaining = [Math]::Max(0, $budget - [int]$clock.ElapsedMilliseconds)
+        $failureReason = 'exit-wait-unknown'
         if (-not $process.WaitForExit($remaining)) { break }
+      } catch {
+        if ((Get-WebMaintenanceExitState $generation.pid $process $generation.identity) -in @('exited', 'absent', 'replaced')) { continue }
+        throw
       } finally { $process.Dispose() }
     }
     [Console]::Out.Write('{"waited":true}')
   } else { throw 'Unknown process inspection action.' }
 } catch {
-  [Console]::Error.Write('Web maintenance process inspection could not establish complete process identities.')
+  [Console]::Error.Write((@{ phase = $failurePhase; reason = $failureReason; role = $failureRole } | ConvertTo-Json -Compress))
   exit 1
 }

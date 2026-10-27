@@ -188,7 +188,7 @@ When missing old runtime files also prevent deployment, prepare the reviewed
 clean source candidate through the independent maintenance entrypoint:
 
 ```powershell
-.\maintenance\deploy-web-runtime-candidate.ps1 -ExpectedRouterCommit <reviewed-full-commit> -CandidateBinary 'C:\absolute\switchyard-server.exe' -ExpectedBinarySha256 <reviewed-binary-sha256>
+.\maintenance\deploy-web-runtime-candidate.ps1 -ExpectedRouterCommit <reviewed-full-commit> -CandidateBinary 'C:\absolute\switchyard-server.exe' -ExpectedBinarySha256 <reviewed-binary-sha256> -ReopenCodexOnSuccess
 ```
 
 This checkout workflow requires its recorded installed root and binds the
@@ -198,9 +198,14 @@ worker. Its result reports `waiting-for-codex-exit` after worker validation. Ful
 worker is prepared. The worker waits on actual process exit handles, revalidates
 the candidate, refreshes runtime selections, runs the existing guarded in-process
 Switchyard/Router checkout deployment without a second independent worker,
-then replans the adapter and applies only a changed final generation. It does not
-quit or launch Codex. Reopen Codex only after `result.json` reports
-`succeeded: true`; a timeout, new app generation, changed candidate or unknown
+then replans the adapter and applies only a changed final generation. It never
+quits Codex. The optional `-ReopenCodexOnSuccess` binds the currently registered
+desktop package and app identity during preparation, then asks Windows to reopen
+that same app only after validated success is durable and the deployment lock is
+released. No special launch arguments or startup hook are installed. Its separate
+`reopen` outcome records activation success or a fixed failure; an activation
+failure does not undo accepted software. Without that flag, reopen Codex only
+after `result.json` reports `succeeded: true`. A timeout, new app generation, changed candidate or unknown
 work stops the remaining maintenance. Keep the result/log paths for inspection
 after reopening. The default exit wait is thirty minutes and can be bounded with
 `-ExitTimeoutSeconds`.
