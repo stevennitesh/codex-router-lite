@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { prepareWebMaintenance, runWebMaintenance, validateWebMaintenanceAcceptance } from "../maintenance/web-runtime-maintenance.mjs";
 
 function fixture({ finalChanged = false } = {}) {
@@ -33,6 +35,41 @@ function fixture({ finalChanged = false } = {}) {
   };
   return { options, dependencies, initial, final, events };
 }
+
+test("Web maintenance reaches the guarded deployment body through the real Windows PowerShell File handoff", { skip: process.platform !== "win32" }, t => {
+  const root = path.resolve(import.meta.dirname, ".."), scratch = path.join(root, ".tmp", "web-lifecycle-tests");
+  mkdirSync(scratch, { recursive: true });
+  const directory = mkdtempSync(path.join(scratch, "deployment-handoff-")), codexHome = path.join(directory, "codex");
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const options = { expectedCommit: "a".repeat(40), candidateBinary: path.join(directory, "switchyard-server.exe"),
+    expectedBinarySha256: "b".repeat(64), expectedCandidateSha256: "c".repeat(64), timeoutMs: 1000,
+    deploymentAcceptancePath: path.join(directory, "acceptance.json") };
+  const runner = `import { runWebMaintenance } from ${JSON.stringify(pathToFileURL(path.join(root, "maintenance", "web-runtime-maintenance.mjs")).href)};
+const options = ${JSON.stringify(options)};
+try {
+  await runWebMaintenance(options, {
+    prepare() { return { candidateSha256: options.expectedCandidateSha256, plan: {}, adapter: {} }; },
+    async wait() {}, absent() {}, ledger() { return []; }, unchanged() {}, source() {},
+    async refresh() { console.log("synthetic-refresh-complete"); },
+  });
+  throw new Error("Deployment unexpectedly passed the missing-manifest guard");
+} catch (error) { console.error(error.message); process.exitCode = 17; }
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", runner], {
+    encoding: "utf8", windowsHide: true, timeout: 15_000,
+    env: { ...process.env, CODEX_HOME: codexHome, CODEX_ROUTER_STATE_DIR: path.join(directory, "state"),
+      MODEL_ROUTER_STATE_DIR: path.join(directory, "state") },
+  });
+  assert.equal(result.status, 17, result.stderr);
+  assert.match(result.stdout, /synthetic-refresh-complete/u);
+  const missingManifest = `Installed Router manifest is missing at ${path.join(codexHome, "codex-router", "install-manifest.json")}.`;
+  // Windows PowerShell wraps its error display at the host's console width.
+  assert.ok(result.stderr.replace(/\s/gu, "").includes(missingManifest.replace(/\s/gu, "")), result.stderr);
+  assert.match(result.stderr, /Guarded Router deployment failed with status 1/u);
+  // The real handoff may create only its scratch receipt; no deployment state
+  // or service effects can precede the missing synthetic install manifest.
+  assert.deepEqual(readdirSync(directory), ["acceptance.json"]);
+});
 
 test("detached maintenance validates around exit and refreshes before guarded deployment, then only changes a stale final adapter", async t => {
   for (const finalChanged of [false, true]) await t.test(`final changed: ${finalChanged}`, async () => {
