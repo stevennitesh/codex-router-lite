@@ -38,24 +38,23 @@ function localUrl(value, { mcp = false } = {}) {
   return url;
 }
 
-async function readPollHealth(response) {
+async function readHealthSnapshot(response) {
   if (!response.ok || !response.body) {
     await response.body?.cancel();
     return undefined;
   }
   const chunks = [];
   let bytes = 0;
-  // Official v0.0.16 component health is bounded to 24 KiB. Keep the
+  // Official v0.0.16 aggregate health is bounded to 64 KiB. Keep the
   // passive snapshot local: never retain or expose arbitrary daemon details.
   for await (const chunk of response.body) {
     bytes += chunk.byteLength;
-    if (bytes > 24 * 1024) throw failure("web_tunnel_not_ready");
+    if (bytes > 64 * 1024) throw failure("web_tunnel_not_ready");
     chunks.push(chunk);
   }
   const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
-  const failures = value?.details?.consecutive_failures;
-  return value?.schema_version === 1 && value.component === "control-plane" && value.limited === false
-    && Number.isSafeInteger(failures) && failures >= 0 ? value : undefined;
+  return value?.schema_version === 1 && typeof value.live === "boolean" && typeof value.ready === "boolean"
+    && value.components && typeof value.components === "object" && !Array.isArray(value.components) ? value : undefined;
 }
 
 /** Own the official foreground tunnel daemon for the Router generation. */
@@ -206,20 +205,15 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
       if (!regularFile(healthFile, 2048)) throw failure("web_tunnel_not_ready");
       const base = localUrl(readFileSync(healthFile, "utf8").trim());
       const options = { signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]), redirect: "error", cache: "no-store" };
-      const health = await fetch(new URL("/healthz", base), options);
-      await health.body?.cancel();
+      const snapshot = await readHealthSnapshot(await fetch(new URL("/health?details=true", base), options));
       if (closing || childClosed) return;
-      if (!health.ok) { healthy = false; isReady = false; return; }
-      const result = await fetch(new URL("/readyz", base), { ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]) });
-      await result.body?.cancel();
-      if (closing || childClosed) return;
-      if (!result.ok) { healthy = true; isReady = false; return; }
-      // /readyz gates local startup only; it can pass while every hosted
-      // poll is rejected. Require the daemon's own completed poll evidence.
-      const poll = await readPollHealth(await fetch(new URL("/health/control-plane", base), {
-        ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]),
-      }));
-      if (closing || childClosed) return;
+      if (!snapshot?.live) { healthy = false; isReady = false; return; }
+      if (!snapshot.ready) { healthy = true; isReady = false; return; }
+      // The aggregate's ready field gates local startup only; require the
+      // daemon's completed hosted-poll evidence from the same bounded read.
+      const component = snapshot.components["control-plane"];
+      const failures = component?.details?.consecutive_failures;
+      const poll = component?.limited === false && Number.isSafeInteger(failures) && failures >= 0 ? component : undefined;
       const details = poll?.details;
       if (poll?.status === "degraded" && details.consecutive_failures > 0
           && details.failure_category === "http_error" && [401, 403].includes(details.http_status)) {

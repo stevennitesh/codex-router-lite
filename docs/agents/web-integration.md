@@ -148,6 +148,12 @@ actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
 
+Initial home, successor home and navigated recovery wait for the exact expected
+URL, then the shared semantic readiness locator. One bounded allowance covers
+both waits. A fresh read still proves the empty composer or saved checkpoint,
+including its normalized text-prefix digest; a locator match is only a wakeup.
+Stable conflicting evidence fails without repeated reads or another action.
+
 ### Observation and completion
 
 Each confirmed Send owns one rendered logical turn. That turn can contain
@@ -306,6 +312,14 @@ An unchanged declaration set reuses its private accepted registry. Each update
 still evaluates current tool choice and advances its broker revision; changed
 schemas rebuild the registry without reassigning reserved wire identities.
 
+The official tunnel exposes health snapshots, not a reliable readiness event
+stream. Each paced health sample reads one bounded `/health?details=true`
+aggregate and requires its current control-plane success evidence. Local readiness
+alone cannot establish hosted connectivity. Browser observation likewise retains
+short callbacks and pacing where the SDK exposes no general state subscription;
+these yield for Interrupt. Failure deadlines, retry backoff and idle-session TTLs
+remain separate from event readiness and never establish successful completion.
+
 The loopback MCP listener retains at most 32 SDK sessions. Admission reclaims
 expired sessions immediately and, under pressure, the least recently used fully
 inactive session. An HTTP upload or response, accepted handler, unresolved native
@@ -333,6 +347,11 @@ captures its partial reply and continues in that same chat. Stale cleanup cannot
 stop a newer turn. Revocation does not undo
 a tool that native Codex has already started. A missing or changed native rollout
 prevents the runtime from asserting cancellation authority.
+The watcher subscribes to the session directory tree before discovery and the
+first read. File-change events coalesce into bounded reads of only the exact
+rollout, with file identity checked after closing its handle. No handle stays
+open between events, so archival can proceed. Watch failure or replacement loses
+authority; the missing-rollout deadline never manufactures a Stop event.
 
 Terminal turns release unused prompts, declarations and browser-answer copies
 only after their request, cancellation watcher and ordered state writes settle.
@@ -582,7 +601,8 @@ browser REPL, import `scripts/test-web-stop-browser.mjs` by its absolute file UR
 create a disposable blank tab with the documented SDK, and call
 `runWebStopBrowserContract({ tab, fixtureUrl })`,
 `runWebObservationBrowserContract({ tab, fixtureUrl })` and
-`runWebSendBrowserContract({ tab, fixtureUrl })`. Require every returned row's
+`runWebSendBrowserContract({ tab, fixtureUrl })`, then
+`runWebLifecycleBrowserContract({ tab, fixtureUrl })`. Require every returned row's
 `passed` value to be true. The harness refuses an existing non-fixture tab before
 navigation. Close that tab and stop the fixture server afterward.
 
@@ -598,6 +618,9 @@ marker and then its UUID, verify the actual shared production locator and
 projection, and reject duplicate, superseded and historical anchors. No sleep
 publishes those state transitions. The live check establishes the current ChatGPT
 path. Neither guarantees compatibility with arbitrary future updates.
+Lifecycle cases cover delayed control hydration, duplicate or temporary home
+controls, wrong-origin rejection, checkpoint rendering and completion, duplicate
+or superseded recovery identities, and exact URL waits before and after navigation.
 
 ## Adapter installation and rollback
 
@@ -800,6 +823,12 @@ registered SYSTEM sandbox broker is verified through Windows service/registry
 ownership, its package image and service-manager ancestry; it is not an app/tool
 client that must exit. Its actual tool descendants remain relevant and no service
 is stopped for maintenance.
+The census retains every process row and ancestry. Native generation inspection
+is limited to conservative runtime/name/path candidates, incomplete rows and
+their descendants; positively unrelated rows still remain in the census. This
+reduces repeated Windows process opens without treating incomplete identities as
+exit proof. Scheduled-launcher checks query only `wscript.exe` rows before matching
+the registered launch command.
 
 The coordinator validates protected conversation ledgers with the runtime's shared
 durable-risk projection, rejects every unresolved native action even when its

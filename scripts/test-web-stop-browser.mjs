@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { browserDom, createObservationBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { browserDom, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
 import { readBrowserReplies } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
@@ -325,6 +325,96 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
     }
   }
+  return results;
+}
+
+/** Startup and recovery waits use the installed SDK, with explicit fixture events. */
+export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid lifecycle contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The lifecycle contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const results = [], click = name => tab.playwright.getByRole("button", { name, exact: true }).click({ timeoutMs });
+  const record = async (name, run) => {
+    try { results.push({ case: name, passed: true, ...await run() }); }
+    catch (error) { results.push({ case: name, passed: false,
+      code: typeof error?.contractCode === "string" ? error.contractCode : "lifecycle_contract_operation_failed" }); }
+  };
+  await record("home-hydration", async () => {
+    await click("Home hydration");
+    const state = createHomeBrowserState(tab, { ui: browserDom });
+    requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "unhydrated_home_ready");
+    await click("Hydrate fixture home");
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    requireContract(await state.ready.count() === 1, "hydrated_home_not_ready");
+    // A semantic wake never bypasses the authoritative ChatGPT-origin proof.
+    requireContract(await state.inspect(timeoutMs) === false, "foreign_origin_home_accepted");
+    return { hydrationEventObserved: true, foreignOriginRejected: true };
+  });
+  for (const [name, button] of [["home-duplicate", "Duplicate home model"], ["home-temporary", "Temporary home mode"]]) {
+    await record(name, async () => {
+      await click(button);
+      const state = createHomeBrowserState(tab, { ui: browserDom });
+      requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "ambiguous_home_ready");
+      return { readinessRejected: true };
+    });
+  }
+  const proof = { generationTurnKey, replyId: "00112233-4455-4677-8899-aabbccddeeff",
+    assistantPrefix: { length: "Recovered saved answer".length }, completed: true };
+  await record("recovery-render-events", async () => {
+    await click("Recovery checkpoint render");
+    const state = createRecoveryBrowserState(tab, { ui: browserDom, proof });
+    const progressing = createRecoveryBrowserState(tab, { ui: browserDom, proof: { ...proof, completed: false } });
+    requireContract(await state.ready.count() === 0, "missing_checkpoint_ready");
+    await click("Publish recovery checkpoint");
+    requireContract(await state.ready.count() === 0 && await progressing.ready.count() === 0, "unrendered_checkpoint_ready");
+    await click("Reveal recovery text");
+    await progressing.ready.waitFor({ state: "attached", timeoutMs });
+    requireContract(await state.ready.count() === 0, "incomplete_checkpoint_ready");
+    await click("Complete recovery checkpoint");
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    const view = await tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)
+      .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector }, { timeoutMs });
+    requireContract(view.turns.length === 1 && view.turns[0].complete === true
+      && view.replies.length === 1 && view.replies[0].messageId === proof.replyId
+      && view.replies[0].text === "Recovered saved answer", "checkpoint_projection_invalid");
+    return { checkpointEventsObserved: true, projectionReads: 1 };
+  });
+  await record("recovery-formatted", async () => {
+    await click("Formatted recovery checkpoint");
+    const expected = "Before.\n\nAfter.\n\nfirst\n\nlast";
+    const state = createRecoveryBrowserState(tab, { ui: browserDom,
+      proof: { ...proof, assistantPrefix: { length: expected.length } } });
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    const rawLength = await tab.playwright.locator(`[${browserDom.messageIdAttribute}="${proof.replyId}"]`)
+      .evaluate(element => element.textContent.length, undefined, { timeoutMs });
+    const view = await tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)
+      .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector }, { timeoutMs });
+    requireContract(rawLength < expected.length && view.replies.length === 1 && view.replies[0].text === expected,
+      "formatted_checkpoint_not_preserved");
+    return { logicalLinesPreserved: true, rawTextShorterThanCheckpoint: true };
+  });
+  for (const [name, button] of [["recovery-duplicate-message", "Duplicate recovery message"],
+    ["recovery-duplicate-turn", "Duplicate recovery generation"], ["recovery-foreign-latest", "Foreign recovery generation"]]) {
+    await record(name, async () => {
+      await click(button);
+      const state = createRecoveryBrowserState(tab, { ui: browserDom, proof });
+      requireContract(await state.ready.count() === 0, "foreign_or_duplicate_checkpoint_ready");
+      return { readinessRejected: true };
+    });
+  }
+  await record("exact-url-event", async () => {
+    const expected = `${fixtureUrl}#checkpoint`;
+    const navigation = tab.playwright.waitForURL(expected, { timeoutMs });
+    await tab.playwright.getByRole("link", { name: "Navigate to fixture checkpoint", exact: true }).click({ timeoutMs });
+    await navigation;
+    requireContract(await tab.url() === expected, "url_event_not_observed");
+    // The same API must also observe an event that preceded subscription.
+    await tab.playwright.waitForURL(expected, { timeoutMs });
+    await tab.goto(fixtureUrl);
+    return { exactUrlVerified: true, priorNavigationVerified: true };
+  });
   return results;
 }
 

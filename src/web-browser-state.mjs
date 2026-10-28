@@ -59,6 +59,57 @@ export function createSendReadyLocator(tab, ui) {
     .filter({ has: tab.playwright.locator("xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") });
 }
 
+// Home readiness schedules one fresh projection. Decorative headings are not
+// evidence, and an ordinary draft or reply is never cleared to obtain a home.
+export function createHomeBrowserState(tab, { ui, pluginChipSelector }) {
+  const role = (name, kind = "button") => tab.playwright.getByRole(kind, { name, exact: true });
+  const composer = role(ui.composerName, "textbox"), model = role(ui.modelButtonName), temporary = role(ui.temporaryButtonName);
+  const enabled = control => control.filter({ has: tab.playwright.locator("xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") });
+  let ready = tab.playwright.locator("body")
+    .filter({ has: composer.filter({ visible: true }).filter({ has: tab.playwright.locator("xpath=self::div[@contenteditable='true']") }), hasNot: composer.nth(1) })
+    .filter({ has: enabled(model).filter({ visible: true }), hasNot: model.nth(1) })
+    .filter({ has: enabled(temporary).filter({ visible: true }), hasNot: temporary.nth(1) })
+    .filter({ hasNot: tab.playwright.locator(ui.assistantFinalReplySelector) });
+  for (const control of [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")]) {
+    ready = ready.filter({ hasNot: control.filter({ visible: true }) }).filter({ hasNot: control.nth(1) });
+  }
+  return { ready, async inspect(timeoutMs = 1000) {
+    const proof = await ready.or(composer).evaluateAll((elements, { ui, pluginChipSelector }) => {
+      const bodies = elements.filter(element => element.tagName === "BODY"), composers = elements.filter(element => element.tagName !== "BODY");
+      if (bodies.length !== 1 || bodies[0].ownerDocument?.body !== bodies[0]) return null;
+      const empty = node => {
+        if (node.nodeType === 3) return !(node.textContent ?? "").trim();
+        if (node.nodeType !== 1 || pluginChipSelector && node.matches(pluginChipSelector)) return true;
+        if (node.getAttribute(ui.contentEditableAttribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
+        return Array.from(node.childNodes).every(empty);
+      };
+      return bodies[0].ownerDocument.URL === "https://chatgpt.com/" && composers.length === 1
+        && composers[0].tagName === "DIV" && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && empty(composers[0]);
+    }, { ui, pluginChipSelector }, { timeoutMs });
+    if (proof !== true) return proof;
+    const [modelEnabled, temporaryEnabled] = await Promise.all([model.isEnabled(), temporary.isEnabled()]);
+    return modelEnabled && temporaryEnabled;
+  } };
+}
+
+// This is scheduling evidence only. Recovery still verifies the exact saved
+// URL, all identities, current generation and normalized UTF-8 prefix digest.
+export function createRecoveryBrowserState(tab, { ui, proof }) {
+  const turn = `//*[@${ui.turnKeyAttribute}='${proof.generationTurnKey}']`;
+  const latestTurn = `(//*[@${ui.turnKeyAttribute}])[last()][@${ui.turnKeyAttribute}='${proof.generationTurnKey}']`;
+  const complete = proof.completed ? ` and count(${turn}//*[@${ui.turnStateAttribute}])=1 and ${turn}//*[@${ui.turnStateAttribute}='${ui.completeTurnState}']` : "";
+  const message = proof.replyId ? `//*[@${ui.messageIdAttribute}='${proof.replyId}']` : null;
+  const checkpoint = message ? ` and count(${message})=1 and ${turn}//*[@${ui.messageIdAttribute}='${proof.replyId}']` : "";
+  let ready = tab.playwright.locator(`xpath=//body[count(${turn})=1 and ${latestTurn}${complete}${checkpoint}]`);
+  // Raw DOM text length is unrelated to the normalized reply length: paragraph,
+  // BR and CodeMirror boundaries can contribute characters absent from textContent.
+  // Wait for the owned answer renderer, then let the exact projection/digest
+  // reject a settled short or changed body. Multiple fragments in one unique
+  // message remain valid; a second message wrapper never becomes that message.
+  if (message) ready = ready.filter({ has: tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`).locator(ui.assistantSelector) });
+  return { ready };
+}
+
 export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",

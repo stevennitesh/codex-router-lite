@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, createSendBrowserState, createSendReadyLocator, waitForBrowserReadiness } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, createSendBrowserState, createSendReadyLocator, createHomeBrowserState, createRecoveryBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -55,16 +55,6 @@ export function isSavedChatUrl(value) {
     return url.origin === "https://chatgpt.com" && /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname)
       && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
   } catch { return false; }
-}
-
-// Hydration and recovery predicates retain their caller's bounded deadline.
-// Send uses semantic SDK readiness; post-click ownership belongs to observation.
-async function waitForBrowserState(ready, deadline, message) {
-  while (!(await ready())) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(message);
-    await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-  }
 }
 
 function frameParts(frameToken) {
@@ -538,7 +528,7 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
   return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
 }
 
-function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory) {
+function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory, lifecycle) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const view = viewFactory(state, options, replyReader);
@@ -582,13 +572,28 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     return result;
   };
   const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
-  const emptyNormalHome = async (tab = state.tab) => {
-    if (!(await normalHomeMode(tab))) return false;
-    const composer = role(ui.composerName, "textbox", tab), model = role(ui.modelButtonName, "button", tab), toggle = role(ui.temporaryButtonName, "button", tab);
-    return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
-      && await toggle.isVisible() && await toggle.isEnabled()
-      && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
+  const homeState = tab => lifecycle.homeState(tab, { ui, pluginChipSelector: options.pluginChipSelector });
+  const emptyNormalHome = async (tab = state.tab) => (await homeState(tab).inspect()) === true;
+  const waitForHome = async (owners, message) => {
+    const tab = state.tab, tabId = state.tabId, browser = state.browser;
+    const allowance = lifecycle.createAllowance(Date.now() + 10000, () => new Error(message));
+    const assertCurrent = () => {
+      activeOwner(owners, true);
+      if (state.tab !== tab || state.tabId !== tabId || tab.id !== tabId || state.browser !== browser) throw new Error("The owned tab changed while waiting for normal home readiness.");
+    };
+    assertCurrent();
+    try { await tab.playwright.waitForURL("https://chatgpt.com/", { timeoutMs: allowance(1000) }); }
+    catch { throw new Error(message); }
+    assertCurrent(); allowance();
+    const home = homeState(tab);
+    const proof = await lifecycle.browserReadiness(home.ready, { nextTimeout: () => { assertCurrent(); return allowance(1000); },
+      afterWait: ({ error, timedOut }) => { assertCurrent(); if (error && !timedOut) throw new Error(message); },
+      inspect: async () => { assertCurrent(); const proof = await home.inspect(allowance(0, 1000)); assertCurrent(); allowance(); return proof; },
+      ready: proof => proof !== null,
+    });
+    if (proof !== true) throw new Error(message);
   };
+  const recoveryState = (tab, proof) => lifecycle.recoveryState(tab, { ui, proof });
   const clearUnsentDraft = async () => {
     const composer = role(ui.composerName, "textbox");
     if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
@@ -607,7 +612,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
     if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   };
-  return { ...view, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding };
+  return { ...view, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, waitForHome, recoveryState, clearUnsentDraft, resetChat, requireBinding };
 }
 
 // Selection belongs to the mutation cache. These reads share a stable picker phase;
@@ -666,7 +671,7 @@ async function selectBrowserModel(state, options, role, allowance) {
   await press(power, "Escape");
 }
 
-async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, createContext) {
   const { emit } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   if (state.sessionId && (state.sessionId !== options.sessionId || state.runtimeModule !== options.runtimeModule)) throw new Error("Browser binding belongs to another session or runtime.");
   if (!state.agent) state.agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
@@ -680,17 +685,24 @@ async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFa
   return;
 }
 
-async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
-  const { emit, registerActive, emptyNormalHome, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory, createContext) {
+  const { emit, registerActive, waitForHome, emptyNormalHome, activeOwner, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   requireBinding();
   if (state.tab) throw new Error("This browser binding already owns a tab.");
   state.tab = await state.browser.tabs.new();
   state.tabId = state.tab.id;
+  const tab = state.tab, tabId = state.tabId;
   registerActive();
   await state.tab.goto("https://chatgpt.com/");
-  await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
-  await state.tab.markHandoff();
-  emit({ tabId: state.tabId, url: await state.tab.url(), normal: true });
+  await waitForHome([options.turnId], "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
+  await tab.markHandoff();
+  activeOwner([options.turnId], true);
+  if (state.tab !== tab || state.tabId !== tabId || tab.id !== tabId || !(await emptyNormalHome(tab))) throw new Error("The initial normal home changed during retention.");
+  activeOwner([options.turnId], true);
+  const url = await tab.url();
+  activeOwner([options.turnId], true);
+  if (state.tab !== tab || state.tabId !== tabId || tab.id !== tabId || url !== "https://chatgpt.com/") throw new Error("The initial normal home changed during retention.");
+  emit({ tabId, url, normal: true });
   return;
 }
 
@@ -765,8 +777,8 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
   if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
 }
 
-async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState, browserReadiness, createAllowance) {
-  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, createContext, reconcileGeneration, createStopState, browserReadiness, createAllowance) {
+  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, recoveryState, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
   let recoveryEffects, recoveryTabId;
@@ -882,6 +894,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
         return recoveryRejected("generation-turn-not-unique");
       }
       if (!(recoveryDiagnostic.generationIsLatest = view.turns.at(-1)?.turnKey === proof.generationTurnKey)) return recoveryRejected("generation-turn-not-latest");
+      if (proof.completed && generationTurns[0].complete !== true) return recoveryRejected("generation-turn-incomplete");
       recoveryDiagnostic.freshReplyCount = boundedCount(fresh);
       const progressing = !proof.completed;
       if (proof.retainedTabOnly) {
@@ -977,6 +990,36 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       return recoveryDiagnostic.composerEmpty || recoveryRejected(values[0] === "shape" ? "composer-shape-invalid" : "composer-draft-present");
     };
     const recoveryFailure = message => new Error(`${message} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
+    const waitForRecoveredReply = async (message, registered = false) => {
+      const deadline = Date.now() + 10000;
+      const allowance = createAllowance(deadline, () => recoveryFailure(message));
+      const assertRecoveryOwner = () => {
+        if (!registered) return requireRecoveryOwnership();
+        activeOwner([options.turnId], true);
+        if (state.tab !== tab || state.browser !== browser || state.tabId !== recoveryTabId || tab.id !== recoveryTabId
+            || state.savedUrl !== proof.url || state.generationTurnKey !== proof.generationTurnKey) throw recoveryFailure("The owned recovery target changed while waiting for its checkpoint.");
+      };
+      assertRecoveryOwner();
+      try { await tab.playwright.waitForURL(proof.url, { timeoutMs: allowance(1000) }); }
+      catch { throw recoveryFailure(message); }
+      assertRecoveryOwner(); allowance();
+      const checkpoint = recoveryState(tab, proof);
+      let matched = false;
+      const result = await browserReadiness(checkpoint.ready, {
+        nextTimeout: () => { assertRecoveryOwner(); return Math.floor(deadline - Date.now() - 1000); },
+        afterWait: ({ error, timedOut }) => {
+          assertRecoveryOwner(); matched = !error;
+          if (error && !timedOut) throw recoveryFailure(message);
+        },
+        inspect: async () => {
+          assertRecoveryOwner(); allowance();
+          const verified = await verifiedReply();
+          assertRecoveryOwner(); allowance();
+          return { verified, settled: matched };
+        }, ready: result => result.verified || result.settled,
+      });
+      if (!result.verified) throw recoveryFailure(message);
+    };
     const staleCompletedCheckpoint = () => {
       const texts = recoveryView?.replies, latest = texts?.at(-1), baseline = proof.baselineReplyIds;
       return state.bindingLost === true && proof.completed && proof.replyId && proof.assistantPrefix.length > 0
@@ -1012,11 +1055,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
           catch { throw recoveryFailure("The saved chat reload failed; recovery remains unverified."); }
           requireRecoveryOwnership();
           if (await tab.url() !== proof.url) throw recoveryFailure("The saved chat left its saved URL after refresh; recovery remains unverified.");
-          try { await tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`).waitFor({ state: "attached", timeoutMs: 10000 }); }
-          catch { throw recoveryFailure("The saved chat completed reply did not attach within 10 seconds after refresh; recovery remains unverified."); }
-          requireRecoveryOwnership();
-          verified = await verifiedReply();
-          if (!verified) throw recoveryFailure("The saved chat refresh did not restore the completed checkpoint; recovery remains unverified.");
+          await waitForRecoveredReply("The saved chat completed reply did not become ready within 10 seconds after refresh; recovery remains unverified.");
+          verified = true;
           if (await role(ui.stopButtonExactName, "button", tab).isVisible()) throw recoveryFailure("The saved chat is generating after refresh; recovery remains unverified.");
         }
       }
@@ -1037,8 +1077,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       activeOwner([options.turnId], true);
       recoveryEffects.tabNavigated = true;
       await tab.goto(proof.url);
-      await waitForState(verifiedReply, Date.now() + 10000,
-        "The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
+      await waitForRecoveredReply("The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.", true);
       if (!(await emptyComposer())) throw new Error("The saved chat composer has a draft; recovery cannot overwrite it.");
     }
     state.baselineReplyIds = [...recoveredBaselineIds];
@@ -1134,12 +1173,13 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
 }
 
-async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
-  const { role, conversationFull, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, emptyNormalHome, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, createContext) {
+  const { role, conversationFull, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, emptyNormalHome, waitForHome, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   requireBinding();
   await ensureOwned();
   activeOwner(options.expectedOwnerTurnIds, true);
+  const rolloverTab = state.tab, rolloverTabId = state.tabId, rolloverBrowser = state.browser;
   if (state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with an uncertain Send.");
   if (state.rolloverAttempted) {
     if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
@@ -1154,16 +1194,19 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
     activeOwner(options.expectedOwnerTurnIds, true);
     Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
     await start.click();
-    await waitForState(emptyNormalHome, Date.now() + 10000, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
+    await waitForHome(options.expectedOwnerTurnIds, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
   }
   if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
+  const url = await state.tab.url();
   activeOwner(options.expectedOwnerTurnIds, true);
+  if (state.tab !== rolloverTab || state.tabId !== rolloverTabId || rolloverTab.id !== rolloverTabId || state.browser !== rolloverBrowser
+      || url !== "https://chatgpt.com/") throw new Error("The rollover successor changed before ownership transfer.");
   resetChat();
   registerActive();
-  emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
+  emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url, normal: true });
 }
 
-async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel, createStopState, browserReadiness, createAllowance, sendReadyLocator) {
+async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, createContext, selectModel, createStopState, browserReadiness, createAllowance, sendReadyLocator) {
   const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor, temporaryInactive } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
@@ -1324,7 +1367,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createSendBrowserState, createBrowserView, runBrowserObservation]
+  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createSendBrowserState, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 // Use only the cache's public, source-checked dependencies: a closure could hide
@@ -1334,8 +1377,9 @@ async function runBrowserMutation(cache, options, nodeRepl) {
   const state = cache.state, helper = cache.helper;
   const config = { ...options, ui: { ...cache.ui, ...options.ui } };
   const runner = options.operation === "continue" ? cache.continuation : cache.send;
+  const context = (...args) => cache.createContext(...args, cache);
   try {
-    return await runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext,
+    return await runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, context,
       options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness, cache.createAllowance, cache.sendReadyLocator);
   } catch (error) {
     if (options.operation !== "send" || !["anchor-conflict", "saved-url"].includes(error?.routerSendFailure)) throw error;
@@ -1345,7 +1389,7 @@ async function runBrowserMutation(cache, options, nodeRepl) {
 
 const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
   createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
-  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance, sendReadyLocator: createSendReadyLocator });
+  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance, sendReadyLocator: createSendReadyLocator, homeState: createHomeBrowserState, recoveryState: createRecoveryBrowserState });
 export const browserMutationVersion = createHash("sha256")
   .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
@@ -1431,7 +1475,7 @@ export function browserScript(options) {
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
   const fullInstall = options.operation === "bootstrap" || options.operation === "continue" && options.fullContinuation === true;
   const resident = fullInstall
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState, defaultUi, createObservationState, createSendState, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, createObservationState, createSendState); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createSendBrowserState.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, defaultUi, createObservationState, createSendState, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, createObservationState, createSendState); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createSendBrowserState.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
   const sourceList = Object.keys(mutationFunctions).map(key => `cache.${key}`);
@@ -1450,8 +1494,8 @@ export function browserScript(options) {
   }
   const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, rollover: runBrowserRollover }[options.operation];
   // Bootstrap reuses the installed context instead of repeating its source.
-  if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext);\n})(${binding}, ${JSON.stringify(config)});`;
-  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()});`;
+  if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, (...args) => cache.createContext(...args, cache));\n})(${binding}, ${JSON.stringify(config)});`;
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
 }
 
 export function isBrowserContinuationCacheMiss(value) {

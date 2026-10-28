@@ -15,6 +15,24 @@ const adapter = { currentRuntime: plan("old-removed"), candidate: plan("new"), m
 const row = (pid, executable, commandLine = `"${executable}"`, ticks = "100") => ({ pid, parentPid: 0, probeState: "alive", executablePath: executable,
   name: path.basename(executable), identity: `${ticks}|${executable}`, commandLine });
 const census = processes => ({ complete: true, processes });
+const censusRequest = (value = adapter, ownPid = process.pid) => {
+  let request;
+  readWebMaintenanceProcesses(value, { ownPid, spawn: (_shell, _args, options) => {
+    request = JSON.parse(options.input); return { status: 0, stdout: JSON.stringify(census([])) };
+  } });
+  return request;
+};
+const maintenanceFixture = (prefix, suffix = "", runMain = true) => `
+$fixtureTokens = $null; $fixtureErrors = $null
+$fixtureAst = [Management.Automation.Language.Parser]::ParseFile('${path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1").replaceAll("'", "''")}', [ref]$fixtureTokens, [ref]$fixtureErrors)
+if ($fixtureErrors.Count) { throw 'Invalid maintenance helper source.' }
+foreach ($statement in $fixtureAst.EndBlock.Statements) {
+  if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { Invoke-Expression $statement.Extent.Text }
+}
+${prefix}
+${runMain ? '$fixtureMain = ($fixtureAst.EndBlock.Statements | Where-Object { $_ -isnot [Management.Automation.Language.FunctionDefinitionAst] } | ForEach-Object { $_.Extent.Text }) -join "`n"\nInvoke-Expression $fixtureMain' : ""}
+${suffix}
+`;
 
 test("complete process proof covers full native hosts, both old/new child cohorts and managed adapter commands", () => {
   for (const executable of [path.join(base, "desktop", "Codex.exe"), path.join(base, "desktop", "ChatGPT.exe"),
@@ -79,10 +97,10 @@ test("sandbox service exemption requires registered service account, package ima
   }
 });
 
-test("actual census distinguishes positive process exit from denied live inspection", { skip: process.platform !== "win32" }, t => {
+test("actual census distinguishes positive process exit from denied live inspection and property argument errors", { skip: process.platform !== "win32" }, t => {
   mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "census-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const scenario of ["gone", "denied", "exit-during-inspection"]) {
+  for (const scenario of ["gone", "denied", "exit-during-inspection", "argument-path", "argument-starttime"]) {
     const script = path.join(directory, `${scenario}.ps1`);
     const prefix = `
 $script:observations = 0
@@ -90,7 +108,7 @@ function Get-CimInstance { param($ClassName, $Filter)
   if ($ClassName -ne 'Win32_Process') { throw 'Unexpected service query.' }
   [pscustomobject]@{ ProcessId = 1234; ParentProcessId = 0; SessionId = 1; Name = 'node_repl.exe'; ExecutablePath = 'C:\\fixture\\node_repl.exe'; CommandLine = 'fixture node_repl.exe' }
 }
-function Get-Process { [CmdletBinding()]param($Id)
+function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
   $script:observations++
   if ('${scenario}' -eq 'gone' -or ('${scenario}' -eq 'exit-during-inspection' -and $script:observations -gt 1)) {
     $record = [Management.Automation.ErrorRecord]::new([ArgumentException]::new('Fixture exited.'), 'NoProcessFoundForGivenId', [Management.Automation.ErrorCategory]::ObjectNotFound, $Id)
@@ -98,16 +116,130 @@ function Get-Process { [CmdletBinding()]param($Id)
   }
   if ('${scenario}' -eq 'denied') { throw 'Fixture access denied.' }
   $process = [pscustomobject]@{ HasExited = $false; Path = 'C:\\fixture\\node_repl.exe'; StartTime = [DateTime]::UtcNow }
+  if ('${scenario}' -eq 'argument-path') { $process | Add-Member -MemberType ScriptProperty -Name Path -Value { throw [ArgumentException]::new('PRIVATE_CENSUS_CANARY'); } -Force }
+  if ('${scenario}' -eq 'argument-starttime') { $process | Add-Member -MemberType ScriptProperty -Name StartTime -Value { throw [ArgumentException]::new('PRIVATE_CENSUS_CANARY'); } -Force }
   $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
   return $process
 }
 `;
-    writeFileSync(script, prefix + readFileSync(path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1"), "utf8"));
+    writeFileSync(script, maintenanceFixture(prefix));
     const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
-      input: '{"action":"census"}', encoding: "utf8", windowsHide: true, timeout: 15_000,
+      input: JSON.stringify(censusRequest()), encoding: "utf8", windowsHide: true, timeout: 15_000,
     });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).processes[0].probeState, scenario === "denied" ? "unknown" : "absent");
+    assert.doesNotMatch(result.stderr, /PRIVATE_CENSUS_CANARY/u);
+    assert.equal(JSON.parse(result.stdout).processes[0].probeState, scenario === "denied" || scenario.startsWith("argument-") ? "unknown" : "absent");
+  }
+});
+
+test("native process lookup positively identifies current PID and maps only absent open to the absence sentinel", { skip: process.platform !== "win32" }, t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "native-open-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const script = path.join(directory, "native-open.ps1");
+  writeFileSync(script, maintenanceFixture(`
+$ErrorActionPreference = 'Stop'
+$observed = Get-WebMaintenanceProcess -Id $PID -ErrorAction Stop
+try {
+  $nativePath = $observed.Path
+  $live = $observed.Id -eq $PID -and -not $observed.HasExited -and $nativePath -and $observed.StartTime.ToUniversalTime().Ticks -gt 0
+} finally { $observed.Dispose() }
+$absent = $false
+try { $missing = Get-WebMaintenanceProcess -Id 2147483647 -ErrorAction Stop; $missing.Dispose() }
+catch { if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { $absent = $true } else { throw } }
+[Console]::Out.Write((@{ live = [bool]$live; absent = $absent } | ConvertTo-Json -Compress))
+`, "", false));
+  const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+    encoding: "utf8", windowsHide: true, timeout: 15_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { live: true, absent: true });
+});
+
+test("scoped native census retains full ancestry and matches full inspection while skipping identified outsiders", { skip: process.platform !== "win32", timeout: 30_000 }, t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "scoped-census-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const fixturePlan = name => ({ node: { path: `C:\\fixture\\${name}\\node.exe` }, officialCli: { path: `C:\\fixture\\${name}\\codex.exe` },
+    officialNodeRepl: { path: `C:\\fixture\\${name}\\node_repl.exe` }, runtimeModule: `C:\\fixture\\${name}\\browser\\scripts\\browser-client.mjs` });
+  const fixtureAdapter = { currentRuntime: fixturePlan("old"), candidate: fixturePlan("new"), managedEntryPath: "C:\\fixture\\adapter\\generation\\entry.exe" };
+  const ownPid = 400, request = censusRequest(fixtureAdapter, ownPid);
+  const fixtures = Array.from({ length: 200 }, (_, index) => row(1000 + index, `C:\\unrelated\\app${index}.exe`));
+  const host = { ...row(10, "C:\\desktop\\Codex.exe"), parentPid: 9999 };
+  const child = { ...row(11, "C:\\unrelated\\outsider-named.exe"), parentPid: host.pid };
+  const grandchild = { ...row(12, "C:\\unrelated\\another-outsider.exe"), parentPid: child.pid };
+  const missingPath = { ...row(13, "C:\\fixture\\old\\future-helper.exe", "future-helper worker"), executablePath: null };
+  const genericNode = row(14, "C:\\unrelated\\node.exe", "node unrelated.mjs");
+  const own = row(ownPid, process.execPath);
+  const command = row(15, "C:\\unrelated\\launcher.exe", 'launcher "C:/fixture/new/browser/scripts/browser-client.mjs"');
+  const commandChild = { ...row(16, "C:\\unrelated\\cmd.exe"), parentPid: command.pid };
+  const newHelper = row(17, "C:\\fixture\\new\\future-helper.exe");
+  const missingCommand = { ...row(18, "C:\\unrelated\\missing-command.exe"), commandLine: null };
+  const entry = row(19, "C:\\unrelated\\entry.exe");
+  const ownChild = { ...row(20, "C:\\unrelated\\own-child.exe"), parentPid: ownPid };
+  // Reverse descendant order prevents a one-pass ancestry shortcut from passing.
+  fixtures.push({ pid: 0, parentPid: 0, name: "System Idle Process", executablePath: null, commandLine: null },
+    grandchild, child, host, missingPath, genericNode, own, commandChild, command, newHelper, missingCommand, entry, ownChild,
+    row(25, "C:\\unrelated\\node_repl.exe"));
+  for (const scenario of ["live", "replaced", "denied", "exited"]) {
+    const script = path.join(directory, `${scenario}.ps1`);
+    const prefix = `
+$script:fixtureRows = '${JSON.stringify(fixtures).replaceAll("'", "''")}' | ConvertFrom-Json
+$script:nativeCalls = [Collections.Generic.List[int]]::new()
+$script:lookupCounts = @{}
+function Get-CimInstance { param($ClassName, $Filter)
+  if ($ClassName -ne 'Win32_Process') { throw 'Unexpected service query.' }
+  foreach ($row in $script:fixtureRows) { [pscustomobject]@{ ProcessId = $row.pid; ParentProcessId = $row.parentPid; SessionId = 1;
+    Name = $row.name; ExecutablePath = $row.executablePath; CommandLine = $row.commandLine } }
+}
+function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
+  $script:nativeCalls.Add($Id)
+  $script:lookupCounts[$Id] = 1 + $script:lookupCounts[$Id]
+  if ($Id -eq 25 -and '${scenario}' -eq 'denied') { throw 'PRIVATE_CENSUS_CANARY denied live' }
+  if ($Id -eq 25 -and '${scenario}' -eq 'exited') {
+    $PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new([ArgumentException]::new('Fixture exited.'), 'NoProcessFoundForGivenId', [Management.Automation.ErrorCategory]::ObjectNotFound, $Id))
+  }
+  $row = $script:fixtureRows | Where-Object { $_.pid -eq $Id }
+  $ticks = if ($Id -eq 25 -and '${scenario}' -eq 'replaced' -and $script:lookupCounts[$Id] -gt 1) { 101 } else { 100 }
+  $nativePath = if ($Id -eq 13) { 'C:\\fixture\\old\\future-helper.exe' } else { $row.executablePath }
+  $process = [pscustomobject]@{ HasExited = $false; fixturePath = $nativePath; pathReads = 0; StartTime = [DateTime]::new($ticks, [DateTimeKind]::Utc) }
+  $process | Add-Member -MemberType ScriptProperty -Name Path -Value { $this.pathReads++; if ($this.pathReads -gt 1) { throw 'PRIVATE_CENSUS_CANARY repeated Path read' }; return $this.fixturePath }
+  $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
+  return $process
+}
+`;
+    writeFileSync(script, maintenanceFixture(prefix, '[Console]::Out.Write("`n" + (ConvertTo-Json -InputObject @($script:nativeCalls) -Compress))'));
+    if (scenario === "live") for (const scope of [undefined, { ownPid, roots: ["relative"] }, { ownPid: 0, roots: ["C:\\"] }]) {
+      const invalid = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+        input: JSON.stringify({ action: "census", scope }), encoding: "utf8", windowsHide: true, timeout: 15_000,
+      });
+      assert.equal(invalid.status, 1);
+      assert.deepEqual(JSON.parse(invalid.stderr), { phase: "census", reason: "invalid-scope", role: "none" });
+    }
+    const inspect = scope => {
+      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+        input: JSON.stringify({ action: "census", scope }), encoding: "utf8", windowsHide: true, timeout: 15_000,
+      });
+      assert.equal(result.status, 0, result.stderr); assert.doesNotMatch(result.stderr, /PRIVATE_CENSUS_CANARY/u);
+      const [snapshot, calls] = result.stdout.trim().split(/\r?\n/u).map(value => JSON.parse(value));
+      return { snapshot, calls };
+    };
+    // A root for every fixture drive forces the same native inspection work as
+    // the original full census, independently of the narrower final classifier.
+    const full = inspect({ ownPid, roots: [...new Set(["C:\\", path.parse(process.execPath).root])] });
+    const scoped = inspect(request.scope);
+    assert.equal(scoped.snapshot.processes.length, fixtures.length);
+    assert.deepEqual(scoped.snapshot.processes.map(({ pid, parentPid }) => [pid, parentPid]), fixtures.map(({ pid, parentPid }) => [pid, parentPid]));
+    assert.deepEqual([...new Set(scoped.calls)].sort((a, b) => a - b), [0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 25, ownPid]);
+    assert.equal(new Set(full.calls).size, fixtures.length);
+    assert.ok(scoped.calls.length < full.calls.length / 5);
+    const outsider = scoped.snapshot.processes.find(value => value.pid === 1000);
+    assert.equal(outsider.identity, null); assert.equal(outsider.probeState, "unknown");
+    const classify = snapshot => {
+      try { return { pids: relevantWebMaintenanceProcesses(snapshot, fixtureAdapter, { ownPid }).map(value => value.pid) }; }
+      catch (error) { assert.equal(error.code, "ERR_WEB_MAINTENANCE_PROOF"); return { diagnostic: error.diagnostic }; }
+    };
+    assert.deepEqual(classify(scoped.snapshot), classify(full.snapshot));
+    if (["denied", "replaced"].includes(scenario)) assert.equal(classify(scoped.snapshot).diagnostic.reason, "matching-identity-unknown");
+    else assert.deepEqual(classify(scoped.snapshot).pids, [12, 11, 10, 13, 16, 15, 17, ...(scenario === "live" ? [25] : [])]);
   }
 });
 
@@ -122,14 +254,15 @@ test("actual wait preserves positive exit between process lookup and handle acqu
     const identity = processStartIdentity(child.pid); assert.ok(identity);
     const prefix = `
 $script:intercepted = $false
-function Get-Process { [CmdletBinding()]param($Id)
-  $observed = Microsoft.PowerShell.Management\\Get-Process -Id $Id -ErrorAction Stop
+$script:openNative = (Get-Command Get-WebMaintenanceProcess).ScriptBlock
+function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
+  $observed = & $script:openNative -Id $Id -ErrorAction Stop
   if (-not $script:intercepted) {
     $script:intercepted = $true
     [IO.File]::WriteAllText('${signal.replaceAll("'", "''")}', 'exit')
     $deadline = [Diagnostics.Stopwatch]::StartNew()
     while ($true) {
-      try { $probe = Microsoft.PowerShell.Management\\Get-Process -Id $Id -ErrorAction Stop; $probe.Dispose() }
+      try { $probe = & $script:openNative -Id $Id -ErrorAction Stop; $probe.Dispose() }
       catch { if ($_.FullyQualifiedErrorId -match '^NoProcessFoundForGivenId(?:,|$)') { break }; throw }
       if ($deadline.ElapsedMilliseconds -gt 5000) { throw 'Fixture exit was not observed.' }
     }
@@ -137,7 +270,7 @@ function Get-Process { [CmdletBinding()]param($Id)
   return $observed
 }
 `;
-    writeFileSync(script, prefix + readFileSync(path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1"), "utf8"));
+    writeFileSync(script, maintenanceFixture(prefix));
     const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
       input: JSON.stringify({ action: "wait", processes: [{ pid: child.pid, identity }], timeoutMs: 1000 }),
       encoding: "utf8", windowsHide: true, timeout: 15_000,
@@ -153,34 +286,35 @@ function Get-Process { [CmdletBinding()]param($Id)
 test("wait reconciliation rejects denied live generations and distinguishes confirmed PID replacement", { skip: process.platform !== "win32" }, t => {
   mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "wait-state-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
-  for (const scenario of ["denied", "replaced", "exit-before-starttime"]) {
+  for (const scenario of ["denied", "replaced", "exit-before-starttime", "argument-handle", "argument-path", "argument-starttime"]) {
     const script = path.join(directory, `${scenario}.ps1`);
     const prefix = `
 $script:lookups = 0
-function Get-Process { [CmdletBinding()]param($Id)
+function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
   $script:lookups++
   if ('${scenario}' -eq 'exit-before-starttime' -and $script:lookups -gt 1) {
     $PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new([ArgumentException]::new('Fixture exited.'), 'NoProcessFoundForGivenId', [Management.Automation.ErrorCategory]::ObjectNotFound, $Id))
   }
   $ticks = if ('${scenario}' -eq 'replaced' -and $script:lookups -gt 1) { 101 } else { 100 }
   $process = [pscustomobject]@{ HasExited = $false; Path = 'C:\\fixture\\node_repl.exe'; StartTime = [DateTime]::new($ticks, [DateTimeKind]::Utc) }
-  if ('${scenario}' -eq 'exit-before-starttime') {
+  if ('${scenario}' -eq 'exit-before-starttime' -or '${scenario}' -in @('argument-path', 'argument-starttime')) {
     $process | Add-Member -NotePropertyName Handle -NotePropertyValue 1
-    $process | Add-Member -MemberType ScriptProperty -Name StartTime -Value { throw 'PRIVATE_WAIT_CANARY'; } -Force
+    if ('${scenario}' -eq 'argument-path') { $process | Add-Member -MemberType ScriptProperty -Name Path -Value { throw [ArgumentException]::new('PRIVATE_WAIT_CANARY'); } -Force }
+    else { $process | Add-Member -MemberType ScriptProperty -Name StartTime -Value { throw [ArgumentException]::new('PRIVATE_WAIT_CANARY'); } -Force }
   } else {
-    $process | Add-Member -MemberType ScriptProperty -Name Handle -Value { throw 'PRIVATE_WAIT_CANARY'; }
+    $process | Add-Member -MemberType ScriptProperty -Name Handle -Value { throw [ArgumentException]::new('PRIVATE_WAIT_CANARY'); }
   }
   $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
   return $process
 }
 `;
-    writeFileSync(script, prefix + readFileSync(path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1"), "utf8"));
+    writeFileSync(script, maintenanceFixture(prefix));
     const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
       input: JSON.stringify({ action: "wait", processes: [{ pid: 1234, identity: "100|C:\\fixture\\node_repl.exe", name: "node_repl.exe" }], timeoutMs: 1000 }),
       encoding: "utf8", windowsHide: true, timeout: 15_000,
     });
     assert.doesNotMatch(result.stderr, /PRIVATE_WAIT_CANARY/u);
-    if (scenario === "denied") {
+    if (scenario === "denied" || scenario.startsWith("argument-")) {
       assert.equal(result.status, 1); const diagnostic = JSON.parse(result.stderr);
       assert.equal(diagnostic.phase, "wait"); assert.equal(diagnostic.role, "official-repl");
       assert.match(diagnostic.reason, /unknown$/u);
@@ -247,9 +381,27 @@ test("failed, partial, malformed and inaccessible censuses cannot prove absence"
   }
   for (const result of [{ status: 1, stdout: '{"complete":true,"processes":[]}' }, { status: 0, stdout: "bad" },
     { status: 0, error: new Error("timeout"), stdout: '{"complete":true,"processes":[]}' }]) {
-    assert.throws(() => readWebMaintenanceProcesses({ spawn: () => result }), /fresh complete census/u);
+    assert.throws(() => readWebMaintenanceProcesses(adapter, { spawn: () => result }), /fresh complete census/u);
   }
-  assert.deepEqual(readWebMaintenanceProcesses({ spawn: () => ({ status: 0, stdout: '{"complete":true,"processes":[]}' }) }), census([]));
+  assert.deepEqual(readWebMaintenanceProcesses(adapter, { spawn: () => ({ status: 0, stdout: '{"complete":true,"processes":[]}' }) }), census([]));
+});
+
+test("census scope uses the classifier's normalized old/new and adapter roots and rejects invalid scope before launch", () => {
+  const request = censusRequest();
+  assert.deepEqual(request, { action: "census", scope: { ownPid: process.pid, roots: [...new Set([
+    ...[adapter.currentRuntime, adapter.candidate].flatMap(value => [path.dirname(value.node.path), path.dirname(value.officialCli.path),
+      path.dirname(value.officialNodeRepl.path), path.dirname(value.runtimeModule)]), path.dirname(path.dirname(adapter.managedEntryPath)),
+  ].map(value => path.resolve(value).toLowerCase()))] } });
+  for (const [value, ownPid] of [[undefined, 1], [{ ...adapter, managedEntryPath: "relative" }, 1],
+    [{ ...adapter, currentRuntime: { ...adapter.currentRuntime, runtimeModule: null } }, 1], [adapter, 0], [adapter, 1.5]]) {
+    let launched = false;
+    assert.throws(() => readWebMaintenanceProcesses(value, { ownPid, spawn: () => { launched = true; } }), error => error.diagnostic?.reason === "invalid-scope");
+    assert.equal(launched, false);
+    assert.throws(() => relevantWebMaintenanceProcesses(census([]), value, { ownPid }), error => error.diagnostic?.reason === "invalid-scope");
+  }
+  let received;
+  assertWebMaintenanceAbsent(adapter, { ownPid: 42, census: (...args) => { received = args; return census([]); } });
+  assert.deepEqual(received, [adapter, { ownPid: 42 }]);
 });
 
 test("process proof failures retain fixed owner categories without shell errors or private fields", () => {
@@ -258,7 +410,7 @@ test("process proof failures retain fixed owner categories without shell errors 
     [{ status: 1, stderr: JSON.stringify({ phase: "census", reason: "broker-inspection-failed", role: "official-helper", private: "PRIVATE_CENSUS_CANARY" }) },
       { phase: "census", reason: "broker-inspection-failed", role: "official-helper" }],
     [{ status: 1, stderr: "PRIVATE_CENSUS_CANARY arbitrary shell failure" }, { phase: "census", reason: "helper-failed" }],
-  ]) assert.throws(() => readWebMaintenanceProcesses({ spawn: () => result }), error => {
+  ]) assert.throws(() => readWebMaintenanceProcesses(adapter, { spawn: () => result }), error => {
     assert.deepEqual(error.diagnostic, expected); assert.doesNotMatch(error.message, /PRIVATE_CENSUS_CANARY/u); return true;
   });
 });

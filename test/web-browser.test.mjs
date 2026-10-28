@@ -210,7 +210,7 @@ test("observer and mutation generations invalidate only their exact dependency s
   for (const changed of [
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
     ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
-    ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    ...["isSavedChatUrl", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
     { state: stateSource.replace(/(export function createBrowserAllowance\([^\n]*\) \{)/u, "$1\n  /* changed shared allowance owner */") },
     { state: stateSource.replace("shortReadMs: observationFinishGraceMs - observationTransportMarginMs", "shortReadMs: observationFinishGraceMs - observationTransportMarginMs - 1") },
     { state: stateSource.replace(/(export function createObservationBrowserState\([^\n]*\) \{)/u, "$1\n  /* changed semantic projection owner */") },
@@ -226,6 +226,7 @@ test("observer and mutation generations invalidate only their exact dependency s
   const send = browserScript({ ...base, operation: "send", prompt: "Request" });
   for (const [changed] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
+    ...["createHomeBrowserState", "createRecoveryBrowserState"].map(name => [{ state: stateSource.replace(new RegExp(`(export function ${name}\\([^\\n]*\\) \\{)`, "u"), "$1\n  /* changed lifecycle owner */") }, true]),
     [{ state: stateSource.replace(/(export async function waitForBrowserReadiness\([^\n]*\) \{)/u, "$1\n  /* changed shared readiness owner */") }, true],
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
       "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
@@ -432,7 +433,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       for (const { kind, name, scopeSelector, guardedBody } of locators) {
         if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || matchingBodies.get(guardedBody) ? [body] : []
           : name.startsWith("span[app-mention") ? chip ? [chip] : [] : root.querySelectorAll(name)));
-        else if (kind === "textbox" && name === "Ask ChatGPT" && argument.mutation) elements.push(...composers);
+        else if (kind === "textbox" && name === "Ask ChatGPT") elements.push(...(namedControls[name] ?? composers));
         else if (name === "Regenerate response") {
           const scope = scopeSelector ? root.querySelectorAll(scopeSelector) : [root];
           const matches = ui.observationControls?.[name] ?? scope.flatMap(element => element.querySelectorAll(browserDom.buttonSelector))
@@ -451,25 +452,38 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return callback([...new Set(elements)], argument);
     },
   });
-  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false) => ({
+  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false, enabledOnly = false) => ({
     kind, name, scopeSelector,
     resolve() {
       const explicit = ui.observationControls?.[name];
-      const values = explicit ?? (kind === "text" ? [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text })),
+      const values = explicit ?? (kind === "textbox" && name === "Ask ChatGPT" ? ui.composerVisible ? ui.composerElements ?? [{}] : []
+        : kind === "button" && name === "Select ChatGPT model" ? ui.modelButtonVisible ? [{}] : []
+        : kind === "button" && name === "Temporary chat" ? ui.temporaryButtonVisible ? [{}] : []
+        : kind === "selector" ? (scopeSelector ? replyRoot().querySelectorAll(scopeSelector) : [replyRoot()]).flatMap(root => root.querySelectorAll(name))
+        : kind === "text" ? [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text })),
         ...ui.texts.map(text => ({ text })), { text: ui.composerText }].filter(value => value.text === name)
         : name === "Turn off temporary chat" ? ui.temporary ? [{}] : []
           : name === "Temporary chat" ? ui.temporary && ui.temporaryHeadingVisible ? [{}] : [] : []);
       return values.map(value => ({ ...value, visible: value.visible !== false && value.visibilityStyle !== "hidden"
         && (!value.getBoundingClientRect || value.getBoundingClientRect().width > 0 && value.getBoundingClientRect().height > 0) }))
-        .filter(value => !visibleOnly || value.visible);
+        .filter(value => (!visibleOnly || value.visible) && (!enabledOnly || !(name === "Select ChatGPT model" ? ui.modelButtonDisabled : ui.temporaryButtonDisabled)));
     },
     or(other) { return makeUnion([this, other]); },
     nth(index) { return { resolve: () => this.resolve().slice(index, index + 1) }; },
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
-    locator(selector) { return makeLocator("selector", selector); },
+    locator(selector) { return makeLocator("selector", selector, false, kind === "selector" ? name : scopeSelector); },
     filter({ hasText: text, visible, has, hasNot }) {
-      if (kind === "button" && name === "Send" && has?.name === "xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") return makeLocator(kind, name);
-      if (visible !== undefined) return makeLocator(kind, name, visible);
+      if (kind === "textbox" && name === "Ask ChatGPT" && has?.name === "xpath=self::div[@contenteditable='true']") {
+        const result = makeLocator(kind, name, visibleOnly), resolve = result.resolve;
+        result.resolve = () => {
+          const values = ui.composerElements ?? [ui.composerNode];
+          return values.every(value => !value || value.tagName === "DIV" && value.getAttribute("contenteditable") === "true") ? resolve() : [];
+        };
+        return result;
+      }
+      if (kind === "button" && ["Send", "Select ChatGPT model", "Temporary chat"].includes(name)
+          && has?.name === "xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") return makeLocator(kind, name, visibleOnly, scopeSelector, hasText, hasIdentity, excludedKeys, globalGenerationGuard, true);
+      if (visible !== undefined) return makeLocator(kind, name, visible, scopeSelector, hasText, hasIdentity, excludedKeys, globalGenerationGuard, enabledOnly);
       if (name === '[data-turn-key]') return makeLocator(kind, name, visibleOnly, scopeSelector, text ?? hasText, Boolean(has) || hasIdentity,
         hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys,
         globalGenerationGuard || Boolean(has?.name?.includes("count(")));
@@ -659,13 +673,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     return body;
   };
   class StopPolicyLocator {
-    constructor(resolve) { this.resolve = resolve; }
+    constructor(resolve, purpose = "stop", selector) { this.resolve = resolve; this.purpose = purpose; this.selector = selector; }
     filter(options) {
       assert(Object.keys(options).every(key => ["has", "hasNot", "visible"].includes(key)));
       return new StopPolicyLocator(() => this.resolve().filter(element =>
         (options.visible === undefined || element.visible === options.visible)
         && (!options.has || options.has.resolve().length > 0)
-        && (!options.hasNot || options.hasNot.resolve().length === 0)));
+        && (!options.hasNot || options.hasNot.resolve().length === 0)), ["Ask ChatGPT", "Select ChatGPT model"].includes(options.has?.name) ? "home" : this.purpose, this.selector);
     }
     nth(index) { return new StopPolicyLocator(() => this.resolve().slice(index, index + 1)); }
     or(other) { if (other.kind) return makeUnion([Object.assign(this, { kind: "selector", name: "body", guardedBody: this }), other]); return new StopPolicyLocator(() => {
@@ -694,6 +708,15 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async waitFor({ state, timeoutMs }) {
       assert.equal(state, "visible"); assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      if (this.purpose === "home" || this.purpose === "checkpoint") {
+        if (this.purpose === "home") { ui.homeWaits = (ui.homeWaits ?? 0) + 1; await ui.onHomeWait?.({ timeoutMs }); }
+        else { ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint"); await ui.onAttachmentWait?.({ selector: this.selector, timeoutMs }); }
+        if (!this.resolve().length) {
+          if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; }
+          throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        }
+        return;
+      }
       ui.stopWaits += 1;
       await ui.onStopWait?.();
       if (!this.resolve().some(element => element.tagName === "BODY" || element.visible)) throw new Error("Stop readiness was not observed.");
@@ -713,9 +736,12 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     return new StopPolicyLocator(() => {
       const body = stopBody(), turns = body.querySelectorAll("[data-turn-key]"), matching = turns.filter(turn => turn.getAttribute("data-turn-key") === key);
       const states = matching.length === 1 ? matching[0].querySelectorAll("[data-talvt-turn-state]") : [];
+      const message = /\[@data-chatgpt-selection-message-id='([^']+)'/u.exec(selector)?.[1];
+      const messages = message ? body.querySelectorAll(`[data-chatgpt-selection-message-id="${message}"]`) : [];
       return matching.length === 1 && turns.at(-1)?.getAttribute("data-turn-key") === key
-        && (!selector.includes("data-talvt-turn-state") || states.length === 1 && states[0].getAttribute("data-talvt-turn-state") === "complete") ? [body] : [];
-    });
+        && (!selector.includes("data-talvt-turn-state") || states.length === 1 && states[0].getAttribute("data-talvt-turn-state") === "complete")
+        && (!message || messages.length === 1 && messages[0].closest('[data-turn-key]') === matching[0]) ? [body] : [];
+    }, selector.includes('data-chatgpt-selection-message-id') ? "checkpoint" : "stop", selector);
   };
   const roleLocator = (kind, options) => {
     const result = makeLocator(kind, options.name);
@@ -728,7 +754,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   };
   const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
     reload: async () => { ui.reloads += 1; ui.actions.push("reload"); await ui.onReload?.(); if (ui.reloadFailure) throw new Error("Reload failed."); },
-    playwright: { getByRole: roleLocator, getByText: (text, options) => {
+    playwright: { waitForURL: async (expected, { timeoutMs }) => {
+      ui.urlWaits = (ui.urlWaits ?? 0) + 1;
+      await ui.onUrlWait?.({ url: expected, timeoutMs });
+      if (ui.url !== expected) { if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; } throw new Error("URL did not become ready."); }
+    }, getByRole: roleLocator, getByText: (text, options) => {
       assert.equal(options.exact, true); return makeLocator("text", text);
     }, locator: name => name === "body" || name.startsWith("xpath=//body[") ? stopLocator(name) : makeLocator("selector", name) },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
@@ -991,41 +1021,54 @@ test("open accepts a personalized or absent decorative home heading when the emp
   }
 });
 
-test("open observes deferred hydration of the composer and both controls without opening or navigating again", async () => {
+test("open waits for explicit control hydration events and never advances on a partial home", async () => {
   const f = fixture({ fastTimers: true });
   await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
-  f.ui.composerVisible = false;
-  f.ui.modelButtonVisible = false;
-  f.ui.temporaryButtonVisible = false;
-  f.ui.onWait = () => {
-    assert.equal(f.activeTurn()?.state.tab, f.tab, "The owned tab is interruptible while its initial controls hydrate.");
-    f.ui.composerVisible = f.ui.waitedMs >= 100;
-    f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
-    f.ui.temporaryButtonVisible = f.ui.waitedMs >= 300;
-  };
-  const result = await f.run("open");
-  assert.equal(result.normal, true);
-  assert.equal(f.ui.waitedMs, 300);
-  assert.equal(f.ui.newTabs, 1);
-  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+  Object.assign(f.ui, { composerVisible: false, modelButtonVisible: false, temporaryButtonVisible: false });
+  const entered = Promise.withResolvers(), released = Promise.withResolvers();
+  f.ui.onWait = () => assert.fail("Startup must not schedule a timer poll.");
+  f.ui.onHomeWait = async () => { entered.resolve(); await released.promise; };
+  let finished = false;
+  const opening = f.run("open").then(result => { finished = true; return result; });
+  await entered.promise;
+  assert.equal(f.activeTurn()?.state.tab, f.tab);
+  f.ui.composerVisible = true; await Promise.resolve();
+  assert.equal(finished, false); assert.equal(f.ui.handoffs, 0);
+  f.ui.modelButtonVisible = true; await Promise.resolve();
+  assert.equal(finished, false); assert.equal(f.ui.handoffs, 0);
+  f.ui.temporaryButtonVisible = true; released.resolve();
+  assert.equal((await opening).normal, true);
+  assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.homeWaits, 1); assert.equal(f.ui.urlWaits, 1);
+  assert.equal(f.ui.newTabs, 1); assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 0);
 });
 
-test("normal home waits for both independent temporary-mode visibility reads", { timeout: 2000 }, async () => {
-  const f = fixture();
-  await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
-  const started = new Set(), barrier = Promise.withResolvers();
-  f.ui.onControlRead = async ({ kind, name, method }) => {
-    if (method !== "isVisible" || !["Turn off temporary chat", "Temporary chat"].includes(name)
-        || name === "Temporary chat" && kind !== "heading") return;
-    started.add(name);
-    if (started.size === 2) barrier.resolve();
-    await barrier.promise;
-  };
-  assert.equal((await f.run("open")).normal, true);
-  assert.deepEqual([...started].sort(), ["Temporary chat", "Turn off temporary chat"]);
-  assert.equal(f.ui.sendClicks, 0);
-  assert.equal(f.ui.newTabs, 1);
+test("open waits for the exact home location event even when all visible controls are already mounted", async () => {
+  const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+  const requested = Promise.withResolvers(), arrived = Promise.withResolvers();
+  f.tab.goto = async url => { f.ui.navigations.push(url); f.ui.url = "https://chatgpt.com/auth/loading"; };
+  f.ui.onUrlWait = async ({ url }) => { assert.equal(url, "https://chatgpt.com/"); requested.resolve(); await arrived.promise; };
+  const opening = f.run("open"); await requested.promise;
+  assert.equal(f.ui.homeWaits, undefined); assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.replyReads, 0);
+  f.ui.url = "https://chatgpt.com/"; arrived.resolve();
+  assert.equal((await opening).normal, true); assert.equal(f.ui.urlWaits, 1); assert.equal(f.ui.waitedMs, 0);
+});
+
+test("initial retention cannot publish a changed draft, location, tab or native owner as a ready home", async () => {
+  for (const change of ["draft", "URL", "tab", "owner"]) {
+    const f = fixture(); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    const retain = f.tab.markHandoff;
+    f.tab.markHandoff = async () => {
+      await retain();
+      if (change === "draft") f.ui.composerText = "Manual draft during retention";
+      if (change === "URL") f.ui.url = "https://chatgpt.com/c/manual-conversation";
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      if (change === "owner") f.activeTurn().turnId = "foreign-turn";
+    };
+    await assert.rejects(f.run("open"), /normal home changed|different native turn/);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.handoffs, 1); assert.equal(f.ui.sendClicks, 0);
+    if (change === "draft") assert.equal(f.ui.composerText, "Manual draft during retention");
+  }
 });
 
 test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
@@ -1034,7 +1077,7 @@ test("a missing initial control ends open's bounded hydration wait without navig
     await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
     f.ui[control] = false;
     await assert.rejects(f.run("open"), /controls did not become ready within 10 seconds/);
-    assert.equal(f.ui.waitedMs, 10000);
+    assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
     assert.equal(f.ui.newTabs, 1);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
     assert.equal(f.ui.sendClicks, 0);
@@ -1049,6 +1092,9 @@ test("initial normal home verification rejects history, drafts, ambiguous compos
     ui => { ui.texts = ["Existing answer"]; },
     ui => { ui.composerText = "Existing draft"; },
     ui => { ui.composerElements = [domElement("div", { contenteditable: "true" }), domElement("div", { contenteditable: "true" })]; },
+    ui => { ui.observationControls = { "Select ChatGPT model": [domElement("button"), domElement("button")] }; },
+    ui => { ui.observationControls = { "Temporary chat": [domElement("button"), domElement("button")] }; },
+    ui => { ui.stopCount = 2; },
     ui => { ui.stop = true; },
     ui => { ui.temporary = true; },
     ui => { ui.temporary = true; ui.temporaryHeadingVisible = false; },
@@ -1852,7 +1898,7 @@ test("a rollover attempt that never reaches proven home cannot retry its click o
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
   await assert.rejects(f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url }), /did not reach an empty normal home within 10 seconds/);
-  assert.equal(f.ui.waitedMs, 10000);
+  assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
   await assert.rejects(f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url }), /cannot be clicked again/);
   await assert.rejects(f.run("continue", { turnId: "next-turn", needsHistory: true, interruptedTurnId: base.turnId }), /not a proven empty normal home/);
   assert.equal(f.ui.startNewChatClicks, 1);
@@ -1865,13 +1911,13 @@ test("rollover waits for normal home hydration after its one click without anoth
   const f = await recoverableFixture();
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
-  f.ui.onWait = () => {
-    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [],
+  f.ui.onUrlWait = () => {
+    Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [],
       composerText: "", chip: false, fullBanners: [], fullButtons: [] });
   };
   const rolled = await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
   assert.equal(rolled.rolledOver, true);
-  assert.equal(f.ui.waitedMs, 300);
+  assert.equal(f.ui.waitedMs, 0);
   assert.equal(f.ui.startNewChatClicks, 1);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
@@ -2694,8 +2740,9 @@ test("a stale completed predecessor reloads once, waits for its exact checkpoint
   };
   f.ui.onAttachmentWait = ({ selector, timeoutMs }) => {
     order.push("attached");
-    assert.equal(selector, `[data-chatgpt-selection-message-id="${f.recovery.replyId}"]`);
-    assert.equal(timeoutMs, 10000);
+    assert.ok(selector.includes(`@data-chatgpt-selection-message-id='${f.recovery.replyId}'`));
+    assert.ok(selector.includes(`@data-turn-key='${f.recovery.generationTurnKey}'`));
+    assert.ok(timeoutMs > 0 && timeoutMs <= 10000);
     assert.equal(f.activeTurn(), undefined);
     f.ui.messageRoot = f.restored();
   };
@@ -2752,7 +2799,7 @@ test("recovery cannot refresh unknown replies, newer user activity, drafts, acti
 
 test("failed refresh never accepts changed checkpoint proof or repeats reload, and a late verified checkpoint can recover without another reload", async () => {
   for (const [scenario, afterReload, expected] of [
-    ["missing attachment", () => {}, /did not attach within 10 seconds/u],
+    ["missing attachment", () => {}, /did not become ready within 10 seconds/u],
     ["reload failure", f => { f.ui.reloadFailure = true; }, /reload failed/u],
     ["changed prefix", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(`Changed ${f.text}`); }; }, /reply-prefix-mismatch/u],
     ["changed generation identity", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(f.text, messageId(777)); }; }, /generation-turn-not-unique/u],
@@ -2796,6 +2843,83 @@ test("saved URL reacquires one existing tab when its retained old ID is absent",
   assert.equal(continued.tabNavigated, false);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
+});
+
+test("navigated recovery waits for location, message content and completed generation events before the full checkpoint proof", async () => {
+  const f = await recoverableFixture({ text: "Checkpoint content that hydrates in several explicit stages." });
+  f.loseBinding(); f.ui.present = false;
+  const locationEntered = Promise.withResolvers(), locationReleased = Promise.withResolvers();
+  const checkpointEntered = Promise.withResolvers(), checkpointReleased = Promise.withResolvers();
+  const rendered = (text, complete) => domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, text)], { complete }));
+  f.ui.onGoto = () => { f.ui.url = "https://chatgpt.com/"; f.ui.messageRoot = rendered("", false); };
+  f.ui.onUrlWait = async ({ url }) => { assert.equal(url, f.recovery.url); locationEntered.resolve(); await locationReleased.promise; };
+  f.ui.onAttachmentWait = async () => { checkpointEntered.resolve(); await checkpointReleased.promise; };
+  f.ui.onWait = () => assert.fail("Recovery must not schedule a timer poll.");
+  const reads = f.ui.replyReads, sends = f.ui.sendClicks;
+  let finished = false;
+  const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery }).then(value => { finished = true; return value; });
+  await locationEntered.promise;
+  assert.equal(f.ui.attachmentWaits, 0); assert.equal(finished, false);
+  f.ui.url = f.recovery.url; locationReleased.resolve(); await checkpointEntered.promise;
+  assert.equal(f.ui.replyReads, reads); assert.equal(finished, false);
+  f.ui.messageRoot = rendered(f.text, false); await Promise.resolve();
+  assert.equal(f.ui.replyReads, reads); assert.equal(finished, false, "Text and identity alone do not establish a completed checkpoint.");
+  f.ui.messageRoot = rendered(f.text, true); checkpointReleased.resolve();
+  const continued = await recovering;
+  assert.equal(continued.assistantText, f.text); assert.equal(continued.tabNavigated, true);
+  assert.equal(f.ui.sendClicks, sends); assert.equal(f.ui.newTabs, 2); assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0);
+});
+
+test("unchanged paragraph, BR and CodeMirror checkpoints recover when normalized source is longer than DOM text", async () => {
+  for (const form of ["paragraphs", "BR", "CodeMirror"]) {
+    const content = () => {
+      if (form === "paragraphs") return domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("p", {}, domText("Before.")), domElement("p", {}, domText("After.")));
+      if (form === "BR") return domElement("div", { "data-markdown-text-style": "assistant-message" }, domText("Before."), domElement("br"), domText("After."));
+      return domElement("div", { "data-markdown-text-style": "assistant-message", "data-markdown-copy": "code-block" },
+        domElement("div", { class: "cm-content", "data-language": "python" },
+          domElement("div", { class: "cm-line" }, domText("a")),
+          ...Array.from({ length: 12 }, () => domElement("div", { class: "cm-line" }, domElement("br"))),
+          domElement("div", { class: "cm-line" }, domText("b"))));
+    };
+    const initial = content(), projected = readReplies([initial]).replies[0].text;
+    assert.ok(initial.textContent.length < projected.length, form);
+    const f = await recoverableFixture({ text: projected }); f.loseBinding(); f.ui.present = false;
+    f.ui.onGoto = () => {
+      const wrapper = domElement("div", { [browserDom.messageIdAttribute]: f.recovery.replyId }, content());
+      f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [wrapper]));
+    };
+    const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    assert.equal(continued.assistantText, projected, form);
+    assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("semantic checkpoint readiness owns its exact message renderer and preserves valid message fragments", async () => {
+  for (const form of ["missing renderer", "foreign renderer", "duplicate wrapper", "settled short body", "fragments"]) {
+    const f = await recoverableFixture({ text: "Before.\n\nAfter." }); f.loseBinding(); f.ui.present = false;
+    const markdown = text => domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(text));
+    const wrap = (...children) => domElement("div", { [browserDom.messageIdAttribute]: f.recovery.replyId }, ...children);
+    f.ui.onGoto = () => {
+      const roots = form === "missing renderer" ? [wrap(domElement("div", {}, domText(f.text)))]
+        : form === "foreign renderer" ? [wrap(domElement("div", {}, domText(f.text))), domElement("div", { [browserDom.messageIdAttribute]: messageId(99) }, markdown(f.text))]
+          : form === "duplicate wrapper" ? [wrap(markdown(f.text)), wrap(markdown(f.text))]
+            : form === "settled short body" ? [wrap(markdown("short"))]
+              : [wrap(markdown("Before."), markdown("After."))];
+      f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", roots));
+    };
+    const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    if (form === "fragments") assert.equal((await recovering).assistantText, f.text);
+    else await assert.rejects(recovering, /missing-fresh-reply|expected-reply-mismatch|invalid-reply-identities|reply-prefix-too-short/);
+    if (["settled short body", "fragments"].includes(form)) assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 2); assert.equal(f.ui.reloads, 0);
+  }
+});
+
+test("a rendered recovery checkpoint with a wrong stable digest fails immediately without polling or replay", async () => {
+  const f = await recoverableFixture({ text: "Original checkpoint content." }); f.loseBinding(); f.ui.present = false;
+  f.ui.onGoto = () => { f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, "Different checkpoint content.")])); };
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply-prefix-mismatch/);
+  assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.reloads, 0);
 });
 
 test("a missing original tab reopens only its exact saved URL and registers retention before navigation", async () => {
@@ -3186,7 +3310,7 @@ test("reopening deleted, inaccessible or redirected saved chats fails after one 
     f.ui.present = false;
     f.ui.onGoto = () => { if (redirect) f.ui.url = redirect; };
     await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /saved chat URL and reply did not become available/);
-    assert.equal(f.ui.waitedMs, 10000);
+    assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
     assert.equal(f.ui.newTabs, 2);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
     assert.equal(f.ui.sendClicks, 1);

@@ -125,6 +125,8 @@ function fakeBrowser() {
       composer.childNodes.push(chip); composer.children.push(chip); chip.parentElement = composer;
     }
     const controls = [
+      control("button", browserDom.modelButtonName),
+      control("button", browserDom.temporaryButtonName, ui.normalHome),
       ...Array.from({ length: ui.stopCount ?? 1 }, () => control("button", "Stop", ui.stop && !ui.full)),
       ...Array.from({ length: ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1) }, () => control("button", "Start Voice", ui.idleVisible ?? (!ui.stop || ui.full))),
       ...(ui.temporaryControls ? [control("button", "Turn off temporary chat"), control("h2", "Temporary chat")] : []),
@@ -161,7 +163,16 @@ function fakeBrowser() {
         const owned = roots.filter(root => root.getAttribute(browserDom.turnKeyAttribute) === key);
         if (owned.length !== 1 || roots.at(-1)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
         if (name.includes(browserDom.turnStateAttribute) && owned[0]?.querySelectorAll(browserDom.turnStateSelector)[0]?.getAttribute() !== "complete") count = 0;
+        const replyId = /@data-chatgpt-selection-message-id='([^']+)'/u.exec(name)?.[1];
+        if (replyId) {
+          const { body } = currentRender ?? render(), messages = body.querySelectorAll(`[data-chatgpt-selection-message-id="${replyId}"]`);
+          if (messages.length !== 1 || messages[0].closest(browserDom.turnSelector)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
+        }
       } else if (name === "Stop") count = ui.stopCount ?? 1;
+      else if (kind === "selector" && [browserDom.assistantFinalReplySelector, browserDom.assistantSelector].includes(name)) {
+        const { body } = currentRender ?? render();
+        count = (scope?.selector ? body.querySelectorAll(scope.selector) : [body]).flatMap(root => root.querySelectorAll(name)).length;
+      }
       else if (name === "Start Voice") count = ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1);
       else if (name === "Turn off temporary chat" || name === "Temporary chat" && kind === "heading") count = Number(ui.temporaryControls);
       else if (kind === "text") {
@@ -170,6 +181,7 @@ function fakeBrowser() {
       }
       else if (kind === "menuitemradio") count = 0;
       if (visibleOnly && (name === "Stop" && (!ui.stop || ui.full) || name === "Start Voice" && !(ui.idleVisible ?? (!ui.stop || ui.full)))) count = 0;
+      if (visibleOnly && kind === "button" && name === browserDom.temporaryButtonName && !ui.normalHome) count = 0;
       if (filters.some(({ has, hasNot }) => has && !has.fixtureCount() || hasNot && hasNot.fixtureCount())) count = 0;
       return offset === undefined ? count : offset < count ? 1 : 0;
     };
@@ -195,7 +207,9 @@ function fakeBrowser() {
     },
     nth: index => locator(kind, name, visibleOnly, filters, index, scope),
     getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined,
-      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope), locator: selector => locator("selector", selector),
+      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope),
+    locator: selector => locator("selector", selector, false, [], undefined,
+      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope),
     filter({ hasText, visible, has, hasNot }) {
       if (visible !== undefined || has || hasNot) return locator(kind, name, visible ?? visibleOnly, [...filters, { has, hasNot }], offset, scope);
       assert.equal(kind, "selector");
@@ -245,7 +259,10 @@ function fakeBrowser() {
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) {
-      if (state === "attached") {
+      if (bodyQuery) {
+        assert.equal(state, "visible");
+        if (matched() !== 1) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+      } else if (state === "attached") {
         assert.equal(kind, "selector"); assert.equal(name, browserDom.turnSelector);
         const candidates = ui.turns.filter(turn => filters.every(filter => (filter.hasText === undefined || turn.prompt.includes(filter.hasText))
           && (!filter.hasNot || !filter.hasNot.name.includes(`='${turn.key}'`))));
@@ -286,7 +303,10 @@ function fakeBrowser() {
     ui.turns = ui.savedTurns.get(url) ?? [];
     ui.stop = ui.turns.length > 0 && !ui.complete && !ui.full;
   }, url: async () => ui.url,
-    playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
+    playwright: { waitForURL: async (expected, { timeoutMs }) => {
+      assert.ok(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      if (ui.url !== expected) throw new Error("Expected browser URL is unavailable.");
+    }, getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
   const browser = { browserId: "same-session-iab",
     tabs: { list: async () => ui.present ? [{ id: tab.id, url: await tab.url() }] : [],

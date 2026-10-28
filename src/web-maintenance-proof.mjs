@@ -19,7 +19,7 @@ const shell = () => path.join(process.env.SystemRoot ?? "C:\\Windows", "System32
 function helperFailure(phase, stderr, fallback) {
   try {
     const value = JSON.parse(stderr);
-    if (value.phase === phase && ["enumeration-failed", "row-inspection-failed", "broker-inspection-failed", "invalid-budget", "process-open-unknown",
+    if (value.phase === phase && ["enumeration-failed", "row-inspection-failed", "broker-inspection-failed", "invalid-scope", "invalid-budget", "process-open-unknown",
       "handle-open-unknown", "identity-read-unknown", "exit-wait-unknown"].includes(value.reason)
         && ["none", "native-host", "official-helper", "official-repl", "node-or-adapter", "descendant"].includes(value.role)) {
       return failure(phase, value.reason, { role: value.role });
@@ -48,9 +48,20 @@ function registeredSystemSandboxBroker(row, rows) {
     && (!row.identity || normalize(row.identity.split("|")[1]) === normalize(configured));
 }
 
-export function readWebMaintenanceProcesses({ spawn = spawnSync } = {}) {
+function webMaintenanceScope(adapter, ownPid = process.pid) {
+  const plans = [adapter?.currentRuntime, adapter?.candidate];
+  const absolute = value => typeof value === "string" && value.trim() !== "" && !value.includes("\0") && path.isAbsolute(value);
+  if (!Number.isSafeInteger(ownPid) || ownPid < 1 || ownPid > 0x7fffffff
+      || plans.some(plan => !plan || ["node", "officialCli", "officialNodeRepl"].some(name => !absolute(plan[name]?.path))
+        || !absolute(plan.runtimeModule)) || !absolute(adapter?.managedEntryPath)) throw failure("census", "invalid-scope");
+  return { ownPid, roots: [...new Set([...plans.flatMap(plan => [path.dirname(plan.node.path), path.dirname(plan.officialCli.path),
+    path.dirname(plan.officialNodeRepl.path), path.dirname(plan.runtimeModule)]), path.dirname(path.dirname(adapter.managedEntryPath))].map(normalize))] };
+}
+
+export function readWebMaintenanceProcesses(adapter, { spawn = spawnSync, ownPid } = {}) {
   try {
-    const result = spawn(shell(), args, { input: '{"action":"census"}', encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
+    const scope = webMaintenanceScope(adapter, ownPid);
+    const result = spawn(shell(), args, { input: JSON.stringify({ action: "census", scope }), encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
     if (result.error) throw failure("census", result.error.code === "ETIMEDOUT" ? "timeout" : "launch-failed");
     if (result.status !== 0) throw helperFailure("census", result.stderr, "helper-failed");
     return JSON.parse(result.stdout);
@@ -61,11 +72,7 @@ export function readWebMaintenanceProcesses({ spawn = spawnSync } = {}) {
 // deleted their files. New paths come only from the validated candidate plan.
 export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = process.pid } = {}) {
   if (census?.complete !== true || !Array.isArray(census.processes)) throw failure();
-  const plans = [adapter.currentRuntime, adapter.candidate];
-  if (plans.some(plan => !plan || ["node", "officialCli", "officialNodeRepl"].some(name => !path.isAbsolute(plan[name]?.path ?? ""))
-      || !path.isAbsolute(plan.runtimeModule ?? "")) || !path.isAbsolute(adapter.managedEntryPath ?? "")) throw failure();
-  const roots = [...plans.flatMap(plan => [path.dirname(plan.node.path), path.dirname(plan.officialCli.path), path.dirname(plan.officialNodeRepl.path),
-    path.dirname(plan.runtimeModule)]), path.dirname(path.dirname(adapter.managedEntryPath))].map(normalize);
+  const { roots } = webMaintenanceScope(adapter, ownPid);
   const seen = new Set(), relevant = new Set(), brokers = new Set(), rows = census.processes;
   for (const row of rows) {
     if (!Number.isSafeInteger(row?.pid) || row.pid < 0 || seen.has(row.pid)
@@ -78,7 +85,7 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
     if (row.pid === 0 && (row.name !== "System Idle Process" || row.identity != null || row.executablePath != null)) throw failure();
     const executable = row.executablePath ?? row.identity?.split("|")[1];
     const command = row.commandLine?.toLowerCase().replaceAll("/", path.sep) ?? "";
-    const underCohort = executable && roots.some(root => normalize(executable).startsWith(`${root}${path.sep}`));
+    const underCohort = executable && roots.some(root => normalize(executable).startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`));
     const named = /^(?:codex(?:[-_].*)?|chatgpt|node_repl)\.exe$/iu.test(row.name);
     const managedCommand = roots.some(root => command.includes(root));
     if (registeredSystemSandboxBroker(row, rows)) brokers.add(row.pid);
@@ -111,7 +118,7 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
 }
 
 export function assertWebMaintenanceAbsent(adapter, { census = readWebMaintenanceProcesses, ownPid } = {}) {
-  const live = relevantWebMaintenanceProcesses(census(), adapter, { ownPid });
+  const live = relevantWebMaintenanceProcesses(census(adapter, { ownPid }), adapter, { ownPid });
   if (live.length) throw failure("classification", "live-processes", { count: live.length });
 }
 
@@ -120,7 +127,7 @@ export async function waitForWebMaintenanceExit(adapter, { timeoutMs = 30 * 60_0
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60 * 60_000) throw new Error("Invalid bounded Codex exit wait.");
   const deadline = now() + timeoutMs;
   while (true) {
-    const processes = relevantWebMaintenanceProcesses(census(), adapter, { ownPid });
+    const processes = relevantWebMaintenanceProcesses(census(adapter, { ownPid }), adapter, { ownPid });
     if (!processes.length) return;
     const remaining = deadline - now();
     if (remaining <= 0) throw new Error("Codex did not fully exit before the maintenance deadline; no runtime selection was changed.");
