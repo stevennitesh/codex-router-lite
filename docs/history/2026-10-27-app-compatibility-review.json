@@ -51,5 +51,47 @@
     "url": "https://learn.chatgpt.com/docs/changelog",
     "observed": "The fetched page documented CLI 0.164.0, but did not document the installed 0.165.0-alpha.1.2 build.",
     "compressedRollouts": "Session-resume changes identify a surface to investigate if current active-session evidence fails; release notes alone do not establish a cancellation defect."
+  },
+  "postDeploymentVerification": {
+    "observedAt": "2026-10-28T04:56:18.027Z",
+    "routerCommit": "1e9e310343e53f13b98151bdef7beee1fa9a7399",
+    "adapterGeneration": "541331774e96beb1fa661f8bb41013a98de6459e408a67685458477f9d46c660",
+    "deploymentAcceptance": "passed all required deployment and Web maintenance checks",
+    "automaticReopen": "Windows registered activation succeeded after durable accepted deployment and lock release",
+    "rollback": "Retained paired runtime snapshot and Router source checkout; presence verified after deployment",
+    "preservedHistory": "22 conversation ledgers and one sidecar remained byte-identical, including eight uncertain Sends",
+    "health": "Router, gateway and API ready without degradation",
+    "browserContracts": {
+      "runtime": "26.1023.50603",
+      "passed": 19,
+      "failed": 0,
+      "scope": "Ten Stop cases and nine observation cases using the refreshed official SDK and the fixed loopback fixture"
+    },
+    "liveModels": [
+      {
+        "model": "chatgpt-web/gpt-5.6-sol",
+        "effort": "high",
+        "browserPower": 2,
+        "nativeRead": "passed one actual default-permission command",
+        "savedRecall": "passed without supplying the marker",
+        "nativeStop": "passed native interrupted event plus matching positive adapter acknowledgement and child terminal",
+        "continuation": "passed original chat, tab and binding with original marker recall and no recovery navigation",
+        "controller": "Native app tools and supported native UI; no launcher, native runtime patch or second inference controller",
+        "archived": true
+      },
+      {
+        "model": "chatgpt-web/gpt-5.6-sol",
+        "effort": "xhigh",
+        "browserPower": 3,
+        "status": "not qualified",
+        "firstFailure": "Send readiness reported zero matching turns within its acknowledgement bound, after picker verification and one Send",
+        "laterObservation": "The retained browser page displayed the expected baseline answer; local account-effort rejection is not supported by this evidence",
+        "uncertainty": "Send remains uncertain with no unresolved native action; no replay or ledger edits",
+        "diagnosticLimit": "A missing framed browser result masked the readiness failure as web_browser_output_shape in Router",
+        "remaining": "Native tool, Stop and continuation phases did not run for this effort",
+        "archived": true
+      }
+    ],
+    "qualificationLimit": "Passing source and browser fixtures does not qualify every model/effort. Only the High route completed all five live phases on this deployed candidate."
   }
 }
