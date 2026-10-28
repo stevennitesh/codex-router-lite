@@ -293,7 +293,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       }
     }
     for (const id of outputs.keys()) requireValue(calls.has(id), 'unpaired_output');
-    const browser = [], native = [], discovery = []; let pending = false, fullContinuationPending = false;
+    const browser = [], native = [], discovery = []; let pending = false, fullContinuationPending = false, sendCalls = 0;
     for (const [id, call] of calls) {
       const paired = outputs.has(id), result = outputs.get(id);
       if (!paired) pending = true;
@@ -302,6 +302,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         const config = readBrowserProgram(args?.code);
         requireValue(config && config.sessionId === run.threadId && config.turnId === turnId && config.bindingId === run.baseline.bindingId, 'browser_identity_mismatch');
         requireValue(['continue', 'send', 'observe', 'retain'].includes(config.operation), 'unexpected_browser_operation');
+        if (config.operation === 'send') requireValue(++sendCalls === 1, 'duplicate_send');
         if (fullContinuationPending) requireValue(config.operation === 'continue' && config.fullContinuation === true, 'full_continuation_required');
         else requireValue(config.fullContinuation !== true, 'unexpected_full_continuation');
         if (expected && config.operation === 'send') {
@@ -341,7 +342,15 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
           receipt.tabReopened = frame.tabReopened ?? null; receipt.tabNavigated = frame.tabNavigated ?? null;
         }
         requireValue(frame.requestError == null, 'browser_request_error');
-        if (expected && config.operation === 'send' && frame.sent === true) receipt.browserSelectionVerified = true;
+        if (config.operation === 'send') {
+          const dispatched = frame.sent === false && frame.dispatched === true && frame.generationPending === true
+            && frame.conversationFull === false
+            && Object.keys(frame).sort().join() === 'baselineReplyIds,conversationFull,dispatched,generationPending,normal,operation,sent,tabId,url'
+            && Array.isArray(frame.baselineReplyIds) && new Set(frame.baselineReplyIds).size === frame.baselineReplyIds.length
+            && frame.baselineReplyIds.every(value => typeof value === 'string' && UUID.test(value));
+          requireValue(frame.sent === true || dispatched, 'unsupported_send_receipt');
+          if (expected) receipt.browserSelectionVerified = true;
+        }
         browser.push({ config, frame });
       } else if (call.type === 'tool_search_call') discovery.push(call);
       else {
@@ -363,8 +372,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
     const observation = observations.at(-1)?.frame;
     receipt.currentGenerationObserved = observation ? typeof observation.generationTurnKey === 'string' && observation.generationTurnKey === ledger.generationTurnKey : null;
     receipt.stopVisible = typeof observation?.stopVisible === 'boolean' ? observation.stopVisible : null;
-    const sends = browser.filter(item => item.config.operation === 'send' && item.frame.sent === true);
-    requireValue(sends.length <= 1, 'duplicate_send');
+    const sends = browser.filter(item => item.config.operation === 'send');
     const retention = browser.filter(item => item.config.operation === 'retain');
     receipt.completedRetain = retention.length ? retention.some(item => item.frame.retained === true && item.frame.completed === true && item.frame.stopVisible === false) : null;
     const authorities = eventRows.filter(row => row.code === 'authority_cached' && row.threadId === run.threadId && row.turnId === turnId);
@@ -411,7 +419,9 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
     if (!receipt.nativeCompleted) return { receipt };
     if (phase === 'native') requireValue(native.length === 1, 'native_command_missing');
     requireValue(!pending, 'missing_terminal_tool_output');
-    requireValue(accepted && ledger.unresolvedCoding.length === 0 && ledger.lastTurn.completed === true && ledger.generationCompleted === true && sends.length === 1 && receipt.completedRetain === true, 'completed_delivery_missing');
+    requireValue(accepted && receipt.currentGenerationObserved === true && ledger.unresolvedCoding.length === 0
+      && ledger.lastTurn.completed === true && ledger.generationCompleted === true
+      && sends.length === 1 && receipt.completedRetain === true, 'completed_delivery_missing');
     requireValue(finals.length === 1, 'exact_final_required');
     receipt.exactMarker = normalize(finals[0]) === run.marker;
     requireValue(receipt.exactMarker, 'marker_not_recalled');
@@ -434,19 +444,23 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
 
 // Register before inspecting, so an append between initial inspection and watch
 // setup cannot be missed. The sole timer is a failure deadline, never a poll.
-export function watchWebEvidence(files, inspect, { timeoutMs = 120000, watchFile = watch } = {}) {
+export function watchWebEvidence(files, inspect, { timeoutMs = 120000, watchFile = watch, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   requireValue(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 600000, 'invalid_deadline');
   return new Promise((resolve, reject) => {
     const watchers = []; let timer, closed = false, queued = false;
     const finish = (error, result) => {
       if (closed) return;
-      closed = true; clearTimeout(timer); watchers.forEach(watcher => watcher.close());
+      closed = true; clearTimer(timer); watchers.forEach(watcher => watcher.close());
       if (error) reject(error); else resolve(result);
     };
-    const inspectNow = () => {
+    const inspectNow = (deadline = false) => {
       if (closed) return;
       queued = false;
-      try { const result = inspect(); if (result.receipt.status !== 'pending') finish(null, result); }
+      try {
+        const result = inspect();
+        if (result.receipt.status !== 'pending') finish(null, result);
+        else if (deadline) finish(Object.assign(new Error('evidence_deadline'), { code: 'evidence_deadline' }));
+      }
       catch { finish(Object.assign(new Error('evidence_read_failed'), { code: 'evidence_read_failed' })); }
     };
     const directories = new Map();
@@ -458,12 +472,12 @@ export function watchWebEvidence(files, inspect, { timeoutMs = 120000, watchFile
       for (const [directory, names] of directories) {
         const watcher = watchFile(directory, (_event, filename) => {
           if (filename != null && !names.has(filename.toString()) || queued || closed) return;
-          queued = true; queueMicrotask(inspectNow);
+          queued = true; queueMicrotask(() => inspectNow());
         });
         watcher.on('error', () => finish(Object.assign(new Error('evidence_watch_failed'), { code: 'evidence_watch_failed' })));
         watchers.push(watcher);
       }
-      timer = setTimeout(() => finish(Object.assign(new Error('evidence_deadline'), { code: 'evidence_deadline' })), timeoutMs);
+      timer = setTimer(() => inspectNow(true), timeoutMs);
       inspectNow();
     } catch { finish(Object.assign(new Error('evidence_watch_failed'), { code: 'evidence_watch_failed' })); }
   });
@@ -495,8 +509,10 @@ export async function waitWebVerification({ runPath, phase, turnId, timeoutMs = 
   const watched = [run.rolloutPath, run.eventPath, run.ledgerPath, run.fixturePath, ...run.snapshots.map(item => item.path),
     ...(typeof run.officialIdentity?.binary === 'string' ? [run.officialIdentity.binary] : []), ...(run.protectedLedger ? [run.protectedLedger.path] : [])];
   let result;
-  try { result = await watchWebEvidence(watched, inspect, { timeoutMs, watchFile: dependencies.watchFile ?? watch }); }
-  catch (error) { result = { receipt: { ...inspect().receipt, status: 'failed', code: error.code === 'evidence_deadline' ? 'evidence_deadline' : 'evidence_watch_failed' } }; }
+  try { result = await watchWebEvidence(watched, inspect, { timeoutMs, watchFile: dependencies.watchFile ?? watch,
+    setTimer: dependencies.setTimer ?? setTimeout, clearTimer: dependencies.clearTimer ?? clearTimeout }); }
+  catch (error) { result = { receipt: { version: 1, phase, threadId: run.threadId, turnId, status: 'failed',
+    code: ['evidence_deadline', 'evidence_read_failed'].includes(error.code) ? error.code : 'evidence_watch_failed' } }; }
   result.receipt.observedAt = new Date().toISOString();
   run.phases[phase] = result.receipt;
   if (phase === 'ready' && result.receipt.status === 'passed') run.ready = result.checkpoint;

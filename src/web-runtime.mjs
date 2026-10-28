@@ -503,7 +503,8 @@ export function createInAppWebRuntime({
         ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt, turnToken: turn.token } : {}),
-        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token, broker.revision(turn.token)) },
+        ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token,
+          turn.pendingDelivery ? turn.inputObservationRevision ?? broker.revision(turn.token) : broker.revision(turn.token)) },
           ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),
       }), operation === "observe" ? "Wait for ChatGPT or its next Codex tool request" : `ChatGPT Web: ${operation}`, 30_000), status: "completed" };
     turn.browserStarted = true;
@@ -514,7 +515,12 @@ export function createInAppWebRuntime({
     if (["open", "continue", "rollover"].includes(operation) || operation === "bootstrap" && conversation.browserOwnerTurnIds.length) {
       conversation.browserOwnerTurnIds = [...new Set([...conversation.browserOwnerTurnIds, turn.turnId])];
     }
-    if (operation === "send") { turn.sendState = "uncertain"; turn.conversation.uncertainSend = true; }
+    if (operation === "send") {
+      turn.sendState = "uncertain"; turn.conversation.uncertainSend = true;
+      // Keep activity during native Send queued for the first owned observation,
+      // including when it precedes both the receipt and the eventual DOM anchor.
+      turn.inputObservationRevision = broker.revision(turn.token);
+    }
     conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
     turn.pending = { kind: "browser", operation, frameToken, calls: [call], fullContinuation };
     await persist(conversation);
@@ -596,7 +602,7 @@ export function createInAppWebRuntime({
   // receipt through current output or an authenticated current-token MCP request.
   const promoteDelivery = turn => {
     const delivery = turn.pendingDelivery;
-    if (!delivery) return;
+    if (!delivery || !uuid.test(delivery.generationTurnKey ?? "")) return;
     const conversation = turn.conversation;
     turn.sendState = "sent";
     conversation.uncertainSend = false;
@@ -615,6 +621,7 @@ export function createInAppWebRuntime({
     conversation.assistantText = undefined;
     conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: false };
     turn.pendingDelivery = undefined;
+    turn.inputObservationRevision = undefined;
     turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.promptInstructionsSha256 = undefined;
   };
   const acceptObservation = (turn, value) => {
@@ -622,8 +629,10 @@ export function createInAppWebRuntime({
     if (browserObservationOwnershipLost(value)) {
       throw fail("The saved Web generation is no longer uniquely owned and latest. Its chat is retained; queued native actions will not be delivered or replayed.", "web_generation_ownership");
     }
-    if (value.normal !== true || value.tabId !== turn.conversation.tabId || value.url !== delivery.chatUrl
+    const acquiredSavedUrl = delivery.awaitingSavedUrl === true && isSavedChatUrl(value.url) && value.url !== turn.conversation.chatUrl;
+    if (value.normal !== true || value.tabId !== turn.conversation.tabId || (!acquiredSavedUrl && value.url !== delivery.chatUrl)
         || !messageIds(value.baselineReplyIds) || digest(value.baselineReplyIds) !== digest(delivery.sendBaselineReplyIds)
+        || !uuid.test(value.generationTurnKey ?? "")
         || delivery.generationTurnKey !== undefined && value.generationTurnKey !== delivery.generationTurnKey
         || value.requestError !== undefined && value.requestError !== "unknown_error"
         || !messageIds(value.generationReplyIds) || value.generationReplyIds.some(replyId => value.baselineReplyIds.includes(replyId))
@@ -631,6 +640,10 @@ export function createInAppWebRuntime({
         || (value.replyId === null ? value.assistantText !== "" || value.completed && !nonempty(value.replyUnavailableReason) : typeof value.replyId !== "string" || !uuid.test(value.replyId)
           || value.baselineReplyIds.includes(value.replyId)
           || !value.generationReplyIds.includes(value.replyId))) throw fail("The browser observation has no verified conversation evidence.");
+    if (delivery.awaitingSavedUrl && !acquiredSavedUrl) throw fail("The pending Send has no verified saved conversation URL.");
+    delivery.chatUrl = value.url;
+    delete delivery.awaitingSavedUrl;
+    delivery.generationTurnKey = value.generationTurnKey;
     delivery.generationReplyIds = [...value.generationReplyIds];
     turn.lastBrowserAnswer = { replyId: value.replyId, text: value.assistantText };
     const prefix = value.assistantText.slice(0, 1024);
@@ -640,6 +653,11 @@ export function createInAppWebRuntime({
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
+    if (Object.hasOwn(value, "sendFailure")) {
+      if (pending.operation !== "send" || operation !== "send" || Object.keys(value).length !== 2
+          || !["anchor-conflict", "saved-url"].includes(value.sendFailure)) throw fail("The browser Send failure receipt is malformed.", "web_browser_output_shape");
+      throw fail("ChatGPT Send readiness could not be verified. Its effect remains uncertain and the message will not be repeated.", "web_send_uncertain");
+    }
     if (Object.hasOwn(value, "needsFullContinuation") || Object.hasOwn(value, "noActions")) {
       // Only the exact nonce-framed pre-action cache miss can authorize one full
       // Continue. Errors, ordinary lifecycle receipts and Send never retry.
@@ -685,14 +703,19 @@ export function createInAppWebRuntime({
       return emitBrowser(turn, "send", payload);
     }
     if (operation === "send") {
-      if (value.sent !== true) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
+      const unanchored = value.sent === false && value.dispatched === true && value.generationPending === true
+        && Object.keys(value).sort().join() === "baselineReplyIds,conversationFull,dispatched,generationPending,normal,operation,sent,tabId,url"
+        && value.conversationFull === false;
+      if (value.sent !== true && !unanchored) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
       if (!messageIds(value.baselineReplyIds)
-          || !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
-      if (!isSavedChatUrl(value.url) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
+          || !unanchored && !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
+      const awaitingSavedUrl = unanchored && (turn.conversation.needsHistory || !turn.conversation.chatUrl) && value.url === "https://chatgpt.com/";
+      if ((!isSavedChatUrl(value.url) && !awaitingSavedUrl) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
       if (value.normal !== true || value.tabId !== turn.conversation.tabId) throw fail("The anchored Send does not belong to the owned browser tab.");
       turn.pendingDelivery = { chatUrl: value.url, sendBaselineReplyIds: [...value.baselineReplyIds],
-        generationTurnKey: value.generationTurnKey, generationReplyIds: [],
+        ...(awaitingSavedUrl ? { awaitingSavedUrl: true } : {}),
+        ...(!unanchored ? { generationTurnKey: value.generationTurnKey } : {}), generationReplyIds: [],
         checkpoint: turn.promptCheckpoint, instructionsSha256: turn.promptInstructionsSha256 };
       return emitBrowser(turn, "observe", payload);
     }

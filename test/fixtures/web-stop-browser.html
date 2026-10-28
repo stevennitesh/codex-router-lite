@@ -33,16 +33,32 @@
     <button type="button" data-scenario="observation-temporary">Observation labelledby temporary mode</button>
     <button type="button" data-scenario="observation-quoted-control">Observation quoted control</button>
     <button type="button" data-scenario="observation-indicator-transition">Observation indicator transition</button>
+    <button type="button" data-scenario="send-pending">Pending Send anchor</button>
+    <button type="button" data-scenario="send-history">Send with quoted history marker</button>
+    <button type="button" data-scenario="send-duplicate-marker">Duplicate Send marker</button>
+    <button type="button" data-scenario="send-duplicate-key">Duplicate Send identity</button>
+    <button type="button" data-scenario="send-foreign-latest">Superseded Send anchor</button>
+    <button type="button" data-scenario="send-disabled">Disabled Send readiness</button>
+    <button type="button" data-scenario="send-aria-disabled">Aria-disabled Send readiness</button>
   </nav>
   <output id="contract-status" data-scenario="not-selected" data-stop-clicks="0" aria-live="polite">Choose a fixture scenario.</output>
   <section id="rendered-chat" aria-label="Rendered chat fixture"></section>
   <button type="button" id="advance-generation" hidden>Advance fixture generation</button>
   <button type="button" id="complete-generation" hidden>Finish fixture generation</button>
+  <button type="button" id="publish-send-marker" hidden>Publish pending Send marker</button>
+  <button type="button" id="publish-send-identity" hidden>Publish verified Send identity</button>
+  <button type="button" id="enable-send-control" hidden>Enable fixture Send</button>
   <script>
     const chat = document.querySelector('#rendered-chat');
     const status = document.querySelector('#contract-status');
     const advance = document.querySelector('#advance-generation');
     const finish = document.querySelector('#complete-generation');
+    const publishMarker = document.querySelector('#publish-send-marker');
+    const publishIdentity = document.querySelector('#publish-send-identity');
+    const enableSend = document.querySelector('#enable-send-control');
+    const sendMarker = 'Router generation: 11111111-2222-4333-8444-555555555555';
+    const sendKey = '11112222-3333-4444-8555-666677778888';
+    const historyKey = '00000000-1111-4222-8333-444455556666';
     let stopClicks = 0;
     let scenario = 'not-selected';
 
@@ -96,6 +112,37 @@
       chat.replaceChildren(makeTurn('fixture-owned-generation', next === 'explicit-complete'));
       advance.hidden = next !== 'changed-generation';
       finish.hidden = next !== 'observation-indicator-transition';
+      publishMarker.hidden = !['send-pending', 'send-history'].includes(next);
+      publishIdentity.hidden = true;
+      enableSend.hidden = !['send-disabled', 'send-aria-disabled'].includes(next);
+      if (next.startsWith('send-')) {
+        chat.replaceChildren();
+        if (!enableSend.hidden) {
+          const send = document.createElement('button');
+          send.type = 'button';
+          send.setAttribute('aria-label', 'Send');
+          send.textContent = 'Fixture Send control';
+          if (next === 'send-disabled') send.disabled = true;
+          else send.setAttribute('aria-disabled', 'true');
+          chat.append(send);
+          record();
+          return;
+        }
+        const message = key => {
+          const turn = makeTurn(key);
+          turn.append(document.createTextNode(sendMarker));
+          return turn;
+        };
+        if (next === 'send-history') chat.append(message(historyKey));
+        if (!['send-pending', 'send-history'].includes(next)) {
+          chat.append(message(sendKey));
+          if (next === 'send-duplicate-marker') chat.append(message('99990000-1111-4222-8333-444455556666'));
+          if (next === 'send-duplicate-key') chat.append(makeTurn(sendKey));
+          if (next === 'send-foreign-latest') chat.append(makeTurn('99990000-1111-4222-8333-444455556666'));
+        }
+        record();
+        return;
+      }
       if (next.startsWith('observation-')) {
         const turn = chat.querySelector('[data-turn-key]');
         turn.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state',
@@ -169,6 +216,26 @@
       chat.querySelectorAll('[data-fixture-control="stop"]').forEach(control => { control.hidden = true; });
       chat.querySelector('[data-turn-key] button').hidden = false;
       finish.hidden = true;
+      record();
+    });
+    publishMarker.addEventListener('click', () => {
+      const turn = makeTurn('renderer-placeholder');
+      turn.append(document.createTextNode(sendMarker));
+      chat.append(turn);
+      publishMarker.hidden = true;
+      publishIdentity.hidden = false;
+      record();
+    });
+    publishIdentity.addEventListener('click', () => {
+      chat.querySelector('[data-turn-key="renderer-placeholder"]').setAttribute('data-turn-key', sendKey);
+      publishIdentity.hidden = true;
+      record();
+    });
+    enableSend.addEventListener('click', () => {
+      const send = chat.querySelector('button[aria-label="Send"]');
+      send.disabled = false;
+      send.removeAttribute('aria-disabled');
+      enableSend.hidden = true;
       record();
     });
   </script>

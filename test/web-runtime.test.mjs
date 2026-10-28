@@ -236,6 +236,7 @@ function fakeBrowser() {
         ui.url = `https://chatgpt.com/c/${ui.chatNumber === 1 ? "owned-conversation" : `successor-${ui.chatNumber}`}`;
         ui.savedReplies.set(ui.url, ui.texts);
         ui.savedTurns.set(ui.url, ui.turns);
+        ui.afterSend?.();
       }
     },
     async getAttribute(attribute) { return { "aria-checked": "true", "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null; },
@@ -400,6 +401,94 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
+
+test("dispatched input stays private until its eventual anchor and substantive acceptance", async t => {
+  for (const delayed of ["generation", "saved URL"]) await t.test(delayed, async t => {
+    const h = harness(t, { instructions: "Delayed current instructions." });
+    let pendingTurns;
+    h.browser.ui.afterSend = () => {
+      if (delayed === "generation") pendingTurns = h.browser.ui.turns.splice(0);
+      else h.browser.ui.url = "https://chatgpt.com/";
+    };
+    const { call } = await h.toObserve();
+    const uncertain = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(uncertain.uncertainSend, true); assert.equal(uncertain.lastTurn.sendState, "uncertain");
+    assert.equal(uncertain.checkpoint, undefined); assert.equal(uncertain.generationTurnKey, undefined);
+    assert.equal(uncertain.deliveredInstructionsSha256, undefined); assert.equal(uncertain.chatUrl, undefined);
+    h.browser.ui.afterSend = undefined;
+    if (pendingTurns) h.browser.ui.turns = pendingTurns;
+    h.browser.ui.url = "https://chatgpt.com/c/owned-conversation";
+    const observe = (await h.answerBrowser(call)).output[0];
+    const anchored = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(anchored.uncertainSend, true); assert.equal(anchored.checkpoint, undefined);
+    assert.equal(h.browserOwner().state.sendConfirmed, true, "The anchor grants browser ownership only.");
+    await h.completeAnswer(observe, "Accepted after the actual state event.");
+    const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(accepted.uncertainSend, false); assert.equal(accepted.generationTurnKey, h.browser.ui.turns.at(-1).key);
+    assert.equal(accepted.deliveredInstructionsGenerationTurnKey, accepted.generationTurnKey);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("current-token native calls queued before an anchor wait for that anchor and keep their exact request", async t => {
+  const h = harness(t);
+  let pendingTurns;
+  h.browser.ui.afterSend = () => { pendingTurns = h.browser.ui.turns.splice(0); };
+  const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+  const send = (await h.answerBrowser(open)).output[0], dispatched = await h.executeBrowser(send);
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
+  const invoked = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "queued-before-anchor.txt" } });
+  const outcome = invoked.catch(error => error);
+  h.append(send, outputFor(send, dispatched));
+  const call = (await h.request()).output[0];
+  const wait = readBrowserProgram(JSON.parse(call.arguments).code).observationWait;
+  assert.ok(Number(new URL(wait.url).searchParams.get("revision")) < h.broker.revision(h.token()),
+    "Activity predating the first observation must still wake its held queue.");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  h.browser.ui.turns = pendingTurns; h.browser.ui.afterSend = undefined;
+  const emitted = (await h.answerBrowser(call)).output[0];
+  assert.equal(emitted.namespace, "mcp__work"); assert.deepEqual(JSON.parse(emitted.arguments), { path: "queued-before-anchor.txt" });
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false); assert.equal(accepted.generationTurnKey, pendingTurns[0].key);
+  assert.equal(accepted.deliveredInstructionsGenerationTurnKey, pendingTurns[0].key);
+  h.append(emitted, outputFor(emitted, "ACTUAL_QUEUED_RESULT")); await h.request();
+  assert.ok(await outcome); assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("cancellation before an anchor preserves the prior durable delivery despite current-token activity", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  await h.completeAnswer(call, "Prior confirmed answer.");
+  const prior = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  h.newTurn(followupId, "Pending revised input.", { instructions: "New instructions await proof." });
+  h.browser.ui.afterSend = () => { h.browser.ui.turns.pop(); };
+  await h.toObserve();
+  const releaseActivity = h.broker.beginActivity(h.token()); releaseActivity();
+  h.observations.watchers.at(-1).onCancel();
+  await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  await h.runtime.close();
+  const cancelled = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(cancelled.uncertainSend, true); assert.equal(cancelled.lastTurn.sendState, "uncertain");
+  for (const key of ["checkpoint", "generationTurnKey", "deliveredInstructionsSha256", "deliveredInstructionsGenerationTurnKey", "chatUrl"]) assert.deepEqual(cancelled[key], prior[key]);
+  assert.deepEqual(cancelled.unresolvedCoding, []); assert.equal(h.browser.ui.stopMarks.length, 0);
+  assert.equal(h.browser.ui.sends.length, 2);
+});
+
+test("Send failure receipts require their exact nonce, producer shape and fixed error code", async t => {
+  for (const branch of ["recognized", "wrong nonce", "private extra", "unknown reason", "wrong operation"]) await t.test(branch, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    const send = (await h.answerBrowser(open)).output[0];
+    const receipt = { operation: branch === "wrong operation" ? "observe" : "send", sendFailure: branch === "unknown reason" ? "private error" : "anchor-conflict",
+      ...(branch === "private extra" ? { privateText: "PRIVATE_ERROR_CANARY" } : {}) };
+    h.append(send, outputFor(send, browserReceipt(send, receipt, branch === "wrong nonce" ? "f".repeat(48) : undefined)));
+    await assert.rejects(h.request(), { code: branch === "recognized" ? "web_send_uncertain" : branch === "wrong operation" ? "web_runtime_unavailable" : "web_browser_output_shape" });
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.uncertainSend, true); assert.equal(saved.checkpoint, undefined);
+    assert.equal(readFileSync(h.stateFile, "utf8").includes("PRIVATE_ERROR_CANARY"), false);
+    assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
 
 async function reportObservation(h, call, fields) {
   const output = await h.executeBrowser(call);

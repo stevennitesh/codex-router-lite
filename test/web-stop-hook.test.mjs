@@ -1201,6 +1201,20 @@ const makeUncertainLedger = f => {
   f.first.ledger.uncertainSend = true; f.first.ledger.lastTurn.sendState = "uncertain";
 };
 
+test("Stop before the new Send anchor preserves uncertainty and cannot act on the prior generation", async () => {
+  for (const prior of [false, true]) {
+    const f = fixture(); makeUncertainLedger(f);
+    f.first.state.sendConfirmed = false;
+    delete f.first.state.generationTurnKey;
+    if (!prior) { delete f.first.ledger.chatUrl; delete f.first.ledger.generationTurnKey; }
+    const before = JSON.stringify(f.first.ledger);
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "ledger_invalid");
+    assert.deepEqual(mutations(f), []); assert.equal(JSON.stringify(f.first.ledger), before);
+    assert.equal(f.calls.some(call => ["get_browser", "get_tab", "generation"].includes(call.name)), false);
+  }
+});
+
 test("only exact confirmed Send delivery can cancel before Router consumes its result", async () => {
   for (const fresh of [false, true]) for (const previous of [false, true]) {
     const f = fixture(), delivery = deliveryFor(f); makeUncertainLedger(f);

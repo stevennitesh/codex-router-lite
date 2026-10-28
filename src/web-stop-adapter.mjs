@@ -399,6 +399,9 @@ export class AdapterBridge {
         && !this.retiredTurns.has(turnKey(guard.identity.threadId, guard.identity.turnId))) {
       pending.send = { guard, nativeMeta: snapshot(params._meta), epoch: this.epoch };
     }
+    if (pending.qualified && guard?.config.operation === 'observe') {
+      pending.anchor = { guard, nativeMeta: snapshot(params._meta), epoch: this.epoch };
+    }
     // Assignment after creation keeps the resolver distinct from Promise.resolve.
     pending.settle = settle;
     const heldObservation = pending.qualified ? guard : observation && !overlapping && this.pending.size === 0
@@ -542,6 +545,30 @@ export class AdapterBridge {
             && (!sent.guard.config.tabId || value.tabId === sent.guard.config.tabId)) {
           this.cacheAuthority(sent.guard, sent.nativeMeta, { bindingId: sent.guard.config.bindingId,
             tabId: value.tabId, url: value.url, generationTurnKey: value.generationTurnKey });
+        }
+      }
+      const anchored = pending.anchor;
+      if (anchored && !message.error && message.result?.isError !== true && anchored.epoch === this.epoch
+          && pending.cache === this.cache && !this.cache.delivery && !this.authorityDisabled
+          && this.pending.size === 1 && !this.cleanupGroup && this.injected.size === 0
+          && this.currentThread === anchored.guard.identity.threadId && this.currentTurn === anchored.guard.identity.turnId
+          && isDeepStrictEqual(authorityView(this.currentAuthority.meta), authorityView(anchored.nativeMeta))) {
+        let value;
+        try { value = parseBrowserOutput(message.result, anchored.guard.config.frameToken); } catch { /* An unreadable observation grants no generation authority. */ }
+        if (value?.operation === 'observe' && !own(value, 'ownershipPending') && value.normal === true
+            && isSavedChatUrl(value.url) && typeof value.tabId === 'string' && value.tabId.length > 0
+            && uuid(value.generationTurnKey) && !browserObservationOwnershipLost(value)
+            && typeof value.completed === 'boolean' && typeof value.assistantText === 'string'
+            && Array.isArray(value.baselineReplyIds) && value.baselineReplyIds.every(uuid)
+            && Array.isArray(value.generationReplyIds) && value.generationReplyIds.every(uuid)
+            && new Set(value.baselineReplyIds).size === value.baselineReplyIds.length
+            && new Set(value.generationReplyIds).size === value.generationReplyIds.length
+            && value.generationReplyIds.every(key => !value.baselineReplyIds.includes(key))
+            && (value.replyId === null && value.assistantText === '' || uuid(value.replyId) && value.generationReplyIds.includes(value.replyId))
+            && (!anchored.guard.config.tabId || value.tabId === anchored.guard.config.tabId)) {
+          this.cacheAuthority(anchored.guard, anchored.nativeMeta, { bindingId: anchored.guard.config.bindingId,
+            tabId: value.tabId, url: value.url, generationTurnKey: value.generationTurnKey });
+          pending.cache = this.cache;
         }
       }
       // A real terminal error also ends the ordinary invocation. Only its

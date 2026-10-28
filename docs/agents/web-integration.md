@@ -54,19 +54,27 @@ The full bridge protocol and exact current Codex instructions are sent on first
 attachment or an instruction revision. A unique local prompt-owned DOM turn
 anchors observation and immediate Stop. It does not prove that ChatGPT accepted
 the input: optimistic turns can be followed by a site rejection and restored
-draft. Router starts ordinary observation immediately after this anchor, without
-waiting inside Send for a native tool that observation must deliver.
-Send and Stop use the same bounded selector-wait helper. A capped SDK wait can
-rearm only within the original caller deadline, after a coherent state read.
-Send readiness includes the unique latest prompt marker and valid new turn
-identity; its final page proof remains authoritative. Failed confirmation keeps
-Send uncertain and reports a fixed failure stage, never another Send click.
-Paste readiness, picker verification, Send dispatch and its confirmation share
-the original Send deadline. Picker stages recheck its remaining allowance before
-another action; Send reserves its final ownership proof before dispatch. Interrupted
-continuation likewise gives Stop only its remaining confirmation allowance and
-keeps a final read reserve. Expired pre-dispatch work cannot click Send or Stop;
-an attempted action keeps its existing uncertainty and no-replay rules.
+draft. Send returns a dispatch receipt after its single click; an already mounted
+unique prompt-owned turn can accompany that receipt. Otherwise the existing held
+observation queue waits for the saved URL and turn identity. Preparation time
+cannot consume the later confirmation allowance. Missing turns and placeholder
+identities remain pending; duplicate markers or identities and a valid marker
+superseded by another valid turn fail without another Send. An established saved
+URL cannot change. A first chat must establish its saved URL and unique marker
+together on the exact dispatched tab before any reply or tool activity is adopted.
+
+The public SDK's semantic locator waits signal browser readiness, followed by a
+fresh ownership proof. Send readiness includes the unique latest prompt marker
+and valid new turn identity; elapsed time never establishes success. Short native
+callbacks retain Stop responsiveness while the adapter owns the pending wait.
+The active turn and native executions retain bounded failure deadlines. A capped
+SDK wait may rearm only inside its caller's remaining allowance after a coherent
+state read. Paste readiness, picker verification and dispatch share their
+preparation deadline; exact enabled-control readiness replaces manual polling.
+Expired pre-dispatch work cannot click Send or Stop. An attempted action retains
+its uncertainty and no-replay rules. The first anchored observation also supplies
+current delivery evidence to Stop; before an anchor exists, cancellation can drain
+native work but cannot safely click an unowned page control.
 
 Current-generation substantive assistant output or an authenticated current-token
 broker handler acknowledges input. Registration, declaration updates, Stop visibility
@@ -552,8 +560,10 @@ chat, tab and native binding identity, the marker recalled without supplying it,
 and no uncertain Send or unresolved native action. Verified same-tab binding
 restoration is allowed only with `bindingRestored:true`, `tabReopened:false` and
 `tabNavigated:false`; reopening or recovery navigation fails this check. The
-helper writes bounded allowlisted receipts and waits on file changes; elapsed
-timeouts only bound failures. It does not replay a failed action or change keys,
+helper writes bounded allowlisted receipts and waits on file changes. Its deadline
+performs one final authoritative inspection so a delayed or coalesced notification
+cannot overwrite terminal evidence with a timeout. Pending evidence alone reaches
+the failure deadline. It does not replay a failed action or change keys,
 hook trust, runtime selection, protected ledgers or rollback copies.
 
 If sign-in, tool approval, an account safety block or ambiguous native UI prevents
@@ -570,8 +580,9 @@ node scripts/test-web-stop-browser.mjs --serve
 It prints `fixtureUrl` and serves only the test HTML. In the current official
 browser REPL, import `scripts/test-web-stop-browser.mjs` by its absolute file URL,
 create a disposable blank tab with the documented SDK, and call
-`runWebStopBrowserContract({ tab, fixtureUrl })` and
-`runWebObservationBrowserContract({ tab, fixtureUrl })`. Require every returned row's
+`runWebStopBrowserContract({ tab, fixtureUrl })`,
+`runWebObservationBrowserContract({ tab, fixtureUrl })` and
+`runWebSendBrowserContract({ tab, fixtureUrl })`. Require every returned row's
 `passed` value to be true. The harness refuses an existing non-fixture tab before
 navigation. Close that tab and stop the fixture server afterward.
 
@@ -582,7 +593,10 @@ and explicit completion. Observation cases exercise the same SDK-backed profiles
 used in production, including labelledby Regenerate controls, temporary-mode
 rejection and quoted-content exclusion. Fixture transitions use actual button clicks, not
 sleep-driven state changes; timeouts are failure bounds. These checks expose SDK
-and markup assumptions, while the live check establishes the current ChatGPT
+and markup assumptions. Send cases use explicit fixture buttons to publish a
+marker and then its UUID, verify the actual shared production locator and
+projection, and reject duplicate, superseded and historical anchors. No sleep
+publishes those state transitions. The live check establishes the current ChatGPT
 path. Neither guarantees compatibility with arbitrary future updates.
 
 ## Adapter installation and rollback

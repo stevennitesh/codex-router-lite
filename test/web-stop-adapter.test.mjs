@@ -464,6 +464,44 @@ test('a confirmed Send terminal authorizes Stop before observation with only its
   assert.deepEqual(f.calls[1]._meta, retainedMetadata(source._meta));
 });
 
+test('the first strict anchored observation supplies Stop delivery while the ledger remains uncertain', async t => {
+  const f = await protocolFixture(t, params => {
+    if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+    const config = readBrowserProgram(params.arguments.code);
+    if (config.operation === 'send') return sendResult(params, { sent: false, dispatched: true, generationPending: true, generationTurnKey: undefined });
+    return observationResult(params, { tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
+      generationTurnKey: GENERATION, baselineReplyIds: [], generationReplyIds: [], replyId: null, assistantText: '' });
+  });
+  await f.client.callTool(ordinary(TURN, 'send'));
+  assert.equal(f.bridge.cache, null, 'Unanchored dispatch supplies no Stop generation.');
+  const source = ordinary(TURN, 'observe');
+  await f.client.callTool(source);
+  const delivery = { bindingId: 'fixtureBinding', tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat', generationTurnKey: GENERATION };
+  assert.deepEqual(f.bridge.cache.delivery, delivery);
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  assert.equal(f.calls.at(-1).arguments.code, stopCode(STOP_CONFIG, cached(source).identity, f.calls.at(-1).arguments.timeout_ms - 100, delivery));
+  assert.equal(f.calls.length, 3);
+});
+
+test('pending or malformed observations cannot manufacture a Stop delivery target', async t => {
+  for (const branch of ['pending', 'missing generation', 'foreign tab', 'duplicate replies', 'foreign latest', 'wrong nonce']) await t.test(branch, async t => {
+    const source = ordinary(TURN, 'observe');
+    source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code), tabId: 'owned-tab' });
+    const f = await protocolFixture(t, params => {
+      if (branch === 'pending') return ownershipPendingResult(params);
+      const result = observationResult(params, { tabId: branch === 'foreign tab' ? 'foreign-tab' : 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
+        generationTurnKey: branch === 'missing generation' ? undefined : GENERATION, baselineReplyIds: [],
+        generationReplyIds: branch === 'duplicate replies' ? [GENERATION, GENERATION] : [], replyId: null, assistantText: '',
+        ...(branch === 'foreign latest' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {}) });
+      if (branch === 'wrong nonce') result.content[0].text = result.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
+      return result;
+    });
+    await f.client.callTool(source).catch(() => {});
+    assert.equal(f.bridge.cache?.delivery, undefined);
+    assert.equal(f.calls.length, 1);
+  });
+});
+
 test('uncertain, malformed, foreign and failed Send terminals never authorize Stop', async t => {
   for (const branch of ['unconfirmed', 'abnormal', 'unsaved chat', 'malformed', 'foreign nonce', 'foreign tab', 'invalid generation', 'tool error', 'RPC error']) {
     await t.test(branch, async subtest => {

@@ -136,6 +136,40 @@ test('readiness refuses malformed delivery, duplicate calls, wrong sessions, and
   }
 });
 
+test('a dispatched Send qualifies only through later accepted anchored evidence, without hiding duplicate attempts', () => {
+  const dispatched = input => {
+    Object.assign(input.send.frame, { sent: false, dispatched: true, generationPending: true,
+      baselineReplyIds: [], conversationFull: false });
+    replaceFrame(input.send);
+    return input;
+  };
+  for (const phase of ['native', 'recall', 'ready', 'stop', 'continuation']) {
+    const result = evaluateWebPhase(dispatched(withModelIdentity(evidence(phase))));
+    assert.equal(result.receipt.status, 'passed', `${phase}: ${result.receipt.code}`);
+    assert.equal(result.receipt.browserSelectionVerified, true);
+  }
+  const unaccepted = dispatched(evidence());
+  unaccepted.ledger.uncertainSend = true;
+  assert.equal(evaluateWebPhase(unaccepted).receipt.status, 'pending');
+  const unanchored = dispatched(evidence());
+  delete unanchored.observation.frame.generationTurnKey;
+  replaceFrame(unanchored.observation);
+  assert.equal(evaluateWebPhase(unanchored).receipt.status, 'pending');
+  for (const mutate of [frame => { frame.generationPending = false; }, frame => { frame.extra = true; },
+    frame => { frame.baselineReplyIds = ['unverified']; }, frame => { frame.baselineReplyIds = [[generationTurnKey]]; },
+    frame => { frame.baselineReplyIds = [generationTurnKey, generationTurnKey]; }]) {
+    const input = dispatched(evidence()); mutate(input.send.frame); replaceFrame(input.send);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'unsupported_send_receipt');
+  }
+  const duplicate = dispatched(evidence());
+  const call = structuredClone(duplicate.send.call), output = structuredClone(duplicate.send.output);
+  call.call_id = `call_router_web_${'e'.repeat(32)}`; output.call_id = call.call_id;
+  duplicate.sessionRows.push(row('response_item', call), row('response_item', output));
+  assert.equal(evaluateWebPhase(duplicate).receipt.code, 'duplicate_send');
+  duplicate.sessionRows.pop();
+  assert.equal(evaluateWebPhase(duplicate).receipt.code, 'duplicate_send', 'an unpaired duplicate still represents another Send attempt');
+});
+
 test('app prompt ingress is recognized only in its exact first-item envelope; ordinary orphan outputs fail', () => {
   assert.equal(evaluateWebPhase(evidence('native')).receipt.status, 'passed');
   for (const mutate of [
@@ -381,11 +415,36 @@ test('JSONL append watcher waits for a truncated line to finish without polling'
   assert.throws(() => parseWebJsonLines('not-json\n'), /unsupported_jsonl/u);
 });
 
-test('missing terminal evidence reaches one failure deadline and closes its watchers', async () => {
-  let reads = 0, closes = 0;
-  await assert.rejects(watchWebEvidence(['test/evidence.jsonl'], () => { reads++; return { receipt: { status: 'pending' } }; },
-    { timeoutMs: 20, watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }) }), /evidence_deadline/u);
-  assert.equal(reads, 1); assert.equal(closes, 1);
+test('deadline inspects once more and preserves terminal evidence without a change event', async () => {
+  for (const finalReceipt of [{ status: 'passed', code: 'verified' }, { status: 'failed', code: 'fixture_changed' }, { status: 'pending' }]) {
+    let reads = 0, closes = 0, clears = 0, fire;
+    let receipt = { status: 'pending' };
+    const timer = {};
+    const waiting = watchWebEvidence(['test/evidence.jsonl'], () => { reads++; return { receipt }; }, {
+      watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }),
+      setTimer: callback => { fire = callback; return timer; },
+      clearTimer: value => { assert.equal(value, timer); clears++; },
+    });
+    receipt = finalReceipt;
+    fire();
+    if (finalReceipt.status === 'pending') await assert.rejects(waiting, /evidence_deadline/u);
+    else assert.deepEqual((await waiting).receipt, finalReceipt);
+    assert.equal(reads, 2); assert.equal(closes, 1); assert.equal(clears, 1);
+  }
+});
+
+test('deadline rejects an inspection error and closes its resources', async () => {
+  let reads = 0, closes = 0, clears = 0, fire;
+  const waiting = watchWebEvidence(['test/evidence.jsonl'], () => {
+    if (++reads === 2) throw new Error('private detail');
+    return { receipt: { status: 'pending' } };
+  }, {
+    watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }),
+    setTimer: callback => { fire = callback; return 1; }, clearTimer: () => { clears++; },
+  });
+  fire();
+  await assert.rejects(waiting, /evidence_read_failed/u);
+  assert.equal(closes, 1); assert.equal(clears, 1);
 });
 
 test('waiting fails closed on changed installed identity and records a non-retriable sanitized receipt', async t => {

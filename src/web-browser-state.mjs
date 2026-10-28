@@ -25,6 +25,40 @@ export function createBrowserAllowance(deadline, expired) {
   };
 }
 
+// Dispatch and held observation use the same prompt-owned anchor condition.
+// The SDK wait supplies readiness only; classify independently proves identity,
+// global uniqueness and order from the caller's coherent anchor projection.
+export function createSendBrowserState(tab, { ui, generationMarker, baselineTurnKeys = [] }) {
+  const baseline = new Set(baselineTurnKeys);
+  const valid = value => typeof value?.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.turnKey);
+  const preceding = [...baseline].filter(turnKey => valid({ turnKey }));
+  const attribute = `@${ui.turnKeyAttribute}`;
+  let marker = tab.playwright.locator(ui.turnSelector).filter({ hasText: generationMarker });
+  if (preceding.length) marker = marker.filter({ hasNot: tab.playwright.locator(
+    `xpath=self::*[${preceding.map(key => `${attribute}='${key}'`).join(" or ")}]`) });
+  const validIdentity = `string-length(${attribute})=36 and substring(${attribute},9,1)='-' and substring(${attribute},14,1)='-' and substring(${attribute},19,1)='-' and substring(${attribute},24,1)='-' and string-length(translate(${attribute},'-',''))=32 and translate(${attribute},'0123456789abcdefABCDEF-','')=''`;
+  const turnsPath = `//*[@${ui.turnKeyAttribute}]`, latestPath = `(${turnsPath})[last()]`;
+  const markerPath = `${turnsPath}[contains(., '${generationMarker}')${preceding.length
+    ? ` and not(${preceding.map(key => `${attribute}='${key}'`).join(" or ")})` : ""}]`;
+  const ready = marker.filter({ has: tab.playwright.locator(`xpath=self::*[${validIdentity} and count(${markerPath})=1 and count(${markerPath} | ${latestPath})=1 and count(//*[@${ui.turnKeyAttribute}=${latestPath}/@${ui.turnKeyAttribute}])=1]`) });
+  return { ready, classify(value) {
+    const candidates = value.turns.filter(turn => !baseline.has(turn.turnKey) && turn.matchesGenerationMarker);
+    const latest = value.turns.at(-1);
+    const keyCount = candidates.length === 1 ? value.turns.filter(turn => turn.turnKey === candidates[0].turnKey).length : 0;
+    return { anchor: candidates.length === 1 && candidates[0] === latest && valid(latest) && keyCount === 1 ? latest.turnKey : null,
+      blocked: candidates.length > 1 || keyCount > 1 || candidates.length === 1 && valid(candidates[0]) && valid(latest) && candidates[0] !== latest,
+      diagnostic: { turnCount: value.turns.length, markerCount: candidates.length, validMarkerCount: candidates.filter(valid).length,
+        latestMatches: candidates.length === 1 && candidates[0] === latest, keyCount,
+        nestedTurnCount: value.turns.filter(turn => turn.nestedInTurn).length,
+        latestNestedInTurn: latest?.nestedInTurn ?? null, markerNestedInTurn: candidates.some(turn => turn.nestedInTurn) } };
+  } };
+}
+
+export function createSendReadyLocator(tab, ui) {
+  return tab.playwright.getByRole("button", { name: ui.sendButtonExactName, exact: true })
+    .filter({ has: tab.playwright.locator("xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") });
+}
+
 export const browserDom = Object.freeze({
   modelButtonName: "Select ChatGPT model", modelMenuName: "Select ChatGPT model", modelExpandName: "Select model",
   powerMenuItemName: "Power", powerSliderSelector: '[role="slider"]', addButtonName: "Add files and more",

@@ -468,6 +468,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
     locator(selector) { return makeLocator("selector", selector); },
     filter({ hasText: text, visible, has, hasNot }) {
+      if (kind === "button" && name === "Send" && has?.name === "xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") return makeLocator(kind, name);
       if (visible !== undefined) return makeLocator(kind, name, visible);
       if (name === '[data-turn-key]') return makeLocator(kind, name, visibleOnly, scopeSelector, text ?? hasText, Boolean(has) || hasIdentity,
         hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys,
@@ -574,6 +575,14 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
     async waitFor({ state, timeoutMs }) {
+      if (kind === "button" && name === "Send") {
+        assert.equal(state, "visible");
+        for (let spent = 0; !ui.sendEnabled && spent < timeoutMs && fastTimers; spent += 100) {
+          const elapsed = Math.min(100, timeoutMs - spent); now += elapsed; ui.waitedMs += elapsed; ui.onWait?.();
+        }
+        if (!ui.sendEnabled) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        return;
+      }
       if (state === "attached") {
         assert.equal(kind, "selector");
         if (name === '[data-turn-key]') {
@@ -774,7 +783,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
 }
 
-async function recoverableFixture({ completed = true, text = "  Observed 🔧 reply\n", nativeContext = {} } = {}) {
+async function recoverableFixture({ completed = true, text = "  Observed ðŸ”§ reply\n", nativeContext = {} } = {}) {
   const f = fixture({ fastTimers: true, nativeContext });
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
@@ -1365,96 +1374,34 @@ test("Send rechecks active ownership and exact draft after the awaited retention
   }
 });
 
-test("generation readiness waits for a rendered marker and settled UUID before its single authoritative snapshot", async () => {
+const heldObserve = { inputAcknowledgementPending: true, observationWait: { url: `http://127.0.0.1:40123/${"a".repeat(64)}/observe/web_turn_${"b".repeat(32)}?revision=0` } };
+
+test("Send dispatch yields immediately and held observation anchors only the released marker and valid UUID", async () => {
   for (const delayed of ["marker", "identity"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const reads = f.ui.replyReads;
     let pending;
     f.ui.onSend = () => {
       pending = f.ui.userMessages[0];
       if (delayed === "marker") f.ui.userMessages = [];
       else pending.messageId = "settling-renderer-identity";
     };
-    f.ui.onGenerationWait = ({ timeoutMs }) => {
-      assert.equal(timeoutMs, 8500);
-      pending.messageId = messageId(1001);
-      f.ui.userMessages = [pending];
-    };
     const sent = await f.run("send", { ...plugin, prompt: "Current request" });
-    assert.equal(sent.sent, true);
-    assert.equal(sent.generationTurnKey, messageId(1001));
-    assert.equal(f.ui.generationWaits, 1);
-    assert.equal(f.ui.replyReads - reads, 2, "Only the identity baseline and authoritative anchor read the mounted conversation.");
-  }
-});
-
-test("marker readiness cannot replace global turn uniqueness, latest ownership or fresh URL and cancellation guards", async () => {
-  for (const change of ["duplicate identity", "newer manual turn", "foreign URL", "owner changed", "wait failed"]) {
-    const f = fixture({ fastTimers: true }); await f.ready();
-    f.ui.onGenerationWait = () => {
-      const current = f.ui.userMessages[0];
-      if (["duplicate identity", "newer manual turn"].includes(change)) f.ui.userMessages.push({ ...current,
-        messageId: change === "duplicate identity" ? current.messageId : messageId(2000), text: "Manual user request" });
-      if (change === "foreign URL") f.ui.url = "https://chatgpt.com/c/foreign-chat";
-      if (change === "owner changed") f.activeTurn().turnId = "foreign-turn";
-      if (change === "wait failed") f.ui.generationWaitError = new Error("Native locator wait failed.");
+    assert.equal(sent.sent, false); assert.equal(sent.dispatched, true); assert.equal(sent.generationPending, true);
+    assert.equal(Object.hasOwn(sent, "generationTurnKey"), false);
+    assert.equal(f.ui.generationWaits, 0); assert.equal(f.getState().sendConfirmed, false);
+    f.ui.onGenerationWait = ({ timeoutMs }) => {
+      assert.equal(timeoutMs, 1000);
+      pending.messageId = messageId(1001); f.ui.userMessages = [pending];
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), /effect is uncertain|different native turn/);
-    assert.equal(f.ui.sendClicks, 1);
-    assert.equal(f.getState().sendConfirmed, false);
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/);
+    const observed = await f.run("observe", heldObserve);
+    assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(observed.assistantText, "");
+    assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.generationWaits, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-const sendReadinessDiagnostic = error => JSON.parse(error.message.split("ROUTER_WEB_SEND_READINESS_DIAGNOSTIC ")[1]);
-
-test("Send rearms an SDK-capped selector wait inside its original deadline and accepts only the later complete ownership condition", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  let pending;
-  const events = [], budgets = [], reads = f.ui.replyReads;
-  f.ui.onSend = () => { pending = f.ui.userMessages[0]; f.ui.userMessages = []; };
-  f.ui.onGenerationWait = ({ timeoutMs }) => {
-    budgets.push(timeoutMs);
-    if (f.ui.generationWaits === 1) {
-      events.push("sdk-cap"); f.advance(3000);
-      throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out");
-    }
-    assert(events.includes("unready-proof"), "A fresh anchor proof must separate selector waits.");
-    events.push("valid-marker"); f.ui.userMessages = [pending];
-  };
-  f.ui.onReplyRead = argument => {
-    if (argument?.projection === "anchor" && f.ui.generationWaits === 1) events.push("unready-proof");
-  };
-  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
-  assert.equal(sent.sent, true); assert.equal(sent.generationTurnKey, pending.messageId);
-  assert.deepEqual(events, ["sdk-cap", "unready-proof", "valid-marker"]);
-  assert.deepEqual(budgets, [8500, 5500], "The second wait spends the original remaining budget and preserves read headroom.");
-  assert.equal(f.ui.replyReads - reads, 3, "The ordinary baseline and each settled wait receive their own coherent proof.");
-  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.generationWaits, 2); assert.equal(f.ui.waitedMs, 3000);
-});
-
-test("Send rechecks a matched readiness condition and rearms after a renderer identity race without another click", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  let pending, originalKey;
-  const events = [];
-  f.ui.onSend = () => { pending = f.ui.userMessages[0]; originalKey = pending.messageId; };
-  f.ui.onGenerationWait = () => {
-    events.push("selector-match");
-    if (f.ui.generationWaits > 1) pending.messageId = originalKey;
-  };
-  f.ui.onReplyRead = argument => {
-    if (argument?.projection !== "anchor") return;
-    if (f.ui.generationWaits === 1) { pending.messageId = "renderer-placeholder"; events.push("unready-proof"); }
-    else events.push("owned-proof");
-  };
-  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
-  assert.equal(sent.generationTurnKey, originalKey);
-  assert.deepEqual(events, ["selector-match", "unready-proof", "selector-match", "owned-proof"]);
-  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.generationWaits, 2); assert.equal(f.ui.waitedMs, 0);
-});
-
-test("Send readiness keeps permanent missing, duplicate, foreign latest and malformed turns uncertain with bounded diagnostics", async () => {
+test("initial anchor conflicts fail with a strict content-free receipt while absent or placeholder anchors stay pending", async () => {
   for (const loss of ["missing", "duplicate marker", "duplicate key", "foreign latest", "invalid key"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
     f.ui.onSend = () => {
@@ -1465,102 +1412,84 @@ test("Send readiness keeps permanent missing, duplicate, foreign latest and malf
       if (loss === "foreign latest") f.ui.userMessages.push({ ...current, messageId: messageId(2000), text: "Different private request" });
       if (loss === "invalid key") current.messageId = "renderer-placeholder";
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "PRIVATE_REQUEST" }), error => {
-      const diagnostic = sendReadinessDiagnostic(error);
-      assert.equal(diagnostic.stage, "selector-timeout");
-      assert.equal(diagnostic.markerCount, loss === "missing" ? 0 : loss === "duplicate marker" ? 2 : 1);
-      assert.equal(diagnostic.latestMatches, !["missing", "duplicate marker", "duplicate key", "foreign latest"].includes(loss));
-      assert.doesNotMatch(error.message, /PRIVATE_REQUEST|Different private|renderer-placeholder|https:|[a-f0-9]{8}-/iu);
-      return true;
-    });
-    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1);
-    assert.equal(f.ui.waitedMs, 8500);
-    assert.equal(f.getState().sendConfirmed, false);
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/u);
+    const sent = await f.run("send", { ...plugin, prompt: "PRIVATE_REQUEST" });
+    if (["missing", "invalid key"].includes(loss)) {
+      assert.equal(sent.generationPending, true);
+      assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+      assert.equal(f.ui.generationWaits, 1);
+    } else assert.deepEqual(sent, { operation: "send", sendFailure: "anchor-conflict" });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/);
+  }
+});
+
+test("held anchor readiness rejects superseding turns, changed URL and owner changes after the semantic wait", async () => {
+  for (const change of ["duplicate identity", "newer manual turn", "foreign URL", "owner changed"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    let current;
+    f.ui.onSend = () => { current = f.ui.userMessages[0]; f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => {
+      f.ui.userMessages = [current];
+      if (["duplicate identity", "newer manual turn"].includes(change)) f.ui.userMessages.push({ ...current,
+        messageId: change === "duplicate identity" ? current.messageId : messageId(2000), text: "Manual user request" });
+      if (change === "foreign URL") f.ui.url = "https://chatgpt.com/c/foreign-chat";
+      if (change === "owner changed") f.activeTurn().turnId = "foreign-turn";
+    };
+    await assert.rejects(f.run("observe", heldObserve), /ambiguous|owned saved|different native turn/);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("an SDK timeout or readiness race returns pending and the next state event can resolve the original Send", async () => {
+  for (const race of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    let current;
+    f.ui.onSend = () => { current = f.ui.userMessages[0]; f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => { if (race) f.ui.userMessages = [current]; };
+    f.ui.onReplyRead = argument => { if (race && argument?.projection === "anchor" && f.ui.generationWaits === 1) current.messageId = "renderer-placeholder"; };
+    assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    f.ui.onReplyRead = undefined; f.ui.userMessages = [current]; current.messageId = messageId(1001);
+    const owned = await f.run("observe", heldObserve);
+    assert.equal(owned.generationTurnKey, current.messageId); assert.equal(owned.assistantText, "");
     assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("Send never rescues a settled later turn that appears between selector match and final proof", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  f.ui.onGenerationWait = () => { assert.equal(f.ui.generationWaits, 1, "A positively superseded Send cannot rearm after its proof."); };
-  f.ui.onReplyRead = argument => {
-    if (argument?.projection === "anchor") f.ui.userMessages.push({ ...f.ui.userMessages[0], messageId: messageId(2000), text: "Later manual request" });
-  };
-  await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
-    assert.deepEqual(sendReadinessDiagnostic(error), { stage: "final-proof", turnCount: 2, markerCount: 1,
-      validMarkerCount: 1, latestMatches: false, keyCount: 1, nestedTurnCount: 0, latestNestedInTurn: false, markerNestedInTurn: false });
-    return true;
-  });
-  assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 0);
-});
-
-test("Send failure diagnostics expose nested widget shape without retaining marker text, turn keys or extra page reads", async () => {
+test("nested foreign widgets and quoted markers cannot establish a Send anchor or expose private diagnostics", async () => {
   for (const quotesMarker of [false, true]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const reads = f.ui.replyReads;
-    let currentKey;
     f.ui.onSend = () => {
-      const current = f.ui.userMessages[0]; currentKey = current.messageId;
+      const current = f.ui.userMessages[0];
       const widget = observedTurn(messageId(2000), quotesMarker ? current.text : "PRIVATE_WIDGET_CANARY");
       f.ui.messageRoot = domElement("main", {}, observedTurn(current.messageId, current.text, [domElement("div", {}, widget)]));
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "PRIVATE_MARKER_CANARY" }), error => {
-      const diagnostic = sendReadinessDiagnostic(error);
-      assert.equal(diagnostic.nestedTurnCount, 1);
-      assert.equal(diagnostic.latestNestedInTurn, true);
-      assert.equal(diagnostic.markerNestedInTurn, quotesMarker);
-      assert.equal(diagnostic.turnCount, 2); assert.equal(diagnostic.markerCount, quotesMarker ? 2 : 1);
-      assert(Object.entries(diagnostic).every(([key, value]) => key === "stage" || value === null || typeof value === "boolean" || Number.isSafeInteger(value)));
-      const serialized = JSON.stringify(error, Object.getOwnPropertyNames(error));
-      assert.doesNotMatch(serialized, /PRIVATE_WIDGET_CANARY|PRIVATE_MARKER_CANARY|Router generation:|https:\/\//u);
-      assert.equal(serialized.includes(currentKey) || serialized.includes(messageId(2000)), false);
-      return true;
-    });
-    assert.equal(f.ui.replyReads - reads, 2, "Nesting metadata shares the existing baseline and anchor proof reads.");
+    assert.deepEqual(await f.run("send", { ...plugin, prompt: "PRIVATE_MARKER_CANARY" }), { operation: "send", sendFailure: "anchor-conflict" });
     assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
   }
 });
 
-test("Send keeps native selector failures and cancellation terminal without exposing raw errors or retrying their timeout labels", async () => {
+test("held anchor waits keep cancellation and native selector failures terminal and content-free", async () => {
   for (const message of ["Native browser disconnected.\nlocator.waitFor(attached) timed out", "Operation aborted by native cancellation.",
     "Error: Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const rejection = new Error(`${message}\nPRIVATE_SELECTOR_CANARY https://private.invalid/chat web_turn_private_token`);
-    f.ui.onGenerationWait = () => { throw rejection; };
-    const reads = f.ui.replyReads;
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
-      assert.equal(error.cause, undefined);
-      assert.equal(sendReadinessDiagnostic(error).stage, "selector-error");
-      assert.doesNotMatch(JSON.stringify(error, Object.getOwnPropertyNames(error)), /disconnected|Operation aborted|Error: Error:|PRIVATE_SELECTOR_CANARY|private\.invalid|web_turn_private_token/u);
-      return true;
+    f.ui.onSend = () => { f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => { throw new Error(`${message} PRIVATE_SELECTOR_CANARY`); };
+    await assert.rejects(f.run("observe", heldObserve), error => {
+      assert.equal(error.message, "The pending Send selector wait failed."); return true;
     });
-    assert.equal(f.ui.replyReads - reads, 1, "A rejected native wait cannot trigger a replacement browser observation.");
-    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("Send reads an already settled anchor when only final-proof headroom remains without starting another selector wait", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  const reads = f.ui.replyReads;
-  f.ui.onSend = () => { f.advance(8800); };
-  f.ui.onGenerationWait = () => { assert.fail("The remaining budget permits final proof, not another selector wait."); };
-  const sent = await f.run("send", { ...plugin, prompt: "Already settled request" });
-  assert.equal(sent.sent, true); assert.equal(f.getState().sendConfirmed, true);
-  assert.equal(f.ui.replyReads - reads, 2, "The existing baseline and one final coherent anchor proof establish Send.");
-  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 8800);
-});
-
-test("Send deadline exhaustion before readiness cannot start a new wait or extend the original budget", async () => {
+test("a dispatched Send reads its settled anchor without spending preparation time on a selector wait", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.onSend = () => { f.advance(9500); };
-  await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), error => {
-    assert.deepEqual(sendReadinessDiagnostic(error), { stage: "deadline-before-wait", turnCount: null, markerCount: null,
-      validMarkerCount: null, latestMatches: null, keyCount: null, nestedTurnCount: null, latestNestedInTurn: null, markerNestedInTurn: null });
-    return true;
-  });
-  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.waitedMs, 9500);
-  assert.equal(f.getState().sendConfirmed, false);
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  assert.equal(sent.sent, true); assert.equal(f.getState().sendConfirmed, true);
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
 });
 
 test("a long paste waits for Send readiness, types its payload and short marker once, and sends once", async () => {
@@ -1655,59 +1584,75 @@ test("a changed draft while bulk paste or the short marker settles prevents Send
   }
 });
 
-test("Send waits within its existing budget for one saved URL before confirming persistence", async () => {
-  const f = fixture({ fastTimers: true });
-  await f.ready();
+test("Send hands delayed saved URL establishment to held observation without another click", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.deferSavedUrl = true;
-  f.ui.onWait = () => { if (f.ui.waitedMs >= 300) f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
   const sent = await f.run("send", { ...plugin, prompt: "Wait for saved URL" });
-  assert.equal(sent.normal, true);
-  assert.equal(sent.url, "https://chatgpt.com/c/owned-conversation");
-  assert.equal(f.ui.waitedMs, 300);
-  assert.equal(f.ui.sendClicks, 1);
-  assert.equal(f.ui.typed.length, 2);
+  assert.equal(sent.generationPending, true); assert.equal(sent.url, "https://chatgpt.com/");
+  assert.equal(f.ui.waitedMs, 0); assert.equal(f.getState().sendConfirmed, false);
+  f.ui.url = "https://chatgpt.com/c/owned-conversation";
+  const observed = await f.run("observe", heldObserve);
+  assert.equal(observed.normal, true); assert.equal(observed.url, f.ui.url);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.typed.length, 2);
   assert.equal(f.getState().sendConfirmed, true);
 });
 
-test("paste readiness, saved URL and generation proof consume one shared Send deadline", async () => {
-  for (const delayed of ["saved URL", "generation"]) {
-    const f = fixture({ fastTimers: true }); await f.ready();
-    f.ui.sendEnabled = false;
-    f.ui.deferSavedUrl = delayed === "saved URL";
-    let sentMessages;
-    f.ui.onSend = () => { if (delayed === "generation") sentMessages = f.ui.userMessages.splice(0); };
-    f.ui.onWait = () => {
-      if (f.ui.waitedMs >= 8000) f.ui.sendEnabled = true;
-      // This evidence arrives within a fresh phase budget, but after the
-      // original Send budget. Resetting a deadline would wrongly confirm it.
-      if (f.ui.waitedMs >= 11000) {
-        f.ui.url = "https://chatgpt.com/c/owned-conversation";
-        if (sentMessages) f.ui.userMessages = sentMessages;
-      }
+test("a first saved URL settling during Send proof queues a fresh anchor read instead of failing or accepting stale proof", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.deferSavedUrl = true;
+  f.ui.onReplyRead = options => { if (options?.projection === "anchor") f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
+  const sent = await f.run("send", { ...plugin, prompt: "Initial saved URL transition" });
+  assert.equal(sent.generationPending, true); assert.equal(sent.url, f.ui.url);
+  assert.equal(f.getState().sendConfirmed, false);
+  const observed = await f.run("observe", heldObserve);
+  assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("post-click Send proof retains the exact tab and binding identity across awaits", async () => {
+  for (const change of ["tab", "id"]) {
+    const f = fixture(); await f.ready();
+    f.ui.onSend = () => {
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      else f.getState().tabId = "replacement-tab";
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Shared deadline" }), /its effect is uncertain/);
-    assert.equal(f.ui.waitedMs, delayed === "generation" ? 8500 : 10000,
-      "Generation readiness preserves the final proof allowance inside the original Send deadline.");
-    assert.equal(f.getState().sendConfirmed, false);
-    assert.equal(f.ui.sendClicks, 1);
-    await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);
-    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Owned dispatch" }), /active browser Send changed/);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
   }
 });
 
-test("a missing saved URL or temporary URL after Send remains uncertain and cannot repeat Send", async () => {
+test("paste preparation cannot determine delayed post-click saved URL or generation ownership", async () => {
+  for (const delayed of ["saved URL", "generation"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.sendEnabled = false; f.ui.deferSavedUrl = delayed === "saved URL";
+    let sentMessages;
+    f.ui.onSend = () => { if (delayed === "generation") sentMessages = f.ui.userMessages.splice(0); };
+    f.ui.onWait = () => { if (f.ui.waitedMs >= 8000) f.ui.sendEnabled = true; };
+    const sent = await f.run("send", { ...plugin, prompt: "Shared preparation deadline" });
+    assert.equal(sent.generationPending, true); assert.equal(f.ui.waitedMs, 8000);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    f.advance(3000);
+    f.ui.url = "https://chatgpt.com/c/owned-conversation";
+    if (sentMessages) f.ui.userMessages = sentMessages;
+    const owned = await f.run("observe", heldObserve);
+    assert.equal(owned.generationTurnKey, messageId(1001)); assert.equal(owned.normal, true);
+    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);
+  }
+});
+
+test("an initial home URL stays pending while a temporary URL fails without a second Send", async () => {
   for (const url of ["https://chatgpt.com/", "https://chatgpt.com/c/owned-conversation?temporary-chat=true"]) {
-    const f = fixture({ fastTimers: true });
-    await f.ready();
-    f.ui.deferSavedUrl = true;
-    f.ui.onSend = () => { f.ui.url = url; };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Uncertain persistence" }), /no verified saved conversation URL/);
-    assert.equal(f.getState().sendConfirmed, false);
-    assert.equal(f.getState().sendClicked, true);
-    assert.equal(f.ui.waitedMs, 10000);
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.deferSavedUrl = true; f.ui.onSend = () => { f.ui.url = url; };
+    const result = await f.run("send", { ...plugin, prompt: "Uncertain persistence" });
+    if (url === "https://chatgpt.com/") {
+      assert.equal(result.generationPending, true);
+      assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url" });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().sendClicked, true);
     assert.equal(f.ui.sendClicks, 1);
     await assert.rejects(f.run("send", { ...plugin, prompt: "Never repeat" }), /cannot be replayed/);
-    assert.equal(f.ui.sendClicks, 1);
   }
 });
 
@@ -2438,7 +2383,8 @@ test("pending ownership reads preserve native errors, cancellation, URL and exac
 test("Send cannot confirm an old remounted turn without this turn's short marker or replay its uncertain effect", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.onSend = () => { f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Use turn_token previous_token unchanged. Request', [assistantMessage(99, 'Old answer')])); };
-  await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /unique prompt-owned turn/);
+  assert.equal((await f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' })).generationPending, true);
+  assert.deepEqual(await f.run('observe', heldObserve), { operation: 'observe', ownershipPending: true });
   assert.equal(f.getState().sendConfirmed, false);
   await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /already attempted/);
   assert.equal(f.ui.sendClicks, 1);
@@ -2998,7 +2944,7 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   await f.run("retain");
   await f.run("continue", { turnId: "second-turn" });
   await f.run("send", { ...plugin, prompt: "Latest request", turnId: "second-turn" });
-  const latest = "Latest verified 🔧 assistant reply\n";
+  const latest = "Latest verified ðŸ”§ assistant reply\n";
   f.ui.texts.push(latest);
   const observed = await f.run("observe", { turnId: "second-turn" });
   await f.run("retain", { turnId: "second-turn" });

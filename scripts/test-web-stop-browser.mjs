@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { browserDom, createObservationBrowserState, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { browserDom, createObservationBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
 import { readBrowserReplies } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
@@ -256,6 +256,73 @@ export async function runWebObservationBrowserContract({ tab, fixtureUrl, timeou
       results.push({ case: name, passed: true, stopVisible, projectionReads: 1 });
     } catch (error) {
       results.push({ case: name, passed: false, code: typeof error?.contractCode === "string" ? error.contractCode : "observation_contract_operation_failed" });
+    }
+  }
+  return results;
+}
+
+/** Exercise the actual Send locator and projection using explicit render events. */
+export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid Send contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The Send contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const generationMarker = "Router generation: 11111111-2222-4333-8444-555555555555";
+  const generationKey = "11112222-3333-4444-8555-666677778888";
+  const historyKey = "00000000-1111-4222-8333-444455556666";
+  const results = [];
+  for (const [name, button] of [["send-disabled", "Disabled Send readiness"], ["send-aria-disabled", "Aria-disabled Send readiness"]]) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const ready = createSendReadyLocator(tab, browserDom);
+      requireContract(await ready.count() === 0, "disabled_send_reported_ready");
+      await tab.playwright.getByRole("button", { name: "Enable fixture Send", exact: true }).click({ timeoutMs });
+      await ready.waitFor({ state: "visible", timeoutMs });
+      requireContract(await ready.count() === 1
+        && await tab.playwright.getByRole("button", { name: browserDom.sendButtonExactName, exact: true }).isEnabled(), "enabled_send_not_ready");
+      results.push({ case: name, passed: true, enabledByEvent: true });
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
+    }
+  }
+  const cases = [
+    ["send-pending", "Pending Send anchor"],
+    ["send-history", "Send with quoted history marker"],
+    ["send-duplicate-marker", "Duplicate Send marker"],
+    ["send-duplicate-key", "Duplicate Send identity"],
+    ["send-foreign-latest", "Superseded Send anchor"],
+  ];
+  for (const [name, button] of cases) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const baselineTurnKeys = name === "send-history" ? [historyKey] : [];
+      const state = createSendBrowserState(tab, { ui: browserDom, generationMarker, baselineTurnKeys });
+      const read = async () => state.classify(await tab.playwright.locator(browserDom.turnSelector)
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+          projection: "anchor", generationMarker, baselineTurnKeys }, { timeoutMs }));
+      const before = await read();
+      requireContract(before.anchor === null && await state.ready.count() === 0, "unproved_anchor_ready");
+      if (name === "send-pending" || name === "send-history") {
+        requireContract(before.blocked === false, "history_or_missing_turn_blocked");
+        await tab.playwright.getByRole("button", { name: "Publish pending Send marker", exact: true }).click({ timeoutMs });
+        const placeholder = await read();
+        requireContract(placeholder.anchor === null && placeholder.blocked === false
+          && placeholder.diagnostic.validMarkerCount === 0 && await state.ready.count() === 0, "placeholder_identity_adopted");
+        await tab.playwright.getByRole("button", { name: "Publish verified Send identity", exact: true }).click({ timeoutMs });
+        await state.ready.waitFor({ state: "attached", timeoutMs });
+        const confirmed = await read();
+        requireContract(confirmed.anchor === generationKey && confirmed.blocked === false
+          && confirmed.diagnostic.keyCount === 1 && confirmed.diagnostic.latestMatches === true, "released_anchor_not_owned");
+        results.push({ case: name, passed: true, placeholderRejected: true, releasedIdentityVerified: true });
+      } else {
+        requireContract(before.blocked === true, "ambiguous_or_superseded_anchor_accepted");
+        results.push({ case: name, passed: true, ambiguousOrSupersededRejected: true });
+      }
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
     }
   }
   return results;
