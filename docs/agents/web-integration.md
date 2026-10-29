@@ -830,6 +830,10 @@ adapter manifest, even when its external app files were removed; the validated
 new candidate owns the current anchors. Generic Router Node processes are not
 browser-child proof. Inaccessible or incomplete process identities fail closed.
 HTTP request completion and cancellation events alone never prove child exit.
+Rejected process proofs retain bounded process IDs, creation ticks, known process
+names, image-path hashes, match reasons and ancestry from the rejecting census.
+Refresh identifies the pre-drain, post-drain or pre-mutation checkpoint. No
+command text or executable paths are retained in these diagnostics.
 The census distinguishes positive exit from denied live inspection. The
 registered SYSTEM sandbox broker is verified through Windows service/registry
 ownership, its package image and service-manager ancestry; it is not an app/tool

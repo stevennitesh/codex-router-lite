@@ -59,6 +59,49 @@ test("process census retains descendants and fails closed for unidentifiable off
   assertWebMaintenanceAbsent(adapter, { census: () => census([{ pid: 0, parentPid: 0, probeState: "alive", name: "System Idle Process", executablePath: null, identity: null, commandLine: null }]) });
 });
 
+test("a failed exit proof retains bounded blocker identities from its rejecting census without private paths or commands", () => {
+  const privateText = "PRIVATE_BLOCKER_CANARY";
+  const host = row(1234, adapter.candidate.officialCli.path, `codex ${privateText}`, "123456789");
+  const child = { ...row(1235, path.join(base, privateText, `${privateText}.exe`), privateText, "123456790"), parentPid: host.pid };
+  let calls = 0;
+  assert.throws(() => assertWebMaintenanceAbsent(adapter, {
+    checkpoint: "before-runtime-mutation",
+    census: () => { calls++; return census([child, host]); },
+  }), error => {
+    assert.equal(error.code, "ERR_WEB_MAINTENANCE_PROOF");
+    assert.equal(error.diagnostic.checkpoint, "before-runtime-mutation");
+    assert.equal(error.diagnostic.count, 2); assert.equal(error.diagnostic.omitted, 0);
+    const [childProof, hostProof] = error.diagnostic.processes;
+    assert.deepEqual(childProof.matches, ["descendant"]);
+    assert.equal(childProof.pid, child.pid); assert.equal(childProof.parentPid, host.pid);
+    assert.equal(childProof.name, "other"); assert.equal(childProof.startedTicks, "123456790");
+    assert.equal(childProof.ancestors[0].pid, host.pid);
+    assert.equal(childProof.ancestors[0].startedTicks, "123456789");
+    assert.equal(hostProof.name, "codex.exe"); assert.ok(hostProof.matches.includes("runtime-path"));
+    assert.match(childProof.imageSha256, /^[a-f0-9]{64}$/u);
+    assert.doesNotMatch(error.message, /PRIVATE_BLOCKER_CANARY/u);
+    assert.equal(error.message.includes(base), false);
+    return true;
+  });
+  assert.equal(calls, 1, "diagnostics must use the rejecting snapshot");
+});
+
+test("exit proof diagnostics bound process and ancestry output and omit arbitrary checkpoint text", () => {
+  const rows = Array.from({ length: 12 }, (_, index) => ({
+    ...row(2000 + index, adapter.candidate.node.path), parentPid: index ? 1999 + index : 2011,
+  }));
+  assert.throws(() => assertWebMaintenanceAbsent(adapter, {
+    checkpoint: "PRIVATE_CHECKPOINT_CANARY", census: () => census(rows),
+  }), error => {
+    assert.equal(error.diagnostic.count, 12); assert.equal(error.diagnostic.omitted, 4);
+    assert.equal(error.diagnostic.processes.length, 8);
+    assert.ok(error.diagnostic.processes.every(value => value.ancestors.length <= 4));
+    assert.equal(error.diagnostic.checkpoint, "exit-proof");
+    assert.doesNotMatch(error.message, /PRIVATE_CHECKPOINT_CANARY/u);
+    return true;
+  });
+});
+
 test("positive process exit omits only that generation while unknown live hosts and their descendants stay guarded", () => {
   const exited = { ...row(1234, adapter.currentRuntime.officialCli.path), probeState: "absent", identity: null };
   assertWebMaintenanceAbsent(adapter, { census: () => census([exited]) });

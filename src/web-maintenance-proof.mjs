@@ -117,9 +117,42 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
   });
 }
 
-export function assertWebMaintenanceAbsent(adapter, { census = readWebMaintenanceProcesses, ownPid } = {}) {
-  const live = relevantWebMaintenanceProcesses(census(adapter, { ownPid }), adapter, { ownPid });
-  if (live.length) throw failure("classification", "live-processes", { count: live.length });
+function blockerEvidence(snapshot, live, adapter, ownPid) {
+  const { roots } = webMaintenanceScope(adapter, ownPid), rows = new Map(snapshot.processes.map(row => [row.pid, row]));
+  const knownNames = /^(?:codex|chatgpt|node_repl|node|entry|powershell|pwsh|cmd|conhost|csc|vbc|vbcscompiler|codex-code-mode-host|codex-windows-sandbox-service)\.exe$/iu;
+  const describe = row => {
+    const executable = row.executablePath ?? row.identity?.split("|")[1];
+    const ticks = row.identity?.split("|")[0];
+    return { pid: row.pid, parentPid: row.parentPid, name: knownNames.test(row.name) ? row.name.toLowerCase() : "other",
+      startedTicks: ticks?.length <= 20 ? ticks : null, imageSha256: executable ? digest(normalize(executable)) : null };
+  };
+  return live.slice(0, 8).map(row => {
+    const executable = row.executablePath ?? row.identity?.split("|")[1];
+    const command = row.commandLine?.toLowerCase().replaceAll("/", path.sep) ?? "";
+    const matches = [];
+    if (/^(?:codex(?:[-_].*)?|chatgpt|node_repl)\.exe$/iu.test(row.name)) matches.push("native-name");
+    if (executable && roots.some(root => normalize(executable).startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`))) matches.push("runtime-path");
+    if (roots.some(root => command.includes(root))) matches.push("runtime-command");
+    if (!matches.length) matches.push("descendant");
+    const ancestors = [], seen = new Set([row.pid]);
+    let parent = rows.get(row.parentPid);
+    while (parent && ancestors.length < 4 && !seen.has(parent.pid)) {
+      ancestors.push(describe(parent)); seen.add(parent.pid); parent = rows.get(parent.parentPid);
+    }
+    return { ...describe(row), matches, ancestors };
+  });
+}
+
+export function assertWebMaintenanceAbsent(adapter, { census = readWebMaintenanceProcesses, ownPid, checkpoint } = {}) {
+  const snapshot = census(adapter, { ownPid });
+  const live = relevantWebMaintenanceProcesses(snapshot, adapter, { ownPid });
+  if (live.length) throw failure("classification", "live-processes", {
+    count: live.length, omitted: Math.max(0, live.length - 8),
+    checkpoint: ["before-drain", "after-drain", "before-runtime-mutation"].includes(checkpoint) ? checkpoint : "exit-proof",
+    // Retain the rejecting snapshot, never a second census that could miss the
+    // transient process. Commands and executable paths are not diagnostic data.
+    processes: blockerEvidence(snapshot, live, adapter, ownPid),
+  });
 }
 
 export async function waitForWebMaintenanceExit(adapter, { timeoutMs = 30 * 60_000,

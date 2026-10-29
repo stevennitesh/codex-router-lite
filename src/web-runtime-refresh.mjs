@@ -87,7 +87,7 @@ function context(options) {
     drain: dependencies.drain ?? prepareRouterServiceMutation,
     resume: dependencies.resume ?? resumeRouterAdmission,
     closed: dependencies.assertClosedAdmission ?? assertRouterAdmissionStillClosed,
-    absent: dependencies.assertProcessesAbsent ?? assertWebMaintenanceAbsent,
+    absent: dependencies.assertProcessesAbsent ?? ((adapter, checkpoint) => assertWebMaintenanceAbsent(adapter, { checkpoint })),
     ledgers: dependencies.snapshotLedgers ?? snapshotWebConversationLedgers,
     unchanged: dependencies.assertLedgersUnchanged ?? assertWebConversationLedgersUnchanged,
     restart: dependencies.restart ?? (async ({ force = false, closedAdmission, beforeMutation } = {}) => (await import("./service.mjs")).runServiceCommandUnlocked("restart",
@@ -176,14 +176,14 @@ export async function refreshWebRuntime(options = {}) {
     try {
       // In particular, an early app reopen must be rejected before the force
       // request can cancel work admitted after independent exit preparation.
-      if (options.forceServiceReplacement === true) ctx.absent(prepared.adapter);
+      if (options.forceServiceReplacement === true) ctx.absent(prepared.adapter, "before-drain");
       drain = await ctx.drain({ force: options.forceServiceReplacement === true });
       const forcedUncertainty = options.forceServiceReplacement === true && settledForcedDrain(drain) && drain.webRuntime.uncertainSends > 0;
       if (!confirmedIdleDrain(drain) && !forcedUncertainty) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
       let ledgers;
       if (options.forceServiceReplacement === true) {
         if (drain.status === "forced") await ctx.closed(drain);
-        ctx.absent(prepared.adapter);
+        ctx.absent(prepared.adapter, "after-drain");
         ledgers = ctx.ledgers(ctx.stateDir, { isPrivate: ctx.private });
         if (ledgers.some(row => row.kind !== "sidecar" && row.unresolvedActions !== 0)
             || forcedUncertainty && ledgers.filter(row => row.uncertainSend).length < drain.webRuntime.uncertainSends) throw new Error("Router did not confirm a known idle Web runtime with protected durable uncertain Send evidence and no unresolved native action; no runtime selection was changed.");
@@ -191,7 +191,7 @@ export async function refreshWebRuntime(options = {}) {
       const assertMaintenanceCurrent = () => {
         if (ledgers) {
           try {
-            ctx.absent(prepared.adapter);
+            ctx.absent(prepared.adapter, "before-runtime-mutation");
             ctx.unchanged(ctx.stateDir, ledgers, { isPrivate: ctx.private });
           } catch (cause) {
             let unchanged = false;
