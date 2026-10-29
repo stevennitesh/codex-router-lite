@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import nativeFs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -106,7 +108,7 @@ async function fixture(t) {
     return child;
   };
   const options = { executable: process.execPath, tunnelId: "tunnel_native_codex", keyPath, serverUrl, stateDir, spawnImpl };
-  return { root, stateDir, keyPath, requests, observed, child, options,
+  return { root, stateDir, keyPath, requests, observed, child, options, healthUrl: `http://127.0.0.1:${server.address().port}/`,
     expectCloseFailure: code => { expectedCloseCode = code; },
     setHealth: (health, readiness) => { healthStatus = health; readyStatus = readiness; },
     setPolling: (value, status = 200) => { pollHealth = value; pollStatus = status; },
@@ -147,6 +149,93 @@ test("official client receives protected YAML references and observed successful
   assert.deepEqual(readdirSync(f.stateDir), []);
   assert.equal(readFileSync(f.keyPath, "utf8"), `${secret}\n`);
   assert.deepEqual(tunnel.status(), { state: "stopped", running: false, healthy: false, ready: false, pid: f.child.pid });
+});
+
+test("health URL publication wakes startup before a cadence tick and retires its one-shot watcher", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const f = await fixture(t);
+  let notify, watchedDirectory, watcherClosed = 0;
+  const watcher = new EventEmitter();
+  watcher.close = () => { watcherClosed += 1; queueMicrotask(() => watcher.emit("close")); };
+  const mock = t.mock.method(nativeFs, "watch", (directory, listener) => {
+    watchedDirectory = directory; notify = listener; return watcher;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); });
+  const tunnel = await f.start({ spawnImpl: (...args) => {
+    const child = f.options.spawnImpl(...args);
+    assert.equal(watchedDirectory, path.dirname(f.observed.healthFile), "subscribe before daemon launch");
+    writeFileSync(f.observed.healthFile, "");
+    return child;
+  } });
+  assert.deepEqual(f.requests, [], "spawn observes the still-empty publication file");
+  writeFileSync(f.observed.healthFile, "http://unrelated.invalid/");
+  notify("change", "unrelated-file");
+  assert.deepEqual(f.requests, [], "another directory entry cannot wake startup");
+  // A partial publication cannot establish readiness or retire the watcher.
+  notify("change", "health.url");
+  assert.equal(watcherClosed, 0);
+  writeFileSync(f.observed.healthFile, f.healthUrl);
+  notify("rename", "health.url");
+  notify("change", "health.url");
+  await tunnel.ready;
+  assert.deepEqual(f.requests, ["/health?details=true"], "publication burst produces one aggregate request without ticking the interval");
+  assert.equal(watcherClosed, 1);
+  await tunnel.close();
+  assert.equal(watcherClosed, 1);
+});
+
+test("unavailable and missed startup file notifications retain paced aggregate health sampling", { timeout: 15_000 }, async t => {
+  for (const kind of ["unsupported watch", "watch error", "missed publication"]) await t.test(kind, async t => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const f = await fixture(t);
+    const watcher = new EventEmitter();
+    let closed = 0;
+    watcher.close = () => { closed += 1; queueMicrotask(() => watcher.emit("close")); };
+    const mock = t.mock.method(nativeFs, "watch", () => {
+      if (kind === "unsupported watch") throw new Error("Synthetic watcher unavailable.");
+      return watcher;
+    });
+    syncBuiltinESMExports();
+    t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); });
+    const tunnel = await f.start({ spawnImpl: (...args) => {
+      const child = f.options.spawnImpl(...args);
+      writeFileSync(f.observed.healthFile, "");
+      return child;
+    } });
+    assert.deepEqual(f.requests, []);
+    if (kind === "watch error") watcher.emit("error", new Error("Synthetic watcher loss."));
+    writeFileSync(f.observed.healthFile, f.healthUrl);
+    t.mock.timers.tick(1000);
+    await tunnel.ready;
+    assert.deepEqual(f.requests, ["/health?details=true"]);
+    assert.equal(closed, kind === "unsupported watch" ? 0 : 1);
+    await tunnel.close();
+  });
+});
+
+test("shutdown before health URL publication closes its watcher before removing owned files", { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const watcher = new EventEmitter();
+  let release;
+  watcher.close = () => { release = () => watcher.emit("close"); };
+  const mock = t.mock.method(nativeFs, "watch", () => watcher);
+  syncBuiltinESMExports();
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); release?.(); });
+  const tunnel = await f.start({ spawnImpl: (...args) => {
+    const child = f.options.spawnImpl(...args);
+    writeFileSync(f.observed.healthFile, "");
+    return child;
+  } });
+  const rejected = assert.rejects(tunnel.ready, { code: "web_tunnel_cancelled" });
+  const closing = tunnel.close();
+  assert.equal(existsSync(f.observed.healthFile), true);
+  assert.deepEqual(f.child.kills, [], "file watcher closure is drained before stopping its daemon");
+  release();
+  await closing;
+  await rejected;
+  assert.equal(existsSync(f.observed.healthFile), false);
+  assert.deepEqual(f.requests, []);
 });
 
 test("isolated tunnel environment excludes native credentials and inherited tunnel overrides", { timeout: 25_000 }, async t => {
@@ -442,6 +531,41 @@ test("an unfinished aggregate request cannot overlap another poll or restore rea
   assert.equal(tunnel.status().ready, false);
   assert.equal(tunnel.status().healthy, false);
   assert.equal(tunnel.status().state, "stopped");
+});
+
+test("unacknowledged aggregate cancellation cannot hold the poll lease across its next cadence", { timeout: 10_000 }, async t => {
+  for (const kind of ["stalled read", "oversized body", "HTTP rejection"]) await t.test(kind, async t => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const f = await fixture(t);
+    const entered = Promise.withResolvers(), cancelled = Promise.withResolvers();
+    const timeout = new AbortController();
+    let sampleDeadlines = 0;
+    t.mock.method(AbortSignal, "timeout", () => ++sampleDeadlines === 1 ? timeout.signal : new AbortController().signal);
+    let samples = 0;
+    t.mock.method(globalThis, "fetch", async () => {
+      samples += 1;
+      if (samples > 1) return new Response(JSON.stringify(healthSnapshot()));
+      return new Response(new ReadableStream({
+        start(controller) { if (kind === "oversized body") controller.enqueue(new Uint8Array(64 * 1024 + 1)); },
+        pull() { entered.resolve(); },
+        cancel() { cancelled.resolve(); return new Promise(() => {}); },
+      }), { status: kind === "HTTP rejection" ? 503 : 200 });
+    });
+    const tunnel = await f.start();
+    if (kind === "stalled read") {
+      await entered.promise;
+      timeout.abort(new DOMException("Synthetic sample deadline.", "TimeoutError"));
+    }
+    await cancelled.promise;
+    // Drain the actual read/cancel continuations before the next paced sample.
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(samples, 2, "the next tick is not blocked by a producer's pending cancel promise");
+    await tunnel.ready;
+    assert.equal(tunnel.status().ready, true);
+    await tunnel.close();
+  });
 });
 
 test("a late successful snapshot cannot restore readiness before child closure", { timeout: 25_000 }, async t => {

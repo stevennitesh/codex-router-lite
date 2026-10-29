@@ -38,6 +38,9 @@
     <button type="button" data-scenario="send-duplicate-marker">Duplicate Send marker</button>
     <button type="button" data-scenario="send-duplicate-key">Duplicate Send identity</button>
     <button type="button" data-scenario="send-foreign-latest">Superseded Send anchor</button>
+    <button type="button" data-scenario="send-temporary">Temporary Send mode</button>
+    <button type="button" data-scenario="send-duplicate-mode">Duplicate Send mode controls</button>
+    <button type="button" data-scenario="send-hidden-mode">Hidden inactive Send mode</button>
     <button type="button" data-scenario="send-disabled">Disabled Send readiness</button>
     <button type="button" data-scenario="send-aria-disabled">Aria-disabled Send readiness</button>
     <button type="button" data-scenario="home-hydration">Home hydration</button>
@@ -218,6 +221,18 @@
           if (next === 'send-duplicate-marker') chat.append(message('99990000-1111-4222-8333-444455556666'));
           if (next === 'send-duplicate-key') chat.append(makeTurn(sendKey));
           if (next === 'send-foreign-latest') chat.append(makeTurn('99990000-1111-4222-8333-444455556666'));
+          if (['send-temporary', 'send-duplicate-mode', 'send-hidden-mode'].includes(next)) {
+            const label = document.createElement('span');
+            label.id = 'send-mode-label'; label.textContent = 'Turn off temporary chat';
+            chat.append(label);
+            const mode = document.createElement('button');
+            mode.setAttribute('aria-labelledby', label.id);
+            mode.setAttribute('aria-label', 'Conflicting direct label');
+            mode.textContent = 'Fixture mode control';
+            mode.hidden = next === 'send-hidden-mode';
+            chat.append(mode);
+            if (next === 'send-duplicate-mode') chat.append(mode.cloneNode(true));
+          }
         }
         record();
         return;

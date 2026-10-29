@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODEX_HOME, STATE_DIR } from "./paths.mjs";
@@ -172,7 +172,7 @@ function loadReceipt(ctx) {
   if (!ctx.isPrivate(ctx.receiptPath)) throw new Error("Adapter ownership receipt is not private.");
   const receipt = JSON.parse(text);
   if (!object(receipt) || receipt.owner !== OWNER || receipt.version !== 1 || !["prepared", "installed", "removed"].includes(receipt.state)
-      || !SHA.test(receipt.generation ?? "") || receipt.managedDirectory !== path.join(ctx.root, receipt.generation)
+      || !SHA.test(receipt.generation ?? "") || !managedPath(ctx, receipt)
       || receipt.entryPath !== path.join(receipt.managedDirectory, "entry.exe")
       || receipt.configPath !== path.join(receipt.managedDirectory, "config.json") || !SHA.test(receipt.managedManifestSha256 ?? "")
       || receipt.hooksPath !== ctx.hooksPath || !(receipt.previousHooksText === null || typeof receipt.previousHooksText === "string")
@@ -186,6 +186,13 @@ function loadReceipt(ctx) {
   if (receipt.environment.CODEX_NODE_REPL_PATH !== receipt.entryPath) throw new Error("Invalid adapter environment ownership.");
   parseHooks(receipt.previousHooksText);
   return { ...receipt, text };
+}
+
+function managedPath(ctx, receipt) {
+  if (receipt.managedDirectory === path.join(ctx.root, receipt.generation)) return true;
+  return typeof receipt.managedDirectory === "string" && path.dirname(receipt.managedDirectory) === ctx.root
+    && path.basename(receipt.managedDirectory).startsWith(`${receipt.generation}-`)
+    && /^[a-f0-9]{64}-[a-z0-9]{6}$/iu.test(path.basename(receipt.managedDirectory));
 }
 
 function verifyManaged(ctx, receipt, { external = true } = {}) {
@@ -276,31 +283,37 @@ function stageInputs(ctx, plan) {
   return { sources, template, generation };
 }
 
-function stage(ctx, plan) {
+function stage(ctx, plan, previous) {
   const { sources, template, generation } = stageInputs(ctx, plan);
-  const managedDirectory = path.join(ctx.root, generation), configPath = path.join(managedDirectory, "config.json"), entryPath = path.join(managedDirectory, "entry.exe");
+  let managedDirectory = previous?.generation === generation ? previous.managedDirectory : path.join(ctx.root, generation);
+  const create = !existsSync(managedDirectory);
+  // A compiled file can be readable while Windows refuses to rename its parent
+  // directory (an open handle without delete sharing is sufficient). Build at
+  // a unique final path instead. Only the verified ownership receipt publishes
+  // that path; interrupted unselected builds remain untouched and cannot be
+  // mistaken for complete candidates by a later attempt.
+  if (create) managedDirectory = mkdtempSync(path.join(ctx.root, `${generation}-`));
+  const configPath = path.join(managedDirectory, "config.json"), entryPath = path.join(managedDirectory, "entry.exe");
   const config = createAdapterConfig({ server: plan.officialNodeRepl.path, serverSha256: plan.officialNodeRepl.sha256,
     stateDir: ctx.stateDir, runtimeModule: plan.runtimeModule, sdkPackageJson: plan.sdkPackageJson,
     threadIds: plan.threadIds, receiptPath: ctx.eventsPath });
-  if (!existsSync(managedDirectory)) {
-    const temporary = mkdtempSync(path.join(ctx.root, ".stage-"));
-    for (const [name, value] of Object.entries(sources)) ctx.write(path.join(temporary, name), value);
-    ctx.write(path.join(temporary, "config.json"), json(config));
+  if (create) {
+    for (const [name, value] of Object.entries(sources)) ctx.write(path.join(managedDirectory, name), value);
+    ctx.write(configPath, json(config));
     let rendered = template;
     for (const [token, value] of [["@@NODE@@", plan.node.path], ["@@ADAPTER@@", path.join(managedDirectory, "web-stop-adapter.mjs")], ["@@CONFIG@@", configPath]]) {
       if (rendered.split(token).length !== 2) throw new Error("Invalid adapter launcher template.");
       rendered = rendered.replace(token, value.replaceAll('"', '""'));
     }
-    ctx.write(path.join(temporary, "entry.cs"), rendered);
-    ctx.write(path.join(temporary, "entry.exe"), Buffer.alloc(0));
-    ctx.compileEntry(path.join(temporary, "entry.cs"), path.join(temporary, "entry.exe"));
-    const executable = bytes(path.join(temporary, "entry.exe"));
+    ctx.write(path.join(managedDirectory, "entry.cs"), rendered);
+    ctx.write(entryPath, Buffer.alloc(0));
+    ctx.compileEntry(path.join(managedDirectory, "entry.cs"), entryPath);
+    const executable = bytes(entryPath);
     if (!executable.length) throw new Error("Adapter launcher compilation produced no executable.");
-    ctx.write(path.join(temporary, "entry.exe"), executable);
-    const files = Object.fromEntries([...SOURCE_NAMES, "config.json", "entry.cs", "entry.exe"].map(name => [name, hash(bytes(path.join(temporary, name)))]));
-    ctx.write(path.join(temporary, "manifest.json"), json({ owner: OWNER, version: 1, generation,
+    ctx.write(entryPath, executable);
+    const files = Object.fromEntries([...SOURCE_NAMES, "config.json", "entry.cs", "entry.exe"].map(name => [name, hash(bytes(path.join(managedDirectory, name)))]));
+    ctx.write(path.join(managedDirectory, "manifest.json"), json({ owner: OWNER, version: 1, generation,
       identity: "custom unsigned Codex Router MCP adapter", plan, files }));
-    renameSync(temporary, managedDirectory);
   }
   const managedManifestSha256 = hash(bytes(path.join(managedDirectory, "manifest.json")));
   const receipt = { generation, managedDirectory, configPath, entryPath, managedManifestSha256 };
@@ -354,7 +367,7 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
     // retained private generation still proves ownership; the new candidate
     // below must independently pass the full external verification.
     if (previous && previous.state !== "removed") verifyManaged(ctx, previous, { external: false });
-    const plan = inspectManifest(ctx, manifest), candidate = stage(ctx, plan), hook = createAdapterHook();
+    const plan = inspectManifest(ctx, manifest), candidate = stage(ctx, plan, previous), hook = createAdapterHook();
     if (refreshTransaction?.expectedGeneration && refreshTransaction.expectedGeneration !== candidate.generation) throw new Error("Adapter source changed during runtime refresh; retry with current source.");
     regular(ctx.eventsPath, { optional: true });
     if (!existsSync(ctx.eventsPath)) ctx.write(ctx.eventsPath, "");
@@ -503,7 +516,7 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
 }
 
 function adapterPaths(ctx, receipt) {
-  return { state: receipt.state, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
+  return { state: receipt.state, generation: receipt.generation, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
     configPath: receipt.configPath, managedDirectory: receipt.managedDirectory, receiptPath: ctx.receiptPath,
     threadIds: receipt.threadIds };
 }

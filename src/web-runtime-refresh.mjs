@@ -264,7 +264,7 @@ export async function refreshWebRuntime(options = {}) {
         }
       });
       return { ...prepared.plan, mode: "applied", applied: true, routerRestartRequired: false,
-        routerReloaded: true, adapterGeneration: path.basename(result.managedDirectory),
+        routerReloaded: true, adapterGeneration: result.generation,
         next: result.hookDefinitionChanged
           ? "Fully quit and reopen Codex normally to load the refreshed adapter. Review and trust the modified Router Interrupt hook in Codex, then verify Stop and same-chat continuation."
           : "Fully quit and reopen Codex normally to load the refreshed adapter. Existing hook trust is retained; verify Stop and same-chat continuation." };

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { Worker } from "node:worker_threads";
 import { installWebStopAdapter, rollbackWebStopAdapter, webStopAdapterStatus, withWebStopAdapterRuntimeRefresh } from "../src/web-stop-adapter-install.mjs";
 import { createAdapterHook } from "../src/web-stop-contract.mjs";
 
@@ -559,4 +560,156 @@ test("a foreign file in the staged version is retained and blocks activation", t
   writeFileSync(foreign, "foreign");
   assert.throws(() => installWebStopAdapter(f.options), /file set/u);
   assert.equal(readFileSync(foreign, "utf8"), "foreign"); assert.ok(readdirSync(result.managedDirectory).includes("foreign.dll"));
+});
+
+test("a retained hash-only generation remains readable, idempotent, upgradeable and removable", t => {
+  const f = fixture(t), installed = installWebStopAdapter(f.options), receipt = f.receipt();
+  const legacy = path.join(f.stateDir, "web-stop-adapter", receipt.generation);
+  renameSync(installed.managedDirectory, legacy);
+  const source = path.join(legacy, "entry.cs"), manifestPath = path.join(legacy, "manifest.json");
+  writeFileSync(source, readFileSync(source, "utf8").replaceAll(installed.managedDirectory, legacy));
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")); manifest.files["entry.cs"] = hash(readFileSync(source));
+  writeFileSync(manifestPath, encode(manifest));
+  Object.assign(receipt, { managedDirectory: legacy, entryPath: path.join(legacy, "entry.exe"), configPath: path.join(legacy, "config.json"),
+    managedManifestSha256: hash(readFileSync(manifestPath)) });
+  receipt.environment.CODEX_NODE_REPL_PATH = receipt.entryPath;
+  f.environment.values.CODEX_NODE_REPL_PATH = receipt.entryPath; writeFileSync(f.receiptPath, encode(receipt));
+  assert.equal(webStopAdapterStatus(f.options).installed, true);
+  const effects = [...f.effects]; assert.equal(installWebStopAdapter(f.options).managedDirectory, legacy); assert.deepEqual(f.effects, effects);
+  writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'updated';\n");
+  const next = installWebStopAdapter(f.options);
+  assert.notEqual(next.managedDirectory, legacy); assert.equal(existsSync(path.join(legacy, "entry.exe")), true);
+  assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
+  assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
+});
+
+test("an interrupted candidate remains unselected and intact while a later attempt builds a fresh candidate", async t => {
+  for (const boundary of ["compile", "manifest"]) await t.test(boundary, subtest => {
+    const f = fixture(subtest); installWebStopAdapter(f.options);
+    const before = { receipt: readFileSync(f.receiptPath, "utf8"), hooks: readFileSync(f.hooksPath, "utf8"), environment: clone(f.environment.values) };
+    writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'updated';\n");
+    const compile = f.dependencies.compileEntry, write = f.dependencies.writePrivate; let abandoned;
+    f.dependencies.compileEntry = (source, output) => {
+      compile(source, output); abandoned = path.dirname(output);
+      if (boundary === "compile") throw new Error("fixture interrupted candidate");
+    };
+    f.dependencies.writePrivate = (file, contents) => {
+      write(file, contents);
+      if (boundary === "manifest" && path.basename(file) === "manifest.json") throw new Error("fixture interrupted candidate");
+    };
+    assert.throws(() => installWebStopAdapter(f.options), /interrupted candidate/u);
+    assert.equal(readFileSync(f.receiptPath, "utf8"), before.receipt); assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks);
+    assert.deepEqual(f.environment.values, before.environment);
+    writeFileSync(path.join(abandoned, "foreign-evidence"), "preserve this abandoned candidate");
+    const retained = Object.fromEntries(readdirSync(abandoned).map(name => [name, hash(readFileSync(path.join(abandoned, name)))]));
+    f.dependencies.compileEntry = compile; f.dependencies.writePrivate = write;
+    const next = installWebStopAdapter(f.options);
+    assert.notEqual(next.managedDirectory, abandoned); assert.equal(webStopAdapterStatus(f.options).installed, true);
+    assert.deepEqual(Object.fromEntries(readdirSync(abandoned).map(name => [name, hash(readFileSync(path.join(abandoned, name)))])), retained);
+    assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
+    assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
+  });
+});
+
+test("a unique candidate receipt cannot redirect ownership outside its exact generation under the adapter root", async t => {
+  for (const target of ["outside", "other-generation"]) await t.test(target, subtest => {
+    const f = fixture(subtest); installWebStopAdapter(f.options); const receipt = f.receipt();
+    receipt.managedDirectory = target === "outside" ? path.join(f.root, path.basename(receipt.managedDirectory))
+      : path.join(path.dirname(receipt.managedDirectory), `${"f".repeat(64)}-ABC123`);
+    receipt.entryPath = path.join(receipt.managedDirectory, "entry.exe"); receipt.configPath = path.join(receipt.managedDirectory, "config.json");
+    receipt.environment.CODEX_NODE_REPL_PATH = receipt.entryPath; writeFileSync(f.receiptPath, encode(receipt));
+    const before = readFileSync(f.receiptPath, "utf8"), environment = clone(f.environment.values);
+    assert.throws(() => webStopAdapterStatus(f.options), /foreign adapter ownership receipt/u);
+    assert.throws(() => installWebStopAdapter(f.options), /foreign adapter ownership receipt/u);
+    assert.throws(() => rollbackWebStopAdapter(f.options), /foreign adapter ownership receipt/u);
+    assert.equal(readFileSync(f.receiptPath, "utf8"), before); assert.deepEqual(f.environment.values, environment);
+  });
+});
+
+test("adapter activation does not require renaming a directory whose launcher is held without Windows delete sharing", {
+  skip: process.platform !== "win32", timeout: 30_000,
+}, async t => {
+  const f = fixture(t), barrier = new Int32Array(new SharedArrayBuffer(4));
+  // Hold a real Windows launcher handle. Reads/writes remain allowed, but a
+  // directory rename must fail until the holder exits. This models the evidenced
+  // failing syscall without attributing the original incident to a handle owner.
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class LauncherHold {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  public static extern SafeFileHandle CreateFile(string path, uint access, uint sharing,
+    IntPtr security, uint disposition, uint flags, IntPtr template);
+}
+'@
+$target = $env:ADAPTER_HOLD_PATH
+$handle = [LauncherHold]::CreateFile($target, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0, [IntPtr]::Zero)
+if ($handle.IsInvalid) { throw ('Launcher handle failed: ' + [Runtime.InteropServices.Marshal]::GetLastWin32Error()) }
+try {
+  [Console]::Out.WriteLine('held')
+  [Console]::Out.Flush()
+  [void][Console]::In.ReadLine()
+} finally { $handle.Dispose() }
+`;
+  // The synchronous installer blocks this thread. A worker receives the exact
+  // output path, owns the holder's event queue, and wakes one atomic wait only
+  // after PowerShell confirms the handle. Timeouts bound failures, not readiness.
+  const worker = new Worker(`
+    const { spawn } = require("node:child_process");
+    const { parentPort, workerData } = require("node:worker_threads");
+    const barrier = new Int32Array(workerData.barrier);
+    let child, stdout = "", stderr = "", failure;
+    const signal = value => { Atomics.store(barrier, 0, value); Atomics.notify(barrier, 0); };
+    parentPort.on("message", message => {
+      if (message.action === "release") {
+        if (child) child.stdin.end("release\\n"); else parentPort.close();
+        return;
+      }
+      child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", workerData.script], {
+        env: { ...process.env, ADAPTER_HOLD_PATH: message.path }, windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"], timeout: 15_000,
+      });
+      child.stdout.on("data", chunk => {
+        stdout += chunk;
+        if (stdout.replaceAll("\\r", "").split("\\n").includes("held")) signal(1);
+      });
+      child.stderr.on("data", chunk => { stderr += chunk; });
+      child.stdin.on("error", error => { failure ??= error.message; });
+      child.on("error", error => { failure = error.message; signal(-1); });
+      child.once("close", code => {
+        signal(-1); parentPort.postMessage({ code, stderr, failure }); parentPort.close();
+      });
+    });
+  `, { eval: true, workerData: { barrier: barrier.buffer, script: Buffer.from(script, "utf16le").toString("base64") } });
+  let completion, workerError;
+  worker.on("message", value => { completion = value; }); worker.on("error", error => { workerError = error; });
+  const closed = new Promise(resolve => worker.once("exit", code => resolve(code)));
+  const write = f.dependencies.writePrivate; let heldDirectory;
+  f.dependencies.writePrivate = (output, contents) => {
+    write(output, contents);
+    if (path.basename(output) !== "entry.exe" || contents.length === 0) return;
+    heldDirectory = path.dirname(output);
+    const probe = `${heldDirectory}.rename-control`;
+    renameSync(heldDirectory, probe); renameSync(probe, heldDirectory);
+    worker.postMessage({ action: "hold", path: output });
+    assert.notEqual(Atomics.wait(barrier, 0, 0, 10_000), "timed-out", "Windows launcher handle reached its ready barrier");
+    assert.equal(Atomics.load(barrier, 0), 1);
+    assert.throws(() => renameSync(heldDirectory, probe), error => error.code === "EPERM");
+    assert.equal(readFileSync(output, "utf8"), "custom unsigned compiled fixture");
+  };
+  try {
+    const installed = installWebStopAdapter(f.options);
+    assert.equal(installed.managedDirectory, heldDirectory);
+    assert.equal(webStopAdapterStatus(f.options).installed, true);
+    const effects = [...f.effects]; installWebStopAdapter(f.options); assert.deepEqual(f.effects, effects);
+    assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
+    assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
+  } finally {
+    worker.postMessage({ action: "release" });
+    assert.equal(await closed, 0); if (workerError) throw workerError;
+    if (completion) { assert.equal(completion.code, 0, completion.stderr); assert.equal(completion.failure, undefined); }
+  }
 });

@@ -299,9 +299,14 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
       await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
       const baselineTurnKeys = name === "send-history" ? [historyKey] : [];
       const state = createSendBrowserState(tab, { ui: browserDom, generationMarker, baselineTurnKeys });
-      const read = async () => state.classify(await tab.playwright.locator(browserDom.turnSelector)
-        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
-          projection: "anchor", generationMarker, baselineTurnKeys }, { timeoutMs }));
+      const read = async () => {
+        const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+          .or(tab.playwright.locator(browserDom.turnSelector))
+          .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+            projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys }, { timeoutMs });
+        requireContract(view?.dispatch?.url === fixtureUrl && view.dispatch.temporaryInactive === true, "coherent_dispatch_not_proven");
+        return state.classify(view);
+      };
       const before = await read();
       requireContract(before.anchor === null && await state.ready.count() === 0, "unproved_anchor_ready");
       if (name === "send-pending" || name === "send-history") {
@@ -320,6 +325,23 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         requireContract(before.blocked === true, "ambiguous_or_superseded_anchor_accepted");
         results.push({ case: name, passed: true, ambiguousOrSupersededRejected: true });
       }
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
+    }
+  }
+  for (const [name, button, rejected] of [["send-temporary", "Temporary Send mode", true],
+    ["send-duplicate-mode", "Duplicate Send mode controls", true], ["send-hidden-mode", "Hidden inactive Send mode", false]]) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+        .or(tab.playwright.locator(browserDom.turnSelector))
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+          projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys: [] }, { timeoutMs });
+      requireContract(rejected ? view === null : view?.dispatch?.url === fixtureUrl
+        && createSendBrowserState(tab, { ui: browserDom, generationMarker }).classify(view).anchor === generationKey,
+      "send_mode_projection_invalid");
+      results.push({ case: name, passed: true, modeRejected: rejected, projectionReads: 1 });
     } catch (error) {
       results.push({ case: name, passed: false,
         code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });

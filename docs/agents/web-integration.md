@@ -62,6 +62,10 @@ identities remain pending; duplicate markers or identities and a valid marker
 superseded by another valid turn fail without another Send. An established saved
 URL cannot change. A first chat must establish its saved URL and unique marker
 together on the exact dispatched tab before any reply or tool activity is adopted.
+Send confirmation reads the URL, normal-chat controls and prompt marker in one
+DOM projection. It does not compare separate snapshots taken during navigation.
+Across asynchronous work, both the native binding and the retained SDK browser
+and tab identities must still match before adopting that observation.
 
 The public SDK's semantic locator waits signal browser readiness, followed by a
 fresh ownership proof. Send readiness includes the unique latest prompt marker
@@ -313,7 +317,10 @@ still evaluates current tool choice and advances its broker revision; changed
 schemas rebuild the registry without reassigning reserved wire identities.
 
 The official tunnel exposes health snapshots, not a reliable readiness event
-stream. Each paced health sample reads one bounded `/health?details=true`
+stream. Its owned health-URL file is watched before launch to wake the first
+sample on publication; unavailable or missed notifications retain the paced
+fallback. The notification itself never establishes readiness. Each health sample
+reads one bounded `/health?details=true`
 aggregate and requires its current control-plane success evidence. Local readiness
 alone cannot establish hosted connectivity. Browser observation likewise retains
 short callbacks and pacing where the SDK exposes no general state subscription;
@@ -737,7 +744,12 @@ the separate installation stage only after that review:
 The installer returns its activation result. Use `web status` for optional
 combined diagnostics; a second `adapter-status` call is unnecessary.
 
-The installer stages its code and launcher in private durable Router state. It
+The installer builds its code and launcher at a unique final path in private
+durable Router state, avoiding a directory rename while Windows may hold the
+compiled executable open. The path contains the content generation plus a unique
+suffix; the verified ownership receipt selects it only after the complete build
+passes validation. Interrupted unselected builds are preserved and ignored.
+Existing hash-only generations remain valid for reuse and rollback. It
 preserves the original User `CODEX_CLI_PATH` selection, including an unset value,
 and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
 compatibility; the adapter does not pin the whole app to that CLI build. Updating

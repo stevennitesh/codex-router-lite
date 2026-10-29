@@ -113,7 +113,7 @@ const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(brows
 export function readBrowserReplies(elements, options) {
   const ui = options.ui, wrapperSelector = ui.messageSelector;
   const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies.length === 1 ? bodies[0] : null;
-  if ((options.observation || options.indicator) && (!body || body.ownerDocument?.body !== body)) return null;
+  if ((options.observation || options.indicator || options.dispatch) && (!body || body.ownerDocument?.body !== body)) return null;
   const turns = elements.filter(element => element.matches(ui.turnSelector));
   const selectedElements = elements.filter(element => element.matches(options.assistantSelector));
   const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
@@ -266,6 +266,10 @@ export function readBrowserReplies(elements, options) {
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
         complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
+    // The SDK's guarded BODY supplies normal-mode/cardinality evidence. Keep
+    // the URL and prompt-owned turn in this same document read; separate URL
+    // and visibility RPCs can straddle first-chat navigation or hydration.
+    if (options.dispatch) projection.dispatch = { url: body.ownerDocument.URL, temporaryInactive: true };
     if (options.mutation) {
       const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies[0], document = body?.ownerDocument;
       if (bodies.length !== 1 || document?.body !== body) throw new Error("The browser mutation document is unavailable.");
@@ -364,18 +368,18 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
     ]);
     return banner && button;
   };
-  const temporaryInactive = async (tab = state.tab) => {
-    const [toggle, heading] = await Promise.all([
-      role(ui.temporaryToggleName, "button", tab).isVisible(),
-      role(ui.temporaryHeadingName, "heading", tab).isVisible(),
-    ]);
-    return !toggle && !heading;
-  };
+  const normalSnapshot = async (tab = state.tab) => createObservationState(tab, { ui, generationTurnKey: state.generationTurnKey ?? "pending" })
+    .indicatorBody.evaluateAll(elements => {
+      const body = elements[0];
+      return elements.length === 1 && body.ownerDocument?.body === body ? { url: body.ownerDocument.URL } : null;
+    }, { normalMode: true }, { timeoutMs: 1000 });
+  const temporaryInactive = async (tab = state.tab) => (await normalSnapshot(tab)) !== null;
   const normal = async (value) => {
-    value ??= await state.tab.url();
-    const url = new URL(value);
-    if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat") || !(await temporaryInactive())) return false;
-    return state.hasSentMessage ? savedUrl(value) && value === state.savedUrl : url.pathname === "/";
+    const observed = await normalSnapshot();
+    if (!observed || value !== undefined && value !== observed.url) return false;
+    const url = new URL(observed.url);
+    if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat")) return false;
+    return state.hasSentMessage ? savedUrl(observed.url) && observed.url === state.savedUrl : url.pathname === "/";
   };
   const ensureOwned = async (reacquired = false) => {
     if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || !reacquired && options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
@@ -391,9 +395,14 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
     return current;
   };
   const anchorState = () => createSendState(state.tab, { ui, generationMarker: state.generationMarker, baselineTurnKeys: state.baselineTurnKeys });
-  const anchorProof = async (controls = anchorState(), timeoutMs = 1000) => controls.classify(await state.tab.playwright.locator(ui.turnSelector)
-    .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, projection: "anchor", generationMarker: state.generationMarker,
-      baselineTurnKeys: state.baselineTurnKeys }, { timeoutMs }));
+  const anchorProof = async (controls = anchorState(), timeoutMs = 1000) => {
+    const value = await createObservationState(state.tab, { ui, generationTurnKey: "pending" }).indicatorBody
+      .or(state.tab.playwright.locator(ui.turnSelector)).evaluateAll(replyReader,
+        { ui, assistantSelector: ui.assistantFinalReplySelector, projection: "anchor", dispatch: true,
+          generationMarker: state.generationMarker, baselineTurnKeys: state.baselineTurnKeys }, { timeoutMs });
+    if (!value) throw Object.assign(new Error("The Send normal-mode controls are unrecognized or ambiguous; its effect is uncertain."), { routerSendFailure: "saved-url" });
+    return { ...controls.classify(value), url: value.dispatch.url };
+  };
   const confirmAnchor = anchor => {
     state.generationTurnKey = anchor;
     state.sendConfirmed = true;
@@ -407,10 +416,11 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
           || options.operation !== "observe" || options.inputAcknowledgementPending !== true || options.observationWait === undefined) {
         throw new Error("The observed Send has no verified generation identity.");
       }
-      const controls = anchorState(), pendingTab = state.tab, pendingUrl = state.savedUrl;
+      const controls = anchorState(), pendingTab = state.tab, pendingTabId = state.tabId, pendingBrowser = state.browser, pendingUrl = state.savedUrl;
       const assertPendingOwner = () => {
         activeOwner([options.turnId], true);
-        if (state.tab !== pendingTab || state.savedUrl !== pendingUrl || state.generationTurnKey) throw new Error("The pending browser Send changed during observation.");
+        if (state.tab !== pendingTab || state.tabId !== pendingTabId || pendingTab.id !== pendingTabId
+            || state.browser !== pendingBrowser || state.savedUrl !== pendingUrl || state.generationTurnKey) throw new Error("The pending browser Send changed during observation.");
       };
       assertPendingOwner();
       let proof = await anchorProof(controls, allowance(0, 1000));
@@ -427,18 +437,20 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
         allowance(); assertPendingOwner();
       }
       if (proof.blocked) throw new Error("The pending Send generation is ambiguous or behind another generation.");
-      const currentUrl = await state.tab.url();
-      if ((pendingUrl ? currentUrl !== pendingUrl : currentUrl !== "https://chatgpt.com/" && !savedUrl(currentUrl)) || !(await temporaryInactive())) throw new Error("The pending Send left its owned saved conversation.");
+      const currentUrl = proof.url;
+      if (pendingUrl ? currentUrl !== pendingUrl : currentUrl !== "https://chatgpt.com/" && !savedUrl(currentUrl)) throw new Error("The pending Send left its owned saved conversation.");
       allowance(); assertPendingOwner();
       if (!proof.anchor || !savedUrl(currentUrl)) return { ownershipPending: true };
       state.savedUrl = currentUrl;
       ownedUrl = currentUrl;
       confirmAnchor(proof.anchor);
     }
-    const generationTurnKey = state.generationTurnKey, generationUrl = state.savedUrl;
+    const generationTurnKey = state.generationTurnKey, generationUrl = state.savedUrl,
+      generationTab = state.tab, generationTabId = state.tabId, generationBrowser = state.browser;
     const assertCurrent = () => {
       activeOwner([options.turnId], true);
-      if (state.generationTurnKey !== generationTurnKey || state.savedUrl !== generationUrl) throw new Error("The observed browser generation changed during observation.");
+      if (state.generationTurnKey !== generationTurnKey || state.savedUrl !== generationUrl || state.tab !== generationTab
+          || state.tabId !== generationTabId || generationTab.id !== generationTabId || state.browser !== generationBrowser) throw new Error("The observed browser generation changed during observation.");
     };
     assertCurrent();
     const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === generationUrl;
@@ -525,14 +537,14 @@ function createBrowserView(state, options, replyReader, savedUrl, createObservat
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
       ...(view.observation.requestError ? { requestError: view.observation.requestError } : {}) };
   };
-  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
+  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normalSnapshot, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
 }
 
 function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory, lifecycle) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const view = viewFactory(state, options, replyReader);
-  const { role, replies, temporaryInactive, activeOwner } = view;
+  const { role, replies, normalSnapshot, activeOwner } = view;
   // Native Interrupt runs in a new JS invocation. Retained tab ownership must
   // remain available there without looking for tabs by URL or replaying Send.
   const registerActive = () => {
@@ -555,7 +567,8 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
   const mutationSnapshot = async ({ includeReplies = false, generationTurnKey, projection = "identities" } = {}) => {
     const forbidden = [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
     let selection = state.tab.playwright.locator("body");
-    // Preserve each semantic control's cardinality even when mounted hidden.
+    // Preserve the public SDK's semantic control cardinality. Its role queries
+    // omit accessibility-hidden controls, whose presence is not active mode.
     // A missing guarded body makes the coherent read fail closed.
     for (const control of forbidden) selection = selection.filter({ hasNot: control.nth(1) });
     selection = selection.or(role(ui.composerName, "textbox"));
@@ -571,7 +584,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
       && (state.hasSentMessage ? view.savedUrl(current.url) && current.url === state.savedUrl : url.pathname === "/");
     return result;
   };
-  const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
+  const normalHomeMode = async (tab = state.tab) => (await normalSnapshot(tab))?.url === "https://chatgpt.com/";
   const homeState = tab => lifecycle.homeState(tab, { ui, pluginChipSelector: options.pluginChipSelector });
   const emptyNormalHome = async (tab = state.tab) => (await homeState(tab).inspect()) === true;
   const waitForHome = async (owners, message) => {
@@ -1113,6 +1126,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     return;
   }
   if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
+  activeOwner(owners, true);
   if (await conversationFull()) {
     const view = await snapshot(state.tab, undefined, recovered ? undefined : state.generationTurnKey), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
@@ -1207,7 +1221,7 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
 }
 
 async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, createContext, selectModel, createStopState, browserReadiness, createAllowance, sendReadyLocator) {
-  const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor, temporaryInactive } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { role, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
   requireBinding();
@@ -1293,10 +1307,10 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   activeOwner([options.turnId], true);
   await verifyDraft();
   const sendTimeoutMs = allowance(1500);
-  const sentTab = state.tab, sentTabId = state.tabId, priorUrl = state.savedUrl;
+  const sentTab = state.tab, sentTabId = state.tabId, sentBrowser = state.browser, priorUrl = state.savedUrl;
   const assertSendOwner = () => {
     activeOwner([options.turnId], true);
-    if (state.tab !== sentTab || state.tabId !== sentTabId || state.savedUrl !== priorUrl
+    if (state.tab !== sentTab || state.tabId !== sentTabId || sentTab.id !== sentTabId || state.browser !== sentBrowser || state.savedUrl !== priorUrl
         || !state.sendAttempted || !state.sendClicked || state.sendConfirmed) throw new Error("The active browser Send changed while confirming its turn; its effect is uncertain.");
   };
   state.generationMarker = generationMarker.trim();
@@ -1305,22 +1319,16 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   await send.click({ timeoutMs: sendTimeoutMs });
   assertSendOwner();
   state.hasSentMessage = true;
-  let confirmedUrl = await state.tab.url();
-  assertSendOwner();
-  if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
-  if (!(savedUrl(confirmedUrl) || !state.savedUrl && confirmedUrl === "https://chatgpt.com/")
-      || !(await temporaryInactive())) throw Object.assign(new Error("The Send left its normal conversation."), { routerSendFailure: "saved-url" });
-  assertSendOwner();
   const proof = await anchorProof(anchorState());
   assertSendOwner();
-  const finalUrl = await state.tab.url();
-  const savedUrlSettled = !priorUrl && confirmedUrl === "https://chatgpt.com/" && savedUrl(finalUrl);
-  if (finalUrl !== confirmedUrl && !savedUrlSettled || !(await temporaryInactive())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
-  assertSendOwner();
-  confirmedUrl = finalUrl;
+  const confirmedUrl = proof.url;
+  if (priorUrl && priorUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
+  if (!(savedUrl(confirmedUrl) || !priorUrl && confirmedUrl === "https://chatgpt.com/")) {
+    throw Object.assign(new Error("The Send left its normal conversation."), { routerSendFailure: "saved-url" });
+  }
   if (proof.blocked) throw Object.assign(new Error("The Send generation is ambiguous or behind another generation."), { routerSendFailure: "anchor-conflict" });
   if (savedUrl(confirmedUrl)) state.savedUrl = confirmedUrl;
-  if (proof.anchor && state.savedUrl && !savedUrlSettled) confirmAnchor(proof.anchor);
+  if (proof.anchor && state.savedUrl) confirmAnchor(proof.anchor);
   const anchored = state.sendConfirmed;
   // Dispatch is a one-time effect. Anchor readiness belongs to the held
   // observation queue and never consumes the remaining preparation deadline.

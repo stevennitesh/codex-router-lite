@@ -135,7 +135,7 @@ export const browserDom = Object.freeze({
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
 });
 
-// The public SDK owns accessible-name resolution and mounted cardinality. A
+// The public SDK owns accessible-name resolution and semantic cardinality. A
 // guarded BODY lets one coherent projection distinguish Stop state while the
 // selected Regenerate nodes retain their exact DOM order after the answer.
 export function createObservationBrowserState(tab, { ui, generationTurnKey }) {

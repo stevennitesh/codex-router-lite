@@ -356,6 +356,10 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     if (scope === "composer") domElement("div", { contenteditable: "true" }, node);
     return node;
   };
+  // The installed SDK's role queries omit accessibility-hidden nodes. A zero
+  // bounding box alone affects visibility, rather than role cardinality.
+  const roleAccessible = value => value.hidden !== true && value.visible !== false && value.visibilityStyle !== "hidden"
+    && value.getAttribute?.("hidden") == null && value.getAttribute?.("aria-hidden") !== "true";
   const replyRoot = () => {
     const replies = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
     const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
@@ -430,7 +434,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ...(chip ? [chip] : []), domText(ui.composerText))];
       for (const composer of composers) Object.defineProperty(composer, "innerText", { configurable: true, get: () => ui.composerText });
       const elements = [];
-      for (const { kind, name, scopeSelector, guardedBody } of locators) {
+      for (const { kind, name, scopeSelector, guardedBody, visibleOnly } of locators) {
         if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || matchingBodies.get(guardedBody) ? [body] : []
           : name.startsWith("span[app-mention") ? chip ? [chip] : [] : root.querySelectorAll(name)));
         else if (kind === "textbox" && name === "Ask ChatGPT") elements.push(...(namedControls[name] ?? composers));
@@ -441,7 +445,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
           elements.push(...matches);
         } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
-        else if (name in namedControls) elements.push(...namedControls[name]);
+        else if (name in namedControls) elements.push(...namedControls[name].filter(element => roleAccessible(element)
+          && (!visibleOnly || !element.getBoundingClientRect || element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0)));
         else if (kind === "text") {
           const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
             ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })), { text: ui.composerText, scope: "composer" }];
@@ -453,7 +458,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
   });
   const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false, enabledOnly = false) => ({
-    kind, name, scopeSelector,
+    kind, name, scopeSelector, visibleOnly,
     resolve() {
       const explicit = ui.observationControls?.[name];
       const values = explicit ?? (kind === "textbox" && name === "Ask ChatGPT" ? ui.composerVisible ? ui.composerElements ?? [{}] : []
@@ -464,7 +469,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ...ui.texts.map(text => ({ text })), { text: ui.composerText }].filter(value => value.text === name)
         : name === "Turn off temporary chat" ? ui.temporary ? [{}] : []
           : name === "Temporary chat" ? ui.temporary && ui.temporaryHeadingVisible ? [{}] : [] : []);
-      return values.map(value => ({ ...value, visible: value.visible !== false && value.visibilityStyle !== "hidden"
+      return values.filter(value => ["selector", "text"].includes(kind) || roleAccessible(value))
+        .map(value => ({ ...value, visible: value.visible !== false && value.visibilityStyle !== "hidden"
         && (!value.getBoundingClientRect || value.getBoundingClientRect().width > 0 && value.getBoundingClientRect().height > 0) }))
         .filter(value => (!visibleOnly || value.visible) && (!enabledOnly || !(name === "Select ChatGPT model" ? ui.modelButtonDisabled : ui.temporaryButtonDisabled)));
     },
@@ -661,7 +667,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   // and XPath/filter behavior independently.
   const stopControls = () => [
     ...Array.from({ length: ui.observationControls?.Stop?.length ?? ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
-      name: "Stop", visible: ui.observationControls?.Stop ? ui.observationControls.Stop[index].visibilityStyle !== "hidden"
+      name: "Stop", accessible: ui.observationControls?.Stop ? roleAccessible(ui.observationControls.Stop[index]) : ui.stop,
+      visible: ui.observationControls?.Stop ? ui.observationControls.Stop[index].visibilityStyle !== "hidden"
         && (!ui.observationControls.Stop[index].getBoundingClientRect || ui.observationControls.Stop[index].getBoundingClientRect().width > 0) : ui.stop })),
     ...Array.from({ length: ui.stop ? ui.idleDuringStop ?? 0 : ui.idleButtonCount }, (_, index) => ({ kind: "idle", index,
       name: browserIdleButtonExactName, visible: true })),
@@ -690,7 +697,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }); }
     getByRole(kind, options) {
       assert.equal(kind, "button"); assert.equal(options.exact, true);
-      return new StopPolicyLocator(() => this.resolve().length ? stopControls().filter(element => element.name === options.name) : []);
+      return new StopPolicyLocator(() => this.resolve().length ? stopControls().filter(element => element.name === options.name && element.accessible !== false) : []);
     }
     async count() {
       ui.controlReads += 1;
@@ -723,8 +730,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async evaluateAll(reader, argument, { timeoutMs }) {
       assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
-      ui.stopReads += 1;
-      await ui.onStopRead?.();
+      if (argument?.normalMode) {
+        ui.normalReads = (ui.normalReads ?? 0) + 1;
+        await ui.onNormalRead?.();
+      } else {
+        ui.stopReads += 1;
+        await ui.onStopRead?.();
+      }
       return reader(this.resolve(), argument);
     }
   }
@@ -1094,7 +1106,7 @@ test("initial normal home verification rejects history, drafts, ambiguous compos
     ui => { ui.composerElements = [domElement("div", { contenteditable: "true" }), domElement("div", { contenteditable: "true" })]; },
     ui => { ui.observationControls = { "Select ChatGPT model": [domElement("button"), domElement("button")] }; },
     ui => { ui.observationControls = { "Temporary chat": [domElement("button"), domElement("button")] }; },
-    ui => { ui.stopCount = 2; },
+    ui => { ui.stop = true; ui.stopCount = 2; },
     ui => { ui.stop = true; },
     ui => { ui.temporary = true; },
     ui => { ui.temporary = true; ui.temporaryHeadingVisible = false; },
@@ -1391,11 +1403,11 @@ test("each coherent Send phase freshly rejects draft, plugin, navigation and sem
   }
 });
 
-test("semantic mutation reads reject duplicate mounted controls even when hidden", async () => {
+test("semantic mutation reads reject duplicate controls recognized by the SDK", async () => {
   for (const control of ["Stop", "Turn off temporary chat", "Temporary chat"]) {
     const f = fixture(); await f.ready();
     f.ui.onMutationRead = () => {
-      if (control === "Stop") f.ui.stopCount = 2;
+      if (control === "Stop") { f.ui.stop = true; f.ui.stopCount = 2; }
       else f.ui.observationControls = { [control]: [domElement(control === "Temporary chat" ? "h2" : "button"),
         domElement(control === "Temporary chat" ? "h2" : "button")] };
     };
@@ -1643,26 +1655,107 @@ test("Send hands delayed saved URL establishment to held observation without ano
   assert.equal(f.getState().sendConfirmed, true);
 });
 
-test("a first saved URL settling during Send proof queues a fresh anchor read instead of failing or accepting stale proof", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  f.ui.deferSavedUrl = true;
-  f.ui.onReplyRead = options => { if (options?.projection === "anchor") f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
-  const sent = await f.run("send", { ...plugin, prompt: "Initial saved URL transition" });
-  assert.equal(sent.generationPending, true); assert.equal(sent.url, f.ui.url);
-  assert.equal(f.getState().sendConfirmed, false);
-  const observed = await f.run("observe", heldObserve);
-  assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(f.ui.sendClicks, 1);
+test("first-chat navigation establishes its saved URL and marker in one coherent Send proof", async () => {
+  // The old URL/mode/anchor/URL sequence rejected a provisional first saved
+  // location changing before the anchor read, although no saved URL was owned.
+  for (const provisional of ["https://chatgpt.com/", "https://chatgpt.com/c/provisional-location"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.deferSavedUrl = true;
+    f.ui.onSend = () => { f.ui.url = provisional; };
+    f.ui.onReplyRead = options => { if (options?.projection === "anchor") f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
+    const sent = await f.run("send", { ...plugin, prompt: "Initial saved URL transition" });
+    assert.equal(sent.sent, true); assert.equal(sent.url, f.ui.url);
+    assert.equal(f.getState().sendConfirmed, true);
+    const observed = await f.run("observe", heldObserve);
+    assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(f.ui.sendClicks, 1);
+  }
 });
 
-test("post-click Send proof retains the exact tab and binding identity across awaits", async () => {
-  for (const change of ["tab", "id"]) {
+test("post-click Send confirmation is one coherent projection without URL or per-control RPCs", async () => {
+  const f = fixture(); await f.ready();
+  let before;
+  const counts = () => ({ url: f.ui.urlReads, controls: f.ui.controlReads, projections: f.ui.observationReads });
+  f.ui.onSend = () => { before = counts(); };
+  const sent = await f.run("send", { ...plugin, prompt: "Coherent dispatch" });
+  assert.equal(sent.sent, true);
+  const after = counts();
+  assert.deepEqual({ url: after.url - before.url, controls: after.controls - before.controls,
+    projections: after.projections - before.projections }, { url: 0, controls: 0, projections: 1 });
+});
+
+test("dispatch and pending confirmation reject temporary and duplicate mounted controls without replay", async () => {
+  for (const pending of [false, true]) for (const control of ["Stop", "Turn off temporary chat", "Temporary chat"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const interfere = () => {
+      if (control === "Stop") { f.ui.stop = true; f.ui.stopCount = 2; }
+      else if (control === "Turn off temporary chat") f.ui.temporary = true;
+      else f.ui.observationControls = { [control]: [domElement("h2"), domElement("h2")] };
+    };
+    if (pending) f.ui.onSend = () => { f.ui.userMessages = []; };
+    else f.ui.onSend = interfere;
+    const result = await f.run("send", { ...plugin, prompt: "Private current request" });
+    if (pending) {
+      assert.equal(result.generationPending, true); interfere();
+      await assert.rejects(f.run("observe", heldObserve), /normal-mode controls are unrecognized or ambiguous/);
+    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url" });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Never repeat" }), /cannot be replayed/);
+  }
+});
+
+test("accessibility-hidden mode controls are omitted by SDK role queries in dispatch and observation", async () => {
+  for (const hidden of ["hidden", "visibility", "aria-hidden"]) {
+    const f = fixture(); await f.ready();
+    const control = (tag, name) => {
+      const element = domElement(tag, { "aria-label": name });
+      if (hidden === "hidden") element.setAttribute("hidden", "");
+      else if (hidden === "visibility") element.visibilityStyle = "hidden";
+      else element.setAttribute("aria-hidden", "true");
+      return element;
+    };
+    f.ui.onSend = () => {
+      f.ui.observationControls = Object.fromEntries([["Stop", "button"], ["Turn off temporary chat", "button"], ["Temporary chat", "h2"]]
+        .map(([name, tag]) => [name, [control(tag, name), control(tag, name)]]));
+    };
+    const sent = await f.run("send", { ...plugin, prompt: "Normal saved request" });
+    assert.equal(sent.sent, true);
+    f.ui.texts.push("Owned saved answer"); f.ui.complete = true;
+    assert.equal((await f.run("observe")).completed, true);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("post-click Send proof retains the exact tab, browser and binding identity across awaits", async () => {
+  for (const change of ["tab", "id", "SDK tab identity", "browser"]) {
     const f = fixture(); await f.ready();
     f.ui.onSend = () => {
       if (change === "tab") f.getState().tab = { ...f.tab };
-      else f.getState().tabId = "replacement-tab";
+      else if (change === "id") f.getState().tabId = "replacement-tab";
+      else if (change === "SDK tab identity") f.ui.tabId = "replacement-tab";
+      else f.getState().browser = { ...f.browser };
     };
     await assert.rejects(f.run("send", { ...plugin, prompt: "Owned dispatch" }), /active browser Send changed/);
     assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
+  }
+});
+
+test("pending and anchored observations retain the exact SDK tab and browser across the coherent read", async () => {
+  for (const pending of [false, true]) for (const change of ["tab", "id", "SDK tab identity", "browser"]) {
+    const f = fixture(); await f.ready();
+    let current;
+    if (pending) f.ui.onSend = () => { current = f.ui.userMessages.splice(0); };
+    await f.run("send", { ...plugin, prompt: "Owned current request" });
+    if (pending) f.ui.userMessages = current;
+    f.ui.onReplyRead = options => {
+      if (!(pending ? options?.projection === "anchor" : options?.observation)) return;
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      else if (change === "id") f.getState().tabId = "replacement-tab";
+      else if (change === "SDK tab identity") f.ui.tabId = "replacement-tab";
+      else f.getState().browser = { ...f.browser };
+    };
+    await assert.rejects(f.run("observe", heldObserve), /pending browser Send changed|observed browser generation changed/);
+    if (pending) assert.equal(f.getState().sendConfirmed, false);
+    assert.equal(f.ui.sendClicks, 1);
   }
 });
 

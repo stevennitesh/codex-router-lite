@@ -146,6 +146,7 @@ test("coordinated refresh preserves connector, capabilities, tunnel/key, baselin
   assert.equal(readFileSync(f.keyPath, "utf8"), before.key); assert.equal(readFileSync(f.hooksPath, "utf8"), before.hooks);
   const receipt = JSON.parse(readFileSync(f.receiptPath, "utf8"));
   assert.notEqual(receipt.generation, JSON.parse(before.receipt).generation);
+  assert.equal(result.adapterGeneration, receipt.generation);
   assert.equal(f.environment.values.CODEX_CLI_PATH, null); assert.equal(f.environment.values.CODEX_NODE_REPL_PATH, receipt.entryPath);
   assert.deepEqual(receipt.previousEnvironment, { CODEX_CLI_PATH: null, CODEX_NODE_REPL_PATH: null });
   assert.deepEqual(f.effects.filter(value => ["drain", "settings", "restart"].includes(value)), ["drain", "settings", "restart"]);
