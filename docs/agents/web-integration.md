@@ -64,12 +64,20 @@ URL cannot change. A first chat must establish its saved URL and unique marker
 together on the exact dispatched tab before any reply or tool activity is adopted.
 Send confirmation reads the URL, normal-chat controls and prompt marker in one
 DOM projection. It does not compare separate snapshots taken during navigation.
-Before the first saved URL is established, one shared normal-home predicate
-accepts the ChatGPT root, including ordinary query parameters. Temporary-chat
-parameters, credentials, fragments, foreign origins and other paths remain
-invalid. Browser metadata and page projections can report different normal-home
-forms during navigation; neither supplies generation ownership. The coherent
-page proof must still establish the saved URL and unique prompt marker together.
+Preparation still requires the normal ChatGPT root, including ordinary query
+parameters. After the single first Send, a secure same-origin route with no
+temporary-chat parameter, credentials or fragment may remain unconfirmed while
+navigation settles. Its path is not saved, returned as a successful normal chat,
+or retained in the dispatch receipt. The held queue receives an explicit
+content-free URL-pending receipt. A saved-looking URL without its unique prompt
+marker is also not an established binding. Browser metadata can lag that first
+navigation; only the coherent page proof establishes the saved URL and unique
+prompt marker together. A ready marker on an unsettled URL waits for a captured
+navigation event, followed by a fresh coherent read, rather than repeatedly
+waiting on an already-ready marker. Navigation capture and the fresh read close
+the subscription race. Each native read spends its existing short allowance;
+the adapter retains its original confirmation deadline. Missing or truncated
+navigation evidence fails closed, and elapsed time never proves settlement.
 Once a saved URL is established, its exact equality requirement remains.
 Across asynchronous work, both the native binding and the retained SDK browser
 and tab identities must still match before adopting that observation.

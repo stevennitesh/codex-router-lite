@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { browserDom, createBrowserAllowance, waitForBrowserReadiness, waitForHomeBrowserReadiness, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { browserDom, createBrowserAllowance, waitForBrowserReadiness, waitForHomeBrowserReadiness, createBrowserNavigationObserver, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
 import { readBrowserReplies, isNormalChatHomeUrl } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
@@ -346,6 +346,66 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
       results.push({ case: name, passed: false,
         code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
     }
+  }
+  let navigationWait;
+  const navigationDiagnostic = { stage: "case-setup", errorCategory: null };
+  const navigationErrorCategory = error => /timed out|deadline expired|deadline exceeded/iu.test(error?.message ?? "") ? "timeout"
+    : error?.name === "BrowserUseSecurityError" ? "security" : "sdk-error";
+  const navigationBatch = batch => ({ cursor: Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 ? batch.cursor : null,
+    truncated: batch?.truncated === true, truncatedFlagValid: typeof batch?.truncated === "boolean",
+    eventsValid: Array.isArray(batch?.events), eventCount: Array.isArray(batch?.events) ? Math.min(batch.events.length, 100) : null });
+  const navigationCall = async (stage, run) => {
+    navigationDiagnostic.stage = stage;
+    try { return await run(); }
+    catch (error) { navigationDiagnostic.errorCategory = navigationErrorCategory(error); throw error; }
+  };
+  try {
+    await tab.playwright.getByRole("button", { name: "Unsettled Send route", exact: true }).click({ timeoutMs });
+    const state = createSendBrowserState(tab, { ui: browserDom, generationMarker, baselineTurnKeys: [] });
+    const read = async () => {
+      const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+        .or(tab.playwright.locator(browserDom.turnSelector))
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+          projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys: [] }, { timeoutMs });
+      requireContract(Boolean(view), "unsettled_send_normal_controls_missing");
+      return { ...state.classify(view), url: view.dispatch.url };
+    };
+    const before = await read();
+    requireContract(before.anchor === generationKey && await state.ready.count() === 1
+      && new URL(before.url).pathname === "/fixture-send-unsettled", "unsettled_send_case_not_reproduced");
+    const originalTabId = tab.id;
+    const navigationTab = { capabilities: { get: async id => {
+      const capability = await navigationCall("capability-get", () => tab.capabilities.get(id));
+      return { send: (...args) => navigationCall("page-enable", () => capability.send(...args)),
+        readEvents: async options => {
+          const capturing = options.afterSequence === undefined;
+          const batch = await navigationCall(capturing ? "cursor-capture" : "navigation-wait", () => capability.readEvents(options));
+          navigationDiagnostic[capturing ? "capture" : "wait"] = navigationBatch(batch);
+          return batch;
+        } };
+    } } };
+    const navigation = await createBrowserNavigationObserver(navigationTab, {
+      allowance: createBrowserAllowance(Date.now() + timeoutMs, () => new Error("Fixture Send navigation deadline expired.")),
+      assertCurrent: () => requireContract(tab.id === originalTabId, "fixture_tab_changed") });
+    requireContract(Boolean(navigation), "send_navigation_observer_unavailable");
+    const captured = await read();
+    requireContract(captured.anchor === generationKey && captured.url === before.url, "unsettled_send_changed_before_wait");
+    navigationWait = navigation.next();
+    await tab.playwright.getByRole("button", { name: "Settle fixture Send route", exact: true }).click({ timeoutMs });
+    requireContract(await navigationWait === true, "send_navigation_event_missing");
+    const after = await read();
+    requireContract(after.anchor === generationKey && !after.blocked
+      && new URL(after.url).pathname === `/c/${generationKey}`, "send_navigation_coherent_proof_failed");
+    results.push({ case: "send-route-settlement", passed: true, markerReadyBeforeNavigation: true,
+      navigationEventObserved: true, coherentSavedPathAndMarker: true });
+  } catch (error) {
+    navigationDiagnostic.errorCategory ??= typeof error?.contractCode === "string" ? "contract-rejection" : navigationErrorCategory(error);
+    results.push({ case: "send-route-settlement", passed: false,
+      code: typeof error?.contractCode === "string" ? error.contractCode : "send_navigation_contract_operation_failed",
+      diagnostic: navigationDiagnostic });
+  } finally {
+    if (navigationWait) await Promise.allSettled([navigationWait]);
+    await tab.goto(fixtureUrl);
   }
   return results;
 }

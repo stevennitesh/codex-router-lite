@@ -100,7 +100,33 @@ export function createHomeBrowserState(tab, { ui, pluginChipSelector, homeUrl })
 // transitional document can already mount those controls; only an actual
 // navigation event may wake another projection in that case. Capture before
 // the fresh read so a navigation between inspection and subscription is retained.
-export async function waitForHomeBrowserReadiness(tab, { home, browserReadiness, allowance, assertCurrent, transitional }) {
+export async function createBrowserNavigationObserver(tab, { allowance, assertCurrent }) {
+  const methods = ["Page.frameNavigated", "Page.navigatedWithinDocument"];
+  const valid = batch => Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 && batch.truncated === false && Array.isArray(batch.events);
+  let cdp, captured;
+  assertCurrent();
+  try { cdp = await tab.capabilities.get("cdp"); } catch { return null; }
+  assertCurrent(); allowance();
+  try { await cdp.send("Page.enable", {}, { timeoutMs: allowance(0, 1000) }); } catch { return null; }
+  assertCurrent(); allowance();
+  try { captured = await cdp.readEvents({ methods, limit: 100, timeoutMs: 0 }); } catch { return null; }
+  assertCurrent(); allowance();
+  if (!valid(captured)) return null;
+  let cursor = captured.cursor;
+  return { async next(timeoutMs = allowance()) {
+    assertCurrent();
+    let batch;
+    try { batch = await cdp.readEvents({ afterSequence: cursor, methods, limit: 100, timeoutMs }); }
+    catch { return null; }
+    assertCurrent(); allowance();
+    if (!valid(batch)) return null;
+    if (batch.cursor <= cursor || !batch.events.length) return false;
+    cursor = batch.cursor;
+    return true;
+  } };
+}
+
+export async function waitForHomeBrowserReadiness(tab, { home, browserReadiness, allowance, assertCurrent, transitional }, navigationObserver = createBrowserNavigationObserver) {
   const inspect = () => browserReadiness(home.ready, {
     nextTimeout: () => { assertCurrent(); return allowance(1000); },
     afterWait: ({ error, timedOut }) => { assertCurrent(); if (error && !timedOut) throw new Error("Normal home readiness failed."); },
@@ -110,30 +136,14 @@ export async function waitForHomeBrowserReadiness(tab, { home, browserReadiness,
   let proof = await inspect();
   if (proof?.normal) return proof;
   if (!proof?.empty || !transitional(proof.url)) return null;
-  const methods = ["Page.frameNavigated", "Page.navigatedWithinDocument"];
-  let cdp, captured;
-  assertCurrent();
-  try { cdp = await tab.capabilities.get("cdp"); } catch { return null; }
-  assertCurrent(); allowance();
-  try { await cdp.send("Page.enable", {}, { timeoutMs: allowance(0, 1000) }); } catch { return null; }
-  assertCurrent(); allowance();
-  try { captured = await cdp.readEvents({ methods, limit: 100, timeoutMs: 0 }); } catch { return null; }
-  assertCurrent(); allowance();
-  const valid = batch => Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 && batch.truncated === false && Array.isArray(batch.events);
-  if (!valid(captured)) return null;
-  let cursor = captured.cursor;
+  const navigation = await navigationObserver(tab, { allowance, assertCurrent });
+  if (!navigation) return null;
   proof = await inspect();
   while (!proof?.normal) {
     if (!proof?.empty || !transitional(proof.url)) return null;
-    assertCurrent();
-    let batch;
-    try { batch = await cdp.readEvents({ afterSequence: cursor, methods, limit: 100, timeoutMs: allowance() }); }
-    catch { return null; }
-    assertCurrent(); allowance();
     // Empty or truncated results cannot establish progress. Each finite read
     // owns its SDK listener lifetime; no competing wait is left behind.
-    if (!valid(batch) || batch.cursor <= cursor || !batch.events.length) return null;
-    cursor = batch.cursor;
+    if (await navigation.next() !== true) return null;
     proof = await inspect();
   }
   return proof;

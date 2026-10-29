@@ -712,17 +712,19 @@ export function createInAppWebRuntime({
       return emitBrowser(turn, "send", payload);
     }
     if (operation === "send") {
+      const urlPending = value.urlPending === true && value.url === null && value.normal === false
+        && Object.keys(value).sort().join() === "baselineReplyIds,conversationFull,dispatched,generationPending,normal,operation,sent,tabId,url,urlPending";
       const unanchored = value.sent === false && value.dispatched === true && value.generationPending === true
-        && Object.keys(value).sort().join() === "baselineReplyIds,conversationFull,dispatched,generationPending,normal,operation,sent,tabId,url"
+        && (urlPending || Object.keys(value).sort().join() === "baselineReplyIds,conversationFull,dispatched,generationPending,normal,operation,sent,tabId,url")
         && value.conversationFull === false;
       if (value.sent !== true && !unanchored) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
       if (!messageIds(value.baselineReplyIds)
           || !unanchored && !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
-      const awaitingSavedUrl = unanchored && (turn.conversation.needsHistory || !turn.conversation.chatUrl) && isNormalChatHomeUrl(value.url);
-      if ((!isSavedChatUrl(value.url) && !awaitingSavedUrl) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
+      const awaitingSavedUrl = unanchored && (turn.conversation.needsHistory || !turn.conversation.chatUrl);
+      if ((!isSavedChatUrl(value.url) && !(awaitingSavedUrl && (urlPending || isNormalChatHomeUrl(value.url)))) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
-      if (value.normal !== true || value.tabId !== turn.conversation.tabId) throw fail("The anchored Send does not belong to the owned browser tab.");
-      turn.pendingDelivery = { chatUrl: value.url, sendBaselineReplyIds: [...value.baselineReplyIds],
+      if (!urlPending && value.normal !== true || value.tabId !== turn.conversation.tabId) throw fail("The anchored Send does not belong to the owned browser tab.");
+      turn.pendingDelivery = { ...(urlPending ? {} : { chatUrl: value.url }), sendBaselineReplyIds: [...value.baselineReplyIds],
         ...(awaitingSavedUrl ? { awaitingSavedUrl: true } : {}),
         ...(!unanchored ? { generationTurnKey: value.generationTurnKey } : {}), generationReplyIds: [],
         checkpoint: turn.promptCheckpoint, instructionsSha256: turn.promptInstructionsSha256 };

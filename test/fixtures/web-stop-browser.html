@@ -43,6 +43,7 @@
     <button type="button" data-scenario="send-hidden-mode">Hidden inactive Send mode</button>
     <button type="button" data-scenario="send-disabled">Disabled Send readiness</button>
     <button type="button" data-scenario="send-aria-disabled">Aria-disabled Send readiness</button>
+    <button type="button" data-scenario="send-route-settlement">Unsettled Send route</button>
     <button type="button" data-scenario="home-hydration">Home hydration</button>
     <button type="button" data-scenario="home-duplicate">Duplicate home model</button>
     <button type="button" data-scenario="home-temporary">Temporary home mode</button>
@@ -59,6 +60,7 @@
   <button type="button" id="publish-send-marker" hidden>Publish pending Send marker</button>
   <button type="button" id="publish-send-identity" hidden>Publish verified Send identity</button>
   <button type="button" id="enable-send-control" hidden>Enable fixture Send</button>
+  <button type="button" id="settle-send-route" hidden>Settle fixture Send route</button>
   <button type="button" id="hydrate-home" hidden>Hydrate fixture home</button>
   <button type="button" id="publish-checkpoint" hidden>Publish recovery checkpoint</button>
   <button type="button" id="grow-checkpoint" hidden>Reveal recovery text</button>
@@ -72,6 +74,7 @@
     const publishMarker = document.querySelector('#publish-send-marker');
     const publishIdentity = document.querySelector('#publish-send-identity');
     const enableSend = document.querySelector('#enable-send-control');
+    const settleSendRoute = document.querySelector('#settle-send-route');
     const hydrateHome = document.querySelector('#hydrate-home');
     const publishCheckpoint = document.querySelector('#publish-checkpoint');
     const growCheckpoint = document.querySelector('#grow-checkpoint');
@@ -137,6 +140,7 @@
       publishMarker.hidden = !['send-pending', 'send-history'].includes(next);
       publishIdentity.hidden = true;
       enableSend.hidden = !['send-disabled', 'send-aria-disabled'].includes(next);
+      settleSendRoute.hidden = next !== 'send-route-settlement';
       hydrateHome.hidden = next !== 'home-hydration';
       publishCheckpoint.hidden = next !== 'recovery-progress';
       growCheckpoint.hidden = true;
@@ -199,6 +203,7 @@
       }
       if (next.startsWith('send-')) {
         chat.replaceChildren();
+        if (next === 'send-route-settlement') history.replaceState(null, '', '/fixture-send-unsettled');
         if (!enableSend.hidden) {
           const send = document.createElement('button');
           send.type = 'button';
@@ -339,6 +344,11 @@
       temporary.textContent = 'Fixture temporary switch';
       chat.append(temporary);
     }
+    settleSendRoute.addEventListener('click', () => {
+      history.pushState(null, '', '/c/' + sendKey);
+      settleSendRoute.hidden = true;
+      record();
+    });
     function makeRecoveryTurn(completed, text) {
       const turn = makeTurn('fixture-owned-generation', completed);
       const message = document.createElement('div');

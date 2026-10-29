@@ -468,6 +468,39 @@ test("runtime pending receipts accept home URL variants before coherent saved-ch
   });
 });
 
+test("first-Send route settlement retains no unknown URL or acknowledgement before coherent saved-chat proof", async t => {
+  const h = harness(t);
+  h.browser.ui.afterSend = () => { h.browser.ui.url = "https://chatgpt.com/PRIVATE_TRANSITION_CANARY"; };
+  const { call } = await h.toObserve();
+  const unconfirmed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(unconfirmed.uncertainSend, true); assert.equal(unconfirmed.chatUrl, undefined);
+  assert.equal(unconfirmed.checkpoint, undefined); assert.equal(unconfirmed.generationTurnKey, undefined);
+  assert.equal(h.browserOwner().state.savedUrl, undefined);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  assert.equal(JSON.stringify(h.input()).includes("PRIVATE_TRANSITION_CANARY"), false);
+  assert.equal(readFileSync(h.stateFile, "utf8").includes("PRIVATE_TRANSITION_CANARY"), false);
+  h.browser.ui.url = "https://chatgpt.com/c/settled-conversation";
+  await h.completeAnswer(call, "Accepted only after saved URL and marker settlement.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false); assert.equal(accepted.chatUrl, h.browser.ui.url);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("unconfirmed URL receipts cannot replace an established saved conversation", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  await h.completeAnswer(call, "First confirmed answer.");
+  const prior = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  h.newTurn(followupId, "Next request.");
+  const continuation = (await h.request()).output[0], send = (await h.answerBrowser(continuation)).output[0];
+  h.append(send, outputFor(send, browserReceipt(send, { operation: "send", sent: false, dispatched: true,
+    generationPending: true, tabId: prior.tabId, url: null, normal: false, urlPending: true,
+    conversationFull: false, baselineReplyIds: prior.sendBaselineReplyIds })));
+  await assert.rejects(h.request(), /did not establish the connected saved chat URL/u);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.uncertainSend, true); assert.equal(saved.chatUrl, prior.chatUrl);
+  assert.deepEqual(saved.checkpoint, prior.checkpoint); assert.equal(h.browser.ui.sends.length, 1);
+});
+
 test("runtime rejects non-home first-open receipts even with a normal flag", async t => {
   for (const url of ["https://chatgpt.com/c/unowned", "https://chatgpt.com/?temporary-chat=true", "https://foreign.invalid/", "https://private-user@chatgpt.com/", "https://chatgpt.com/#private"]) await t.test(url, async t => {
     const h = harness(t);

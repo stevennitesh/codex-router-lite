@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, createSendBrowserState, createSendReadyLocator, createHomeBrowserState, createRecoveryBrowserState, waitForHomeBrowserReadiness, waitForBrowserReadiness } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, createSendBrowserState, createSendReadyLocator, createHomeBrowserState, createRecoveryBrowserState, waitForHomeBrowserReadiness, createBrowserNavigationObserver, waitForBrowserReadiness } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -65,6 +65,17 @@ export function isNormalChatHomeUrl(value) {
     const url = new URL(value);
     return url.origin === "https://chatgpt.com" && url.pathname === "/"
       && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
+  } catch { return false; }
+}
+
+// Eligibility to wait after one first Send, never saved-chat proof or permission
+// to prepare a Send on an unrelated route.
+export function isPendingChatUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com" && !url.searchParams.has("temporary-chat")
+      && !url.hash && !url.username && !url.password;
   } catch { return false; }
 }
 
@@ -334,7 +345,7 @@ export function readBrowserReplies(elements, options) {
 
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-function createBrowserView(state, options, replyReader, savedUrl, homeUrl, createObservationState, createSendState) {
+function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendingUrlEligible, createObservationState, createSendState, navigationObserver) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => {
@@ -421,7 +432,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, creat
   const observeGeneration = async (ownedUrl, allowance) => {
     if (!state.generationTurnKey) {
       activeOwner([options.turnId], true);
-      if (!state.sendClicked || !state.hasSentMessage || !state.generationMarker || (state.savedUrl ? ownedUrl !== state.savedUrl : !homeUrl(ownedUrl) && !savedUrl(ownedUrl))
+      if (!state.sendClicked || !state.hasSentMessage || !state.generationMarker || (state.savedUrl ? ownedUrl !== state.savedUrl : !pendingUrlEligible(ownedUrl))
           || options.operation !== "observe" || options.inputAcknowledgementPending !== true || options.observationWait === undefined) {
         throw new Error(`The observed Send has no verified generation identity. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
           reason: "pending-state-invalid", sdkUrlClass: homeUrl(ownedUrl) ? "normal-home" : savedUrl(ownedUrl) ? "saved-chat" : "other",
@@ -439,7 +450,23 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, creat
       assertPendingOwner();
       let proof = await anchorProof(controls, allowance(0, 1000));
       allowance(); assertPendingOwner();
-      if (!proof.anchor && !proof.blocked) {
+      const pendingNavigation = value => !pendingUrl && !value.blocked && pendingUrlEligible(value.url) && !savedUrl(value.url)
+        && (Boolean(value.anchor) || !homeUrl(value.url));
+      if (pendingNavigation(proof)) {
+        // A ready marker cannot wake a URL transition. Capture navigation before
+        // a fresh read; this read's allowance bounds its one event wait, while
+        // the existing held queue retains the total confirmation deadline.
+        const navigation = await navigationObserver(pendingTab, { allowance, assertCurrent: assertPendingOwner });
+        if (!navigation) throw new Error("The pending Send navigation observer is unavailable.");
+        proof = await anchorProof(controls, allowance(0, 1000));
+        allowance(); assertPendingOwner();
+        if (pendingNavigation(proof)) {
+          const advanced = await navigation.next(allowance(1000, 1000));
+          if (advanced === null) throw new Error("The pending Send navigation evidence is unavailable.");
+          if (advanced) proof = await anchorProof(controls, allowance(0, 1000));
+          allowance(); assertPendingOwner();
+        }
+      } else if (!proof.anchor && !proof.blocked && (pendingUrl ? proof.url === pendingUrl : pendingUrlEligible(proof.url))) {
         // A native SDK semantic wait yields to the existing held observation.
         // It never clicks, acknowledges input or grants a new Send allowance.
         try { await controls.ready.waitFor({ state: "attached", timeoutMs: allowance(1000, 1000) }); }
@@ -452,8 +479,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, creat
       }
       if (proof.blocked) throw new Error("The pending Send generation is ambiguous or behind another generation.");
       const currentUrl = proof.url;
-      if ((pendingUrl ? currentUrl !== pendingUrl : !homeUrl(currentUrl) && !savedUrl(currentUrl))
-          || !pendingUrl && savedUrl(ownedUrl) && currentUrl !== ownedUrl) throw new Error(`The pending Send left its owned saved conversation. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
+      if (pendingUrl ? currentUrl !== pendingUrl : !pendingUrlEligible(currentUrl)) throw new Error(`The pending Send left its owned saved conversation. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
             reason: "url-class-mismatch", sdkUrlClass: homeUrl(ownedUrl) ? "normal-home" : savedUrl(ownedUrl) ? "saved-chat" : "other",
             domUrlClass: homeUrl(currentUrl) ? "normal-home" : savedUrl(currentUrl) ? "saved-chat" : "other",
             savedUrlEstablished: Boolean(pendingUrl), sdkDomUrlMatches: ownedUrl === currentUrl })}`);
@@ -555,7 +581,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, creat
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
       ...(view.observation.requestError ? { requestError: view.observation.requestError } : {}) };
   };
-  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, homeUrl, temporaryInactive, normalSnapshot, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
+  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, homeUrl, pendingUrlEligible, temporaryInactive, normalSnapshot, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
 }
 
 function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory, lifecycle) {
@@ -622,7 +648,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
           && (!view.savedUrl(value) || value === state.rolloverFromUrl);
       } catch { return false; }
     };
-    const proof = await lifecycle.homeReadiness(tab, { home, browserReadiness: lifecycle.browserReadiness, allowance, assertCurrent, transitional });
+    const proof = await lifecycle.homeReadiness(tab, { home, browserReadiness: lifecycle.browserReadiness, allowance, assertCurrent, transitional }, lifecycle.navigationObserver);
     if (proof?.normal !== true) throw new Error(message);
   };
   const recoveryState = (tab, proof) => lifecycle.recoveryState(tab, { ui, proof });
@@ -1240,7 +1266,7 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
 }
 
 async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, createContext, selectModel, createStopState, browserReadiness, createAllowance, sendReadyLocator) {
-  const { role, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor, homeUrl } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+  const { role, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor, homeUrl, pendingUrlEligible } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
   requireBinding();
@@ -1343,7 +1369,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const confirmedUrl = proof.url;
   if (priorUrl && priorUrl !== confirmedUrl) throw new Error(`The Send changed the owned saved conversation URL; its effect is uncertain. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
     reason: "saved-url-changed", priorUrlClass: "saved-chat", domUrlClass: homeUrl(confirmedUrl) ? "normal-home" : savedUrl(confirmedUrl) ? "saved-chat" : "other" })}`);
-  if (!(savedUrl(confirmedUrl) || !priorUrl && homeUrl(confirmedUrl))) {
+  if (!(savedUrl(confirmedUrl) || !priorUrl && pendingUrlEligible(confirmedUrl))) {
     // Retain URL structure only. The rejected value may contain private chat
     // identities, query values, credentials or text, none of which may escape.
     const diagnostic = { input: typeof confirmedUrl === "string" ? "unparseable" : "non-string",
@@ -1363,13 +1389,13 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
       routerSendDiagnostic: "url-class-mismatch", routerSendUrlDiagnostic: diagnostic });
   }
   if (proof.blocked) throw Object.assign(new Error("The Send generation is ambiguous or behind another generation."), { routerSendFailure: "anchor-conflict" });
-  if (savedUrl(confirmedUrl)) state.savedUrl = confirmedUrl;
-  if (proof.anchor && state.savedUrl) confirmAnchor(proof.anchor);
+  if (proof.anchor && savedUrl(confirmedUrl)) { state.savedUrl = confirmedUrl; confirmAnchor(proof.anchor); }
   const anchored = state.sendConfirmed;
+  const urlPending = !priorUrl && !savedUrl(confirmedUrl) && !homeUrl(confirmedUrl);
   // Dispatch is a one-time effect. Anchor readiness belongs to the held
   // observation queue and never consumes the remaining preparation deadline.
   emit({ sent: anchored, ...(anchored ? {} : { dispatched: true, generationPending: true }),
-    tabId: state.tabId, url: confirmedUrl, normal: true, conversationFull: false,
+    tabId: state.tabId, url: urlPending ? null : confirmedUrl, normal: !urlPending, ...(urlPending ? { urlPending: true } : {}), conversationFull: false,
     baselineReplyIds: state.baselineReplyIds, ...(anchored ? { generationTurnKey: state.generationTurnKey } : {}) });
 }
 
@@ -1411,7 +1437,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, isNormalChatHomeUrl, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createSendBrowserState, createBrowserView, runBrowserObservation]
+  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, isNormalChatHomeUrl, isPendingChatUrl, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createSendBrowserState, createBrowserNavigationObserver, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 // Use only the cache's public, source-checked dependencies: a closure could hide
@@ -1435,7 +1461,7 @@ async function runBrowserMutation(cache, options, nodeRepl) {
 
 const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
   createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
-  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance, sendReadyLocator: createSendReadyLocator, homeState: createHomeBrowserState, homeReadiness: waitForHomeBrowserReadiness, recoveryState: createRecoveryBrowserState });
+  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance, sendReadyLocator: createSendReadyLocator, homeState: createHomeBrowserState, homeReadiness: waitForHomeBrowserReadiness, navigationObserver: createBrowserNavigationObserver, recoveryState: createRecoveryBrowserState });
 export const browserMutationVersion = createHash("sha256")
   .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
@@ -1521,7 +1547,7 @@ export function browserScript(options) {
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
   const fullInstall = options.operation === "bootstrap" || options.operation === "continue" && options.fullContinuation === true;
   const resident = fullInstall
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, homeUrl, defaultUi, createObservationState, createSendState, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, homeUrl, createObservationState, createSendState); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${isNormalChatHomeUrl.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createSendBrowserState.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, homeUrl, pendingUrlEligible, defaultUi, createObservationState, createSendState, navigationObserver, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, homeUrl, pendingUrlEligible, createObservationState, createSendState, navigationObserver); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${isNormalChatHomeUrl.toString()}, ${isPendingChatUrl.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createSendBrowserState.toString()}, ${createBrowserNavigationObserver.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
   const sourceList = Object.keys(mutationFunctions).map(key => `cache.${key}`);
@@ -1541,7 +1567,7 @@ export function browserScript(options) {
   const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, rollover: runBrowserRollover }[options.operation];
   // Bootstrap reuses the installed context instead of repeating its source.
   if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, (...args) => cache.createContext(...args, cache));\n})(${binding}, ${JSON.stringify(config)});`;
-  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, homeReadiness: ${waitForHomeBrowserReadiness.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, homeReadiness: ${waitForHomeBrowserReadiness.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
 }
 
 export function isBrowserContinuationCacheMiss(value) {

@@ -210,7 +210,8 @@ test("observer and mutation generations invalidate only their exact dependency s
   for (const changed of [
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
     ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
-    ...["isSavedChatUrl", "isNormalChatHomeUrl", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    ...["isSavedChatUrl", "isNormalChatHomeUrl", "isPendingChatUrl", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    { state: stateSource.replace(/(export async function createBrowserNavigationObserver\([^\n]*\) \{)/u, "$1\n  /* changed navigation observation owner */") },
     { state: stateSource.replace(/(export function createBrowserAllowance\([^\n]*\) \{)/u, "$1\n  /* changed shared allowance owner */") },
     { state: stateSource.replace("shortReadMs: observationFinishGraceMs - observationTransportMarginMs", "shortReadMs: observationFinishGraceMs - observationTransportMarginMs - 1") },
     { state: stateSource.replace(/(export function createObservationBrowserState\([^\n]*\) \{)/u, "$1\n  /* changed semantic projection owner */") },
@@ -1584,7 +1585,7 @@ test("held anchor readiness rejects superseding turns, changed URL and owner cha
       f.ui.userMessages = [current];
       if (["duplicate identity", "newer manual turn"].includes(change)) f.ui.userMessages.push({ ...current,
         messageId: change === "duplicate identity" ? current.messageId : messageId(2000), text: "Manual user request" });
-      if (change === "foreign URL") f.ui.url = "https://chatgpt.com/c/foreign-chat";
+      if (change === "foreign URL") f.ui.url = "https://foreign.invalid/c/foreign-chat";
       if (change === "owner changed") f.activeTurn().turnId = "foreign-turn";
     };
     await assert.rejects(f.run("observe", heldObserve), /ambiguous|owned saved|different native turn/);
@@ -1748,6 +1749,85 @@ test("Send hands delayed saved URL establishment to held observation without ano
   assert.equal(f.getState().sendConfirmed, true);
 });
 
+test("a first Send keeps an unsettled safe route private and waits for navigation when its marker is already ready", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/PRIVATE_TRANSITION_CANARY?private=PRIVATE_QUERY_CANARY"; };
+  const sent = await f.runFast("send", { ...plugin, prompt: "PRIVATE_REQUEST_CANARY" });
+  assert.deepEqual(sent, { operation: "send", sent: false, dispatched: true, generationPending: true,
+    tabId: f.tab.id, url: null, normal: false, urlPending: true, conversationFull: false, baselineReplyIds: [] });
+  assert.doesNotMatch(JSON.stringify(sent), /PRIVATE_|https:/u);
+  assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().generationTurnKey, undefined);
+  f.ui.onGenerationWait = () => assert.fail("A ready marker must not be used to wait for navigation.");
+  f.ui.onNavigationWait = ({ afterSequence }) => {
+    f.ui.url = "https://chatgpt.com/c/settled-chat";
+    return { cursor: afterSequence + 1, events: [{ method: "Page.navigatedWithinDocument" }], truncated: false };
+  };
+  const observed = await f.runFast("observe", heldObserve);
+  assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(observed.url, f.ui.url);
+  assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.navigationWaits, 1);
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("a saved-looking first URL is not established before the unique marker exists", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let marker;
+  f.ui.onSend = () => { marker = f.ui.userMessages.pop(); };
+  const sent = await f.runFast("send", { ...plugin, prompt: "Request" });
+  assert.equal(sent.generationPending, true); assert.match(sent.url, /\/c\//u);
+  assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().sendConfirmed, false);
+  f.ui.url = "https://chatgpt.com/c/coherently-settled-chat"; f.ui.sdkUrl = sent.url;
+  f.ui.userMessages.push(marker);
+  const observed = await f.runFast("observe", heldObserve);
+  assert.equal(observed.url, f.ui.url); assert.equal(f.getState().savedUrl, f.ui.url);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("pending Send navigation captures the inspection race and empty event waits remain bounded", async () => {
+  for (const race of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/unsettled"; };
+    await f.runFast("send", { ...plugin, prompt: "Request" });
+    if (race) f.ui.onNavigationCapture = () => { f.ui.url = "https://chatgpt.com/c/settled"; };
+    const before = f.ui.observationReads;
+    const observed = await f.runFast("observe", heldObserve);
+    if (race) {
+      assert.equal(observed.url, f.ui.url); assert.equal(f.ui.navigationWaits, undefined);
+    } else {
+      assert.deepEqual(observed, { operation: "observe", ownershipPending: true });
+      assert.equal(f.ui.navigationWaits, 1); assert.equal(f.ui.waitedMs, 1000);
+      assert.equal(f.ui.observationReads - before, 2, "No repeated snapshots after an empty navigation wait.");
+      assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().sendConfirmed, false);
+    }
+    assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("pending navigation rejects truncated evidence, changed owners and unsafe or ambiguous destinations", async () => {
+  for (const change of ["truncated capture", "truncated wait", "owner", "tab", "browser", "late event", "foreign", "temporary", "fragment", "credentials", "duplicate marker", "foreign latest"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/unsettled"; };
+    await f.runFast("send", { ...plugin, prompt: "Request" });
+    if (change === "truncated capture") f.ui.navigationCapture = { cursor: 0, events: [], truncated: true };
+    f.ui.onNavigationWait = ({ afterSequence }) => {
+      f.ui.url = "https://chatgpt.com/c/settled";
+      if (change === "owner") f.activeTurn().turnId = "foreign-owner";
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      if (change === "browser") f.getState().browser = { ...f.browser };
+      if (change === "late event") f.advance(3000);
+      if (change === "foreign") f.ui.url = "https://foreign.invalid/c/settled";
+      if (change === "temporary") f.ui.url += "?temporary-chat=true";
+      if (change === "fragment") f.ui.url += "#private";
+      if (change === "credentials") f.ui.url = "https://private:secret@chatgpt.com/c/settled";
+      if (["duplicate marker", "foreign latest"].includes(change)) f.ui.userMessages.push({ ...f.ui.userMessages[0],
+        messageId: messageId(2000), ...(change === "foreign latest" ? { text: "Another request" } : {}) });
+      return { cursor: afterSequence + 1, events: [{ method: "Page.navigatedWithinDocument" }], truncated: change === "truncated wait" };
+    };
+    await assert.rejects(f.runFast("observe", heldObserve), /navigation|different native turn|pending browser Send changed|deadline|owned saved conversation|ambiguous/u);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().savedUrl, undefined);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
 test("initial and successor home readiness admit normal query controls with independent SDK metadata", async () => {
   for (const home of ["https://chatgpt.com", "https://chatgpt.com/?model=synthetic"]) {
     const f = fixture({ fastTimers: true });
@@ -1797,8 +1877,8 @@ test("cached pending Send programs admit independent SDK home variants and coher
   }
 });
 
-test("pending Send URL diagnostics stay bounded and reject foreign saved SDK metadata", async () => {
-  for (const sdkUrl of ["https://chatgpt.com/c/foreign-private-id", "https://chatgpt.com/?temporary-chat=true",
+test("pending Send URL diagnostics stay bounded and reject unsafe SDK metadata", async () => {
+  for (const sdkUrl of ["https://chatgpt.com/?temporary-chat=true",
     "https://private-user:private-password@chatgpt.com/"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
     let pending;
@@ -1967,7 +2047,7 @@ test("rejected post-click URLs report only bounded structure and retain uncertai
     ["PRIVATE_URL_CANARY", { input: "unparseable", ...unknown }],
     ["http://chatgpt.com/?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY", { ...parsed, protocolValid: false, originValid: false }],
     ["https://PRIVATE_HOST_CANARY.invalid/PRIVATE_PATH_CANARY", { ...parsed, originValid: false, pathClass: "other" }],
-    ["https://chatgpt.com/PRIVATE_PATH_CANARY", { ...parsed, pathClass: "other" }],
+    ["https://chatgpt.com/PRIVATE_PATH_CANARY#PRIVATE_HASH_CANARY", { ...parsed, pathClass: "other", hashPresent: true }],
     ["https://chatgpt.com/c/private-chat-id?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY#PRIVATE_HASH_CANARY",
       { ...parsed, pathClass: "saved-chat", hashPresent: true }],
     ["https://PRIVATE_USER_CANARY:PRIVATE_PASSWORD_CANARY@chatgpt.com/c/private-chat-id",
