@@ -152,7 +152,7 @@ test("closed-app maintenance retains verified cached-command discovery through r
       if (ownerUpgrade) {
         f.write(path.join(f.stateDir, "caller-secret"), "a".repeat(48));
         const priorFeature = readFileSync(path.resolve(import.meta.dirname, "fixtures/managed-multi-agent-v2-before-routing.txt"), "utf8").trim();
-        f.write(f.configPath, `[features]\n# BEGIN codex-router-multi-agent-v2-managed\n${priorFeature}\n# END codex-router-multi-agent-v2-managed\n\n${readFileSync(f.configPath, "utf8")}`);
+        f.write(f.configPath, `[features]\napps = true # retained user feature\n# BEGIN codex-router-multi-agent-v2-managed\n${priorFeature}\n# END codex-router-multi-agent-v2-managed\n\n${readFileSync(f.configPath, "utf8")}`);
       }
       const configBytes = readFileSync(f.configPath), expectedCommit = "a".repeat(40), expectedBinarySha256 = "d".repeat(64);
       const changedAnchors = configBytes.toString("utf8").replace(prior.entryPath, path.join(f.root, "foreign-entry.exe"));
@@ -186,7 +186,9 @@ test("closed-app maintenance retains verified cached-command discovery through r
           assert.deepEqual(readFileSync(f.configPath), configBytes, "refresh leaves app-owned config cached at the prior owned entry");
           assert.throws(() => discoverWebRuntimeAnchors(f.options), { code: "ERR_WEB_RUNTIME_ANCHORS" }, "standalone discovery still rejects the obsolete command");
           if (ownerUpgrade) {
-            manager("enable");
+            manager("enable"); // Activation canonicalizes before stopping Router.
+            assert.equal(hash(readFileSync(f.configPath)), publication.afterSha256);
+            manager("enable"); // The installer publishes the same managed config again.
             assert.notEqual(publication.beforeSha256, publication.afterSha256);
             assert.equal(hash(readFileSync(f.configPath)), publication.afterSha256);
           }

@@ -336,7 +336,9 @@ function withManagedMultiAgent(contents, { protocol = readSubagentProtocol(), ex
     lines.splice(firstTable, 0, "", "[features]", ...managed);
   } else {
     const nextHeader = headers.find((header) => header.index > features.index);
-    lines.splice(nextHeader?.index ?? lines.length, 0, ...managed, "");
+    // Existing separators belong to the retained user content. Adding another
+    // outside the owned markers would survive removal and grow on every enable.
+    lines.splice(nextHeader?.index ?? lines.length, 0, ...managed);
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }

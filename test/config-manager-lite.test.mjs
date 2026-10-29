@@ -109,6 +109,29 @@ test("managed configuration publication plan records the exact supported V2 upgr
   assert.deepEqual(run("validate-enable", f.env, ["--publication-plan"]), { beforeSha256: plan.afterSha256, afterSha256: plan.afterSha256 });
 });
 
+test("activation and install enables retain the exact publication plan with user features before foreign tables", async t => {
+  for (const protocol of ["v1", "v2"]) await t.test(protocol, subtest => {
+    const f = configFixture(subtest), hash = bytes => createHash("sha256").update(bytes).digest("hex");
+    writeFileSync(path.join(f.state, "multi-agent-settings.json"), JSON.stringify({ version: 2, mode: "proven", enabled: [], disabled: [], protocol }));
+    const instructions = 'developer_instructions = """\nretained instruction\n\n# literal example\n[desktop]\n"""\n';
+    const userFeatures = 'apps = true # preserve this user feature\n\n\n# retained foreign table comment\n';
+    const foreignTables = '[desktop]\nnotifications = true # preserve this setting\n\n[mcp_servers.node_repl]\ncommand = \'C:\\fixture\\entry.exe\'\n';
+    writeFileSync(f.config, `${instructions}\n[features]\n${userFeatures}${foreignTables}`);
+    const before = readFileSync(f.config), plan = run("validate-enable", f.env, ["--publication-plan"]);
+    assert.equal(hash(before), plan.beforeSha256);
+    assert.deepEqual(readFileSync(f.config), before, "preflight cannot publish configuration");
+    run("enable", f.env); // Deployment activation's first publication.
+    const activated = readFileSync(f.config, "utf8");
+    assert.equal(hash(activated), plan.afterSha256);
+    run("enable", f.env); // install.ps1's second publication.
+    const installed = readFileSync(f.config, "utf8");
+    assert.equal(installed, activated, "the second owner publication must be byte-idempotent");
+    assert.equal(hash(installed), plan.afterSha256, "the final installed config must retain the planned hash");
+    for (const retained of [instructions, userFeatures, foreignTables]) assert.ok(installed.includes(retained), "user comments, whitespace and literal values remain exact");
+    assert.deepEqual(run("validate-enable", f.env, ["--publication-plan"]), { beforeSha256: plan.afterSha256, afterSha256: plan.afterSha256 });
+  });
+});
+
 test("caller refresh updates real enabled assignments while instruction examples remain exact", t => {
   const f = configFixture(t);
   for (const quote of ['"""', "'''"]) {
