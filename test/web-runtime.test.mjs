@@ -539,6 +539,43 @@ test("Send failure receipts require their exact nonce, producer shape and fixed 
   });
 });
 
+test("Send URL diagnostics cross the runtime boundary only with the exact content-free schema", async t => {
+  const parsed = { input: "parsed", protocolValid: true, originValid: true, pathClass: "other",
+    temporaryChatPresent: false, hashPresent: false, credentialsPresent: false };
+  const unknown = { protocolValid: null, originValid: null, pathClass: null,
+    temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+  const cases = [
+    ["parsed", parsed, true],
+    ["non-string", { input: "non-string", ...unknown }, true],
+    ["unparseable", { input: "unparseable", ...unknown }, true],
+    ["extra URL", { ...parsed, url: "PRIVATE_URL_CANARY" }, false],
+    ["private input", { ...parsed, input: "PRIVATE_URL_CANARY" }, false],
+    ["private path", { ...parsed, pathClass: "PRIVATE_PATH_CANARY" }, false],
+    ["nonboolean", { ...parsed, originValid: "PRIVATE_ORIGIN_CANARY" }, false],
+    ["missing field", Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "hashPresent")), false],
+    ["unparsed flags", { ...parsed, input: "unparseable" }, false],
+    ["wrong reason", parsed, false],
+    ["wrong failure", parsed, false],
+  ];
+  for (const [name, diagnostic, valid] of cases) await t.test(name, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    const send = (await h.answerBrowser(open)).output[0];
+    const receipt = { operation: "send", sendFailure: name === "wrong failure" ? "anchor-conflict" : "saved-url",
+      sendDiagnostic: name === "wrong reason" ? "normal-controls-unavailable" : "url-class-mismatch", sendUrlDiagnostic: diagnostic };
+    h.append(send, outputFor(send, browserReceipt(send, receipt)));
+    await assert.rejects(h.request(), error => {
+      assert.equal(error.code, valid ? "web_send_uncertain" : "web_browser_output_shape");
+      assert.doesNotMatch(error.message, /PRIVATE_/u);
+      if (valid) assert.ok(error.message.endsWith(JSON.stringify(diagnostic)));
+      return true;
+    });
+    const state = readFileSync(h.stateFile, "utf8"), saved = JSON.parse(state);
+    assert.equal(saved.uncertainSend, true); assert.equal(saved.checkpoint, undefined);
+    assert.equal(state.includes("PRIVATE_"), false); assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
+
 async function reportObservation(h, call, fields) {
   const output = await h.executeBrowser(call);
   const frameToken = readBrowserProgram(JSON.parse(call.arguments).code).frameToken;

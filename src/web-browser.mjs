@@ -1344,7 +1344,23 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (priorUrl && priorUrl !== confirmedUrl) throw new Error(`The Send changed the owned saved conversation URL; its effect is uncertain. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
     reason: "saved-url-changed", priorUrlClass: "saved-chat", domUrlClass: homeUrl(confirmedUrl) ? "normal-home" : savedUrl(confirmedUrl) ? "saved-chat" : "other" })}`);
   if (!(savedUrl(confirmedUrl) || !priorUrl && homeUrl(confirmedUrl))) {
-    throw Object.assign(new Error("The Send left its normal conversation."), { routerSendFailure: "saved-url", routerSendDiagnostic: "url-class-mismatch" });
+    // Retain URL structure only. The rejected value may contain private chat
+    // identities, query values, credentials or text, none of which may escape.
+    const diagnostic = { input: typeof confirmedUrl === "string" ? "unparseable" : "non-string",
+      protocolValid: null, originValid: null, pathClass: null,
+      temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+    if (typeof confirmedUrl === "string") {
+      try {
+        const url = new URL(confirmedUrl);
+        Object.assign(diagnostic, { input: "parsed", protocolValid: url.protocol === "https:",
+          originValid: url.origin === "https://chatgpt.com",
+          pathClass: url.pathname === "/" ? "home" : /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname) ? "saved-chat" : "other",
+          temporaryChatPresent: url.searchParams.has("temporary-chat"), hashPresent: Boolean(url.hash),
+          credentialsPresent: Boolean(url.username || url.password) });
+      } catch { /* Non-URL input retains no part of its value. */ }
+    }
+    throw Object.assign(new Error("The Send left its normal conversation."), { routerSendFailure: "saved-url",
+      routerSendDiagnostic: "url-class-mismatch", routerSendUrlDiagnostic: diagnostic });
   }
   if (proof.blocked) throw Object.assign(new Error("The Send generation is ambiguous or behind another generation."), { routerSendFailure: "anchor-conflict" });
   if (savedUrl(confirmedUrl)) state.savedUrl = confirmedUrl;
@@ -1411,7 +1427,9 @@ async function runBrowserMutation(cache, options, nodeRepl) {
       options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness, cache.createAllowance, cache.sendReadyLocator);
   } catch (error) {
     if (options.operation !== "send" || !["anchor-conflict", "saved-url"].includes(error?.routerSendFailure)) throw error;
-    nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation: "send", sendFailure: error.routerSendFailure, ...(error.routerSendDiagnostic ? { sendDiagnostic: error.routerSendDiagnostic } : {}) } }) + options.frameEnd);
+    nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation: "send", sendFailure: error.routerSendFailure,
+      ...(error.routerSendDiagnostic ? { sendDiagnostic: error.routerSendDiagnostic } : {}),
+      ...(error.routerSendUrlDiagnostic ? { sendUrlDiagnostic: error.routerSendUrlDiagnostic } : {}) } }) + options.frameEnd);
   }
 }
 

@@ -1948,10 +1948,43 @@ test("an initial home URL stays pending while a temporary URL fails without a se
     if (url === "https://chatgpt.com/") {
       assert.equal(result.generationPending, true);
       assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
-    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "url-class-mismatch" });
+    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "url-class-mismatch",
+      sendUrlDiagnostic: { input: "parsed", protocolValid: true, originValid: true, pathClass: "saved-chat",
+        temporaryChatPresent: true, hashPresent: false, credentialsPresent: false } });
     assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().sendClicked, true);
     assert.equal(f.ui.sendClicks, 1);
     await assert.rejects(f.run("send", { ...plugin, prompt: "Never repeat" }), /cannot be replayed/);
+  }
+});
+
+test("rejected post-click URLs report only bounded structure and retain uncertain Send guards", async () => {
+  const parsed = { input: "parsed", protocolValid: true, originValid: true, pathClass: "home",
+    temporaryChatPresent: false, hashPresent: false, credentialsPresent: false };
+  const unknown = { protocolValid: null, originValid: null, pathClass: null,
+    temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+  const cases = [
+    [17, { input: "non-string", ...unknown }],
+    ["PRIVATE_URL_CANARY", { input: "unparseable", ...unknown }],
+    ["http://chatgpt.com/?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY", { ...parsed, protocolValid: false, originValid: false }],
+    ["https://PRIVATE_HOST_CANARY.invalid/PRIVATE_PATH_CANARY", { ...parsed, originValid: false, pathClass: "other" }],
+    ["https://chatgpt.com/PRIVATE_PATH_CANARY", { ...parsed, pathClass: "other" }],
+    ["https://chatgpt.com/c/private-chat-id?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY#PRIVATE_HASH_CANARY",
+      { ...parsed, pathClass: "saved-chat", hashPresent: true }],
+    ["https://PRIVATE_USER_CANARY:PRIVATE_PASSWORD_CANARY@chatgpt.com/c/private-chat-id",
+      { ...parsed, pathClass: "saved-chat", credentialsPresent: true }],
+    ["https://chatgpt.com/?temporary-chat=PRIVATE_VALUE_CANARY", { ...parsed, temporaryChatPresent: true }],
+  ];
+  for (const [url, expected] of cases) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.url = url; f.ui.sdkUrl = "https://chatgpt.com/"; };
+    const result = await f.runFast("send", { ...plugin, prompt: "PRIVATE_PROMPT_CANARY" });
+    assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "url-class-mismatch",
+      sendUrlDiagnostic: expected });
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|private-chat-id|https?:/u);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().sendClicked, true);
+    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.runFast("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/u);
+    assert.equal(f.ui.sendClicks, 1);
   }
 });
 
