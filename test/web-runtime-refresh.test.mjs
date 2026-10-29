@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +8,7 @@ import test from "node:test";
 import { installWebStopAdapter, rollbackWebStopAdapter } from "../src/web-stop-adapter-install.mjs";
 import { discoverWebRuntimeAnchors, refreshWebRuntime, inspectWebRuntimeMaintenance } from "../src/web-runtime-refresh.mjs";
 import { createAdapterHook } from "../src/web-stop-contract.mjs";
+import { runWebMaintenance } from "../maintenance/web-runtime-maintenance.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -132,6 +134,103 @@ test("owned adapter command metadata resolves the current Node sibling rather th
   f.saveConfig({ server: receipt.entryPath });
   f.write(path.join(receipt.managedDirectory, "entry.exe"), "changed managed entry");
   await assert.rejects(refreshWebRuntime(f.options), /supply --manifest/u);
+});
+
+test("closed-app maintenance retains verified cached-command discovery through replacement, deployment and final readback", async t => {
+  for (const branch of ["unchanged-final", "changed-final", "managed-upgrade", "publication-edit", "publication-anchor", "foreign-command", "foreign-node", "unrelated-config", "runtime-bytes", "missing-service", "signature", "environment", "protected-entry"]) {
+    await t.test(branch, async subtest => {
+      const f = fixture(subtest), prior = JSON.parse(readFileSync(f.receiptPath, "utf8"));
+      f.saveConfig({ server: prior.entryPath });
+      const ownerUpgrade = ["managed-upgrade", "publication-edit"].includes(branch);
+      const manager = (command, args = []) => {
+        const result = spawnSync(process.execPath, [path.resolve(import.meta.dirname, "../src/config-manager.mjs"), command, ...args], {
+          encoding: "utf8", windowsHide: true, timeout: 20_000,
+          env: { ...process.env, CODEX_HOME: f.codexHome, MODEL_ROUTER_STATE_DIR: f.stateDir, CODEX_ROUTER_STATE_DIR: f.stateDir, CODEX_BIN: process.execPath },
+        });
+        assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+      };
+      if (ownerUpgrade) {
+        f.write(path.join(f.stateDir, "caller-secret"), "a".repeat(48));
+        const priorFeature = readFileSync(path.resolve(import.meta.dirname, "fixtures/managed-multi-agent-v2-before-routing.txt"), "utf8").trim();
+        f.write(f.configPath, `[features]\n# BEGIN codex-router-multi-agent-v2-managed\n${priorFeature}\n# END codex-router-multi-agent-v2-managed\n\n${readFileSync(f.configPath, "utf8")}`);
+      }
+      const configBytes = readFileSync(f.configPath), expectedCommit = "a".repeat(40), expectedBinarySha256 = "d".repeat(64);
+      const changedAnchors = configBytes.toString("utf8").replace(prior.entryPath, path.join(f.root, "foreign-entry.exe"));
+      let publication;
+      const options = { expectedCommit, expectedBinarySha256, expectedCandidateSha256: "b".repeat(64),
+        candidateBinary: path.join(f.root, "switchyard.exe"), deploymentAcceptancePath: path.join(f.root, "acceptance.json"), timeoutMs: 1000 };
+      const deployed = { version: 1, accepted: true, deployed: true, routerCommit: expectedCommit, switchyardBinarySha256: expectedBinarySha256,
+        switchyardCommit: "a".repeat(40), switchyardRoutesSha256: "b".repeat(64),
+        rollbackRoot: path.join(f.root, "switchyard-rollback"), rollbackRouterRoot: path.join(f.root, "router-rollback"),
+        checks: Object.fromEntries(["switchyardHealth", "taskIdentity", "routerFullHealth", "cleanCandidate", "installManifest", "doctor",
+          "protectedEndpoints", "processIdentity", "provenance", "installedHashes", "installedCatalog"].map(name => [name, true])) };
+      const inspect = extra => inspectWebRuntimeMaintenance({ ...f.options,
+        dependencies: { ...f.dependencies, ...extra.dependencies } });
+      let finalRefreshes = 0, acceptances = 0;
+      f.dependencies.drain = async ({ force }) => { assert.equal(force, true); return idleDrain("forced"); };
+      const maintenance = runWebMaintenance(options, {
+        prepare(_commit, _binary, _hash, { discover }) {
+          return { ...inspect({ dependencies: { discover } }), candidateSha256: options.expectedCandidateSha256 };
+        },
+        async wait() {}, absent() {}, ledger: () => [], unchanged() {}, source() {},
+        refresh: value => refreshWebRuntime({ ...f.options, ...value }),
+        planConfigurationPublication() {
+          publication = ownerUpgrade ? manager("validate-enable", ["--publication-plan"])
+            : { beforeSha256: hash(configBytes), afterSha256: hash(branch === "publication-anchor" ? changedAnchors : configBytes) };
+          return publication;
+        },
+        async deploy() {
+          const installed = JSON.parse(readFileSync(f.receiptPath, "utf8"));
+          assert.notEqual(installed.entryPath, prior.entryPath);
+          assert.equal(f.environment.values.CODEX_NODE_REPL_PATH, installed.entryPath);
+          assert.deepEqual(readFileSync(f.configPath), configBytes, "refresh leaves app-owned config cached at the prior owned entry");
+          assert.throws(() => discoverWebRuntimeAnchors(f.options), { code: "ERR_WEB_RUNTIME_ANCHORS" }, "standalone discovery still rejects the obsolete command");
+          if (ownerUpgrade) {
+            manager("enable");
+            assert.notEqual(publication.beforeSha256, publication.afterSha256);
+            assert.equal(hash(readFileSync(f.configPath)), publication.afterSha256);
+          }
+          if (branch === "publication-edit") f.write(f.configPath, `${readFileSync(f.configPath, "utf8")}\n# unrelated concurrent edit\n`);
+          if (branch === "publication-anchor") f.write(f.configPath, changedAnchors);
+          if (branch === "changed-final") f.write(path.join(f.sourceDir, "web-browser-state.mjs"), "export const updatedState = true;\n");
+          if (branch === "foreign-command") f.saveConfig({ server: path.join(f.root, "foreign-entry.exe") });
+          if (branch === "foreign-node") f.saveConfig({ server: prior.entryPath, node: f.old.node.path });
+          if (branch === "unrelated-config") f.write(f.configPath, Buffer.concat([configBytes, Buffer.from("\n# unrelated concurrent edit\n")]));
+          if (branch === "runtime-bytes") f.write(f.current.runtimeModule, "export const changedRuntime = true;\n");
+          if (branch === "missing-service") rmSync(path.join(path.dirname(f.current.runtimeModule), "browser-service.mjs"));
+          if (branch === "signature") f.adapterOptions.dependencies.inspectSignatures = paths => paths.map(file => ({ path: file, ...signature, status: "NotSigned" }));
+          if (branch === "environment") f.environment.values.CODEX_NODE_REPL_PATH = path.join(f.root, "foreign-selection.exe");
+          if (branch === "protected-entry") f.write(installed.entryPath, "changed protected entry");
+          return { receipt: deployed, resultPath: path.join(f.root, "deployment-result.json") };
+        },
+        async accept() { acceptances++; },
+        inspectFinal: inspect, inspectActual: inspect,
+        async refreshFinal(value) {
+          finalRefreshes++;
+          return refreshWebRuntime({ ...f.options, ...value, dependencies: { ...f.dependencies, ...value.dependencies } });
+        },
+      });
+      if (["unchanged-final", "changed-final", "managed-upgrade"].includes(branch)) {
+        const receipt = await maintenance;
+        assert.equal(receipt.accepted, true); assert.equal(acceptances, 2);
+        assert.equal(finalRefreshes, branch === "changed-final" ? 1 : 0);
+        assert.equal(receipt.finalAdapter.generation, JSON.parse(readFileSync(f.receiptPath, "utf8")).generation);
+        assert.equal(hash(readFileSync(f.configPath)), publication.afterSha256);
+        assert.deepEqual(receipt.configurationPublication, publication);
+        assert.throws(() => discoverWebRuntimeAnchors(f.options), { code: "ERR_WEB_RUNTIME_ANCHORS" }, "transaction authority does not escape to a later standalone operation");
+      } else {
+        const failure = ["foreign-command", "foreign-node", "unrelated-config", "publication-edit"].includes(branch) ? /publication changed/u
+          : branch === "publication-anchor" ? /changed the official MCP runtime anchors/u
+          : branch === "runtime-bytes" ? /reviewed official cohort/u
+            : branch === "missing-service" ? /ENOENT/u
+              : branch === "signature" ? /Invalid signed adapter runtime identity/u
+                : branch === "environment" ? /environment changed/u : /file identity mismatch/u;
+        await assert.rejects(maintenance, failure);
+        const rejectedPublication = ["foreign-command", "foreign-node", "unrelated-config", "publication-edit", "publication-anchor"].includes(branch);
+        assert.equal(finalRefreshes, 0); assert.equal(acceptances, rejectedPublication ? 0 : 1, "post-deployment changes withhold final maintenance acceptance");
+      }
+    });
+  }
 });
 
 test("coordinated refresh preserves connector, capabilities, tunnel/key, baseline User CLI and hook bytes", async t => {

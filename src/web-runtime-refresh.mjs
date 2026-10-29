@@ -64,9 +64,25 @@ export function discoverWebRuntimeAnchors(options = {}) {
     (dependencies.assertCodexIdentity ?? assertCodexExecutableIdentity)(identity);
     const sdkPackageJson = localPath(path.join(options.sourceRoot ?? SOURCE_ROOT, "node_modules", "@modelcontextprotocol", "sdk", "package.json"));
     readRegular(sdkPackageJson);
+    const configurationSha256 = hash(configBytes);
+    let expectedConfigSha256 = configurationSha256;
+    const mcpAnchors = source => [tomlStringValue(source, table, "command"),
+      ...["NODE_REPL_NODE_PATH", "BROWSER_USE_CODEX_APP_VERSION", "NODE_REPL_TRUSTED_SERVICES"].map(name => tomlStringValue(source, environment, name))];
     return { anchors: { node, officialCli, officialNodeRepl, runtimeModule, sdkPackageJson },
+      configurationSha256,
+      acceptConfigurationPublication(publication) {
+        if (publication?.beforeSha256 !== configurationSha256 || expectedConfigSha256 !== configurationSha256
+            || !/^[a-f0-9]{64}$/u.test(publication?.afterSha256 ?? "")) throw new Error("Managed configuration publication does not match the retained discovery input.");
+        const bytes = readRegular(configPath);
+        if (hash(bytes) !== publication.afterSha256) throw new Error("Managed configuration publication changed; unrelated configuration edits were preserved.");
+        if (JSON.stringify(mcpAnchors(scanTomlDocument(bytes.toString("utf8")))) !== JSON.stringify(mcpAnchors(document))) {
+          throw new Error("Managed configuration publication changed the official MCP runtime anchors.");
+        }
+        expectedConfigSha256 = publication.afterSha256;
+      },
       assertCurrent() {
-        if (hash(readRegular(configPath)) !== hash(configBytes)) throw new Error("Official MCP runtime configuration changed during refresh; retry.");
+        if (hash(readRegular(configPath)) !== expectedConfigSha256) throw new Error("Official MCP runtime configuration changed during refresh; retry.");
+        readRegular(browserService, 16 * 1024 * 1024);
         (dependencies.assertCodexIdentity ?? assertCodexExecutableIdentity)(identity);
       } };
   } catch (cause) {
@@ -127,6 +143,11 @@ function settledForcedDrain(drain) {
 function prepare(ctx, options) {
   const before = savedSettings(ctx);
   const discovery = options.manifestPath ? null : (options.dependencies?.discover ?? discoverWebRuntimeAnchors)(options);
+  // A maintenance transaction may retain its verified discovery while replacing
+  // the owned adapter selected by the still-closed app's cached MCP command.
+  // Reusing it permits only the recorded owner's configuration publication;
+  // unrelated edits and changed CLI identity still fail.
+  discovery?.assertCurrent();
   const adapter = inspectWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions,
     ...(options.manifestPath ? { manifestPath: localPath(options.manifestPath) } : { anchors: discovery.anchors }) });
   const nextValue = webBridgeSettingsWithRuntime(before.value, adapter.candidate.runtimeModule), nextText = json(nextValue);

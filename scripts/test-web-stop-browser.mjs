@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { browserDom, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
-import { readBrowserReplies } from "../src/web-browser.mjs";
+import { browserDom, createBrowserAllowance, waitForBrowserReadiness, waitForHomeBrowserReadiness, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { readBrowserReplies, isNormalChatHomeUrl } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
 const fixtureRoute = "/web-stop-browser.html";
@@ -361,11 +361,12 @@ export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutM
   const record = async (name, run) => {
     try { results.push({ case: name, passed: true, ...await run() }); }
     catch (error) { results.push({ case: name, passed: false,
-      code: typeof error?.contractCode === "string" ? error.contractCode : "lifecycle_contract_operation_failed" }); }
+      code: typeof error?.contractCode === "string" ? error.contractCode : "lifecycle_contract_operation_failed",
+      ...(error?.contractDiagnostic ? { diagnostic: error.contractDiagnostic } : {}) }); }
   };
   await record("home-hydration", async () => {
     await click("Home hydration");
-    const state = createHomeBrowserState(tab, { ui: browserDom });
+    const state = createHomeBrowserState(tab, { ui: browserDom, homeUrl: isNormalChatHomeUrl });
     requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "unhydrated_home_ready");
     await click("Hydrate fixture home");
     await state.ready.waitFor({ state: "attached", timeoutMs });
@@ -377,7 +378,7 @@ export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutM
   for (const [name, button] of [["home-duplicate", "Duplicate home model"], ["home-temporary", "Temporary home mode"]]) {
     await record(name, async () => {
       await click(button);
-      const state = createHomeBrowserState(tab, { ui: browserDom });
+      const state = createHomeBrowserState(tab, { ui: browserDom, homeUrl: isNormalChatHomeUrl });
       requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "ambiguous_home_ready");
       return { readinessRejected: true };
     });
@@ -426,6 +427,56 @@ export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutM
       return { readinessRejected: true };
     });
   }
+  await record("home-navigation-event-queue", async () => {
+    await click("Home hydration"); await click("Hydrate fixture home");
+    const expected = `${fixtureUrl}#checkpoint`, originalTabId = tab.id;
+    const home = createHomeBrowserState(tab, { ui: browserDom, homeUrl: url => url === expected });
+    const capability = await tab.capabilities.get("cdp"), subscribed = Promise.withResolvers();
+    let captureTimeout, heldReads = 0, phase = "semantic-readiness", outcome = "pending", firstProof, capture;
+    const observedHome = { ready: home.ready, inspect: async (...args) => {
+      phase = "home-projection";
+      const proof = await home.inspect(...args);
+      firstProof ??= { mounted: proof !== null, empty: proof?.empty === true, normal: proof?.normal === true,
+        urlClass: proof?.url === expected ? "target" : proof?.url === fixtureUrl ? "fixture" : proof?.url ? "other" : "unavailable" };
+      return proof;
+    } };
+    const navigationTab = { capabilities: { get: async id => {
+      phase = "capability";
+      requireContract(id === "cdp", "unexpected_navigation_capability");
+      return { send: async (...args) => { phase = "page-enable"; return capability.send(...args); }, readEvents: options => {
+        phase = options.afterSequence === undefined ? "cursor-capture" : "navigation-wait";
+        const result = capability.readEvents(options);
+        if (options.afterSequence === undefined) {
+          captureTimeout = options.timeoutMs;
+          return result.then(batch => { capture = { validCursor: Number.isSafeInteger(batch?.cursor),
+            eventCount: Math.min(batch?.events?.length ?? 0, 100), truncated: batch?.truncated === true }; return batch; });
+        }
+        heldReads += 1; subscribed.resolve();
+        return result;
+      } };
+    } } };
+    const waiting = waitForHomeBrowserReadiness(navigationTab, { home: observedHome, browserReadiness: waitForBrowserReadiness,
+      allowance: createBrowserAllowance(Date.now() + timeoutMs, () => new Error("Fixture home navigation deadline expired.")),
+      assertCurrent: () => requireContract(tab.id === originalTabId, "fixture_tab_changed"), transitional: url => url === fixtureUrl })
+      .then(proof => { outcome = proof?.normal === true ? "normal-proof" : "unavailable"; return proof; }, error => {
+        outcome = error?.message === "Fixture home navigation deadline expired." ? "deadline" : "error"; throw error;
+      });
+    try {
+      requireContract(await Promise.race([subscribed.promise.then(() => true), waiting.then(() => false, () => false)]), "navigation_queue_not_armed");
+      await tab.playwright.getByRole("link", { name: "Navigate to fixture checkpoint", exact: true }).click({ timeoutMs });
+      const proof = await waiting;
+      requireContract(proof?.normal === true && proof.url === expected && captureTimeout === 0 && heldReads === 1, "home_navigation_queue_proof_failed");
+    } catch (error) {
+      error.contractDiagnostic = { phase, outcome, heldReads, captureTimeoutZero: captureTimeout === 0,
+        ...(firstProof ? { firstProof } : {}), ...(capture ? { capture } : {}) };
+      throw error;
+    } finally {
+      // A failed fixture click still drains the queue's finite SDK wait.
+      await Promise.allSettled([waiting]);
+      await tab.goto(fixtureUrl);
+    }
+    return { heldNavigationEventObserved: true, captureTimeoutZero: true, coherentHomeVerified: true };
+  });
   await record("exact-url-event", async () => {
     const expected = `${fixtureUrl}#checkpoint`;
     const navigation = tab.playwright.waitForURL(expected, { timeoutMs });

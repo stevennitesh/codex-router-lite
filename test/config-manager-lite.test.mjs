@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -56,8 +57,8 @@ test("missing multi-agent end marker is repaired only for the exact owned featur
   }
 });
 
-function run(command, env) {
-  const result = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), command], {
+function run(command, env, args = []) {
+  const result = spawnSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), command, ...args], {
     cwd: root,
     env: { ...process.env, ...env },
     encoding: "utf8",
@@ -90,6 +91,23 @@ function configFixture(t) {
   return { config: path.join(home, "config.toml"), state,
     env: { CODEX_HOME: home, MODEL_ROUTER_STATE_DIR: state, CODEX_BIN: process.execPath } };
 }
+
+test("managed configuration publication plan records the exact supported V2 upgrade without writing or exposing configuration", t => {
+  const f = configFixture(t), hash = bytes => createHash("sha256").update(bytes).digest("hex");
+  writeFileSync(f.config, "[features]\napps = true\n");
+  run("enable", f.env);
+  const canonical = readFileSync(f.config, "utf8"), feature = canonical.split("\n").find(line => line.startsWith("multi_agent_v2 = "));
+  const priorFeature = readFileSync(path.join(root, "test/fixtures/managed-multi-agent-v2-before-routing.txt"), "utf8").trim();
+  const before = canonical.replace(feature, priorFeature);
+  assert.notEqual(before, canonical);
+  writeFileSync(f.config, before);
+  const plan = run("validate-enable", f.env, ["--publication-plan"]);
+  assert.deepEqual(plan, { beforeSha256: hash(before), afterSha256: hash(canonical) });
+  assert.equal(readFileSync(f.config, "utf8"), before, "planning is read-only");
+  run("enable", f.env);
+  assert.equal(hash(readFileSync(f.config)), plan.afterSha256, "actual owner publication matches the recorded output exactly");
+  assert.deepEqual(run("validate-enable", f.env, ["--publication-plan"]), { beforeSha256: plan.afterSha256, afterSha256: plan.afterSha256 });
+});
 
 test("caller refresh updates real enabled assignments while instruction examples remain exact", t => {
   const f = configFixture(t);

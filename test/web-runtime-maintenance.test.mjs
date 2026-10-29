@@ -30,7 +30,11 @@ function fixture({ finalChanged = false } = {}) {
     async refresh(value) { assert.deepEqual(value, { apply: true, forceServiceReplacement: true, expectedMaintenance: { plan: initial.plan, adapter: initial.adapter } }); events.push("refresh"); },
     async deploy() { events.push("guarded-deploy"); return { receipt: deployed, resultPath: path.resolve(".tmp", "deployment-owner", "result.json") }; }, async accept() { events.push("accept"); },
     inspectFinal() { events.push("replan"); return final; },
-    async refreshFinal(value) { assert.deepEqual(value, { apply: true, forceServiceReplacement: true, expectedMaintenance: final }); events.push("refresh-final"); },
+    async refreshFinal(value) {
+      assert.deepEqual({ apply: value.apply, forceServiceReplacement: value.forceServiceReplacement, expectedMaintenance: value.expectedMaintenance },
+        { apply: true, forceServiceReplacement: true, expectedMaintenance: final });
+      assert.equal(typeof value.dependencies.discover, "function"); events.push("refresh-final");
+    },
     inspectActual() { return { plan: { changed: false }, adapter: final.adapter }; },
   };
   return { options, dependencies, initial, final, events };
@@ -105,6 +109,7 @@ test("independent worker acceptance is bound to exact candidate, installation an
   for (const mutate of [value => { value.accepted = false; }, value => { value.routerCommit = "d".repeat(40); },
     value => { value.candidateSha256 = "e".repeat(64); }, value => { value.sourceRoot += "-foreign"; },
     value => { delete value.checks.ledgerPreserved; }, value => { value.checks.processAbsence = false; },
+    value => { value.configurationPublication = { beforeSha256: "invalid", afterSha256: "a".repeat(64) }; },
     value => { value.codexReopenRequired = false; }]) {
     const changed = structuredClone(receipt); mutate(changed);
     assert.throws(() => validateWebMaintenanceAcceptance(changed, f.options.expectedCommit, f.options.expectedCandidateSha256, f.options.candidateBinary, f.options.expectedBinarySha256), /complete acceptance/u);

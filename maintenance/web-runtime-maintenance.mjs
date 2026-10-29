@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, lstatSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectWebRuntimeMaintenance, refreshWebRuntime } from "../src/web-runtime-refresh.mjs";
+import { discoverWebRuntimeAnchors, inspectWebRuntimeMaintenance, refreshWebRuntime } from "../src/web-runtime-refresh.mjs";
 import { assertWebMaintenanceAbsent, waitForWebMaintenanceExit, snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } from "../src/web-maintenance-proof.mjs";
 import { STATE_DIR } from "../src/paths.mjs";
 import { writePrivateFile, privateFileIsProtected } from "../src/file-security.mjs";
@@ -25,7 +25,8 @@ export function assertWebMaintenanceSource(expectedCommit, sourceRoot = root) {
 }
 
 export function prepareWebMaintenance(expectedCommit, candidateBinary, expectedBinarySha256,
-  { inspect = inspectWebRuntimeMaintenance, source = assertWebMaintenanceSource, readInstalled = readInstallManifest } = {}) {
+  { inspect = inspectWebRuntimeMaintenance, source = assertWebMaintenanceSource, readInstalled = readInstallManifest,
+    discover = discoverWebRuntimeAnchors } = {}) {
   source(expectedCommit);
   const installed = readInstalled();
   if (installed?.current?.target !== "codex" || typeof installed.current.sourceRoot !== "string"
@@ -34,7 +35,7 @@ export function prepareWebMaintenance(expectedCommit, candidateBinary, expectedB
   const binary = lstatSync(candidateBinary);
   if (!binary.isFile() || binary.isSymbolicLink() || binary.size > 256 * 1024 * 1024
       || hash(readFileSync(candidateBinary)) !== expectedBinarySha256.toLowerCase()) throw new Error("The existing Switchyard binary does not match the reviewed candidate hash.");
-  const prepared = inspect({ sourceRoot: root });
+  const prepared = inspect({ sourceRoot: root, dependencies: { discover } });
   const candidateSha256 = hash(JSON.stringify({ commit: expectedCommit.toLowerCase(), sourceRoot: root,
     candidateBinary: path.resolve(candidateBinary), expectedBinarySha256: expectedBinarySha256.toLowerCase(), installed, prepared }));
   return { ...prepared, candidateSha256 };
@@ -89,6 +90,16 @@ export function publishUnderlyingDeploymentAcceptance(receipt, expectedCommit, e
 const cohort = adapter => ({ node: adapter.candidate.node, officialCli: adapter.candidate.officialCli,
   officialNodeRepl: adapter.candidate.officialNodeRepl, runtimeModule: adapter.candidate.runtimeModule, runtimeHash: adapter.candidate.runtimeHash });
 const binding = value => ({ plan: value.plan, adapter: value.adapter });
+const validConfigurationPublication = value => value && Object.keys(value).length === 2
+  && [value.beforeSha256, value.afterSha256].every(digest => /^[a-f0-9]{64}$/u.test(digest ?? ""));
+
+function planConfigurationPublication() {
+  const output = execFileSync(process.execPath, [path.join(root, "src", "config-manager.mjs"), "validate-enable", "--publication-plan"],
+    { encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024 });
+  const publication = JSON.parse(output);
+  if (!validConfigurationPublication(publication)) throw new Error("Managed configuration publication plan is invalid.");
+  return publication;
+}
 
 // This runs only in the existing independent WMI deployment worker. It waits on
 // actual process handles, never quits/relaunches Codex and never edits a ledger.
@@ -99,36 +110,64 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
   const ledger = dependencies.ledger ?? (() => snapshotWebConversationLedgers(STATE_DIR));
   const unchanged = dependencies.unchanged ?? (snapshot => assertWebConversationLedgersUnchanged(STATE_DIR, snapshot));
   const refresh = dependencies.refresh ?? (options => refreshWebRuntime({ sourceRoot: root, ...options }));
-  const candidate = prepare(expectedCommit, candidateBinary, expectedBinarySha256);
+  // Capture authority before replacing the receipt/User launch selection. Codex
+  // remains closed, so its app-owned MCP command can still name the prior owned
+  // entry afterward. This witness lives only in this transaction's closure;
+  // final inspection still revalidates config bytes, CLI identity, signatures,
+  // protected artifacts and current receipt/environment/hook ownership.
+  let runtimeDiscovery;
+  const discover = options => {
+    const observed = (dependencies.discover ?? discoverWebRuntimeAnchors)(options);
+    runtimeDiscovery = observed;
+    return observed;
+  };
+  const prepareCandidate = () => prepare(expectedCommit, candidateBinary, expectedBinarySha256, { discover });
+  const finalOptions = { sourceRoot: root, dependencies: { discover() {
+    if (!runtimeDiscovery) throw new Error("Web maintenance has no retained official runtime discovery.");
+    return runtimeDiscovery;
+  } } };
+  const candidate = prepareCandidate();
   if (candidate.candidateSha256 !== expectedCandidateSha256) throw new Error("Prepared Web maintenance candidate changed before its worker started.");
   await dependencies.onWaiting?.();
   await (dependencies.wait ?? waitForWebMaintenanceExit)(candidate.adapter, { timeoutMs });
-  const after = prepare(expectedCommit, candidateBinary, expectedBinarySha256);
+  const after = prepareCandidate();
   if (after.candidateSha256 !== expectedCandidateSha256) throw new Error("Prepared Web maintenance candidate changed while awaiting Codex exit.");
   absent(candidate.adapter);
   const snapshot = ledger();
   await refresh({ apply: true, forceServiceReplacement: true, expectedMaintenance: binding(candidate) });
   unchanged(snapshot); source(expectedCommit); absent(candidate.adapter);
+  // The deployment's config-manager enable owns canonical managed-block
+  // upgrades. Bind its recorded exact output to the unchanged discovery input
+  // before deployment, then hand off only after underlying acceptance.
+  const configurationPublication = runtimeDiscovery ? (dependencies.planConfigurationPublication ?? planConfigurationPublication)() : null;
+  if (runtimeDiscovery) {
+    runtimeDiscovery.assertCurrent();
+    if (!validConfigurationPublication(configurationPublication) || configurationPublication.beforeSha256 !== runtimeDiscovery.configurationSha256) {
+      throw new Error("Managed configuration publication plan differs from the retained discovery input.");
+    }
+  }
   const deployment = await (dependencies.deploy ?? deploy)({ expectedCommit, candidateBinary, expectedBinarySha256, deploymentAcceptancePath });
   const deployed = deployment.receipt;
   validateUnderlyingDeployment(deployed, expectedCommit, expectedBinarySha256);
+  if (configurationPublication) runtimeDiscovery.acceptConfigurationPublication(configurationPublication);
   await (dependencies.accept ?? assertDeploymentRuntime)(root);
   unchanged(snapshot); source(expectedCommit); absent(candidate.adapter);
   // Installed SDK/source paths and adapter source may differ after deployment.
   // Replan with the installed generation and apply only a changed final adapter.
-  const final = (dependencies.inspectFinal ?? (() => inspectWebRuntimeMaintenance({ sourceRoot: root })))();
+  const final = (dependencies.inspectFinal ?? inspectWebRuntimeMaintenance)(finalOptions);
   if (JSON.stringify(cohort(final.adapter)) !== JSON.stringify(cohort(candidate.adapter))) throw new Error("Final adapter runtime differs from the reviewed official cohort.");
   if (final.plan.changed) {
     absent(final.adapter);
-    await (dependencies.refreshFinal ?? (options => refreshWebRuntime({ sourceRoot: root, ...options })))({ apply: true, forceServiceReplacement: true, expectedMaintenance: binding(final) });
+    await (dependencies.refreshFinal ?? refreshWebRuntime)({ ...finalOptions, apply: true, forceServiceReplacement: true, expectedMaintenance: binding(final) });
   }
   unchanged(snapshot); source(expectedCommit); absent(final.adapter);
   await (dependencies.accept ?? assertDeploymentRuntime)(root);
-  const actual = (dependencies.inspectActual ?? (() => inspectWebRuntimeMaintenance({ sourceRoot: root })))();
+  const actual = (dependencies.inspectActual ?? inspectWebRuntimeMaintenance)(finalOptions);
   if (actual.plan.changed || JSON.stringify(cohort(actual.adapter)) !== JSON.stringify(cohort(candidate.adapter))) throw new Error("Final installed adapter did not retain the reviewed official cohort.");
   return { version: 1, accepted: true, routerCommit: expectedCommit.toLowerCase(), candidateSha256: expectedCandidateSha256,
     sourceRoot: root, candidateBinary: path.resolve(candidateBinary), switchyardBinarySha256: expectedBinarySha256.toLowerCase(), codexReopenRequired: true,
     deployment: deployed, deploymentAcceptancePath, deploymentResultPath: deployment.resultPath,
+    configurationPublication,
     finalAdapter: { generation: actual.adapter.generation, managedDirectory: path.dirname(actual.adapter.managedEntryPath),
       officialRuntime: cohort(actual.adapter), sdkPackageJson: actual.adapter.candidate.sdkPackageJson },
     ledgers: { sha256: hash(JSON.stringify(snapshot)), count: snapshot.filter(row => row.kind !== "sidecar").length,
@@ -146,6 +185,7 @@ export function validateWebMaintenanceAcceptance(value, expectedCommit, expected
       || value.candidateBinary !== path.resolve(candidateBinary) || value.switchyardBinarySha256 !== expectedBinarySha256.toLowerCase()
       || !path.isAbsolute(value.deploymentAcceptancePath ?? "") || !path.isAbsolute(value.deploymentResultPath ?? "") || !path.isAbsolute(value.finalAdapter?.managedDirectory ?? "")
       || value.codexReopenRequired !== true || checks.some(name => value.checks?.[name] !== true)
+      || value.configurationPublication !== undefined && value.configurationPublication !== null && !validConfigurationPublication(value.configurationPublication)
       || !/^[a-f0-9]{64}$/u.test(value.ledgers?.sha256 ?? "") || !Number.isSafeInteger(value.ledgers?.count) || value.ledgers.count < 0
       || !Number.isSafeInteger(value.ledgers?.sidecarCount) || value.ledgers.sidecarCount < 0
       || !Number.isSafeInteger(value.ledgers?.uncertainSends) || value.ledgers.uncertainSends < 0 || value.ledgers.uncertainSends > value.ledgers.count

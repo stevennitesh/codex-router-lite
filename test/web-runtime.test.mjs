@@ -302,7 +302,7 @@ function fakeBrowser() {
     ui.texts = ui.savedReplies.get(url) ?? []; ui.composer = "";
     ui.turns = ui.savedTurns.get(url) ?? [];
     ui.stop = ui.turns.length > 0 && !ui.complete && !ui.full;
-  }, url: async () => ui.url,
+  }, url: async () => ui.sdkUrl ?? ui.url,
     playwright: { waitForURL: async (expected, { timeoutMs }) => {
       assert.ok(Number.isInteger(timeoutMs) && timeoutMs > 0);
       if (ui.url !== expected) throw new Error("Expected browser URL is unavailable.");
@@ -450,6 +450,34 @@ test("dispatched input stays private until its eventual anchor and substantive a
   });
 });
 
+test("runtime pending receipts accept home URL variants before coherent saved-chat acquisition", async t => {
+  for (const home of ["https://chatgpt.com", "https://chatgpt.com/?model=synthetic"]) await t.test(home.includes("?") ? "model query" : "no slash", async t => {
+    const h = harness(t);
+    h.browser.ui.afterSend = () => { h.browser.ui.url = home; };
+    const { call } = await h.toObserve();
+    const uncertain = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(uncertain.uncertainSend, true); assert.equal(uncertain.chatUrl, undefined); assert.equal(uncertain.checkpoint, undefined);
+    h.browser.ui.url = "https://chatgpt.com/c/owned-conversation"; h.browser.ui.sdkUrl = home;
+    const anchored = (await h.answerBrowser(call)).output[0];
+    assert.equal(h.browserOwner().state.sendConfirmed, true);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+    h.browser.ui.sdkUrl = undefined;
+    await h.completeAnswer(anchored, "Accepted only after current generation evidence.");
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, false);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("runtime rejects non-home first-open receipts even with a normal flag", async t => {
+  for (const url of ["https://chatgpt.com/c/unowned", "https://chatgpt.com/?temporary-chat=true", "https://foreign.invalid/", "https://private-user@chatgpt.com/", "https://chatgpt.com/#private"]) await t.test(url, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    h.append(open, outputFor(open, browserReceipt(open, { operation: "open", normal: true, tabId: "owned-saved-tab", url })));
+    await assert.rejects(h.request(), /owned saved ChatGPT conversation was not established/);
+    assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
+
 test("current-token native calls queued before an anchor wait for that anchor and keep their exact request", async t => {
   const h = harness(t);
   let pendingTurns;
@@ -495,14 +523,15 @@ test("cancellation before an anchor preserves the prior durable delivery despite
 });
 
 test("Send failure receipts require their exact nonce, producer shape and fixed error code", async t => {
-  for (const branch of ["recognized", "wrong nonce", "private extra", "unknown reason", "wrong operation"]) await t.test(branch, async t => {
+  for (const branch of ["recognized", "recognized diagnostic", "private diagnostic", "wrong nonce", "private extra", "unknown reason", "wrong operation"]) await t.test(branch, async t => {
     const h = harness(t);
     const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
     const send = (await h.answerBrowser(open)).output[0];
-    const receipt = { operation: branch === "wrong operation" ? "observe" : "send", sendFailure: branch === "unknown reason" ? "private error" : "anchor-conflict",
+    const receipt = { operation: branch === "wrong operation" ? "observe" : "send", sendFailure: branch === "unknown reason" ? "private error" : branch.includes("diagnostic") ? "saved-url" : "anchor-conflict",
+      ...(branch.includes("diagnostic") ? { sendDiagnostic: branch === "recognized diagnostic" ? "normal-controls-unavailable" : "PRIVATE_ERROR_CANARY" } : {}),
       ...(branch === "private extra" ? { privateText: "PRIVATE_ERROR_CANARY" } : {}) };
     h.append(send, outputFor(send, browserReceipt(send, receipt, branch === "wrong nonce" ? "f".repeat(48) : undefined)));
-    await assert.rejects(h.request(), { code: branch === "recognized" ? "web_send_uncertain" : branch === "wrong operation" ? "web_runtime_unavailable" : "web_browser_output_shape" });
+    await assert.rejects(h.request(), { code: branch.startsWith("recognized") ? "web_send_uncertain" : branch === "wrong operation" ? "web_runtime_unavailable" : "web_browser_output_shape" });
     const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(saved.uncertainSend, true); assert.equal(saved.checkpoint, undefined);
     assert.equal(readFileSync(h.stateFile, "utf8").includes("PRIVATE_ERROR_CANARY"), false);

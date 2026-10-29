@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { discoverBrowserExecutor, browserScript, isSavedChatUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
+import { discoverBrowserExecutor, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
 import { webModelSelection } from "./web-models.mjs";
 import { browserObservationIdleComplete, browserObservationOwnershipLost } from "./web-browser-state.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
@@ -654,9 +654,10 @@ export function createInAppWebRuntime({
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
     if (Object.hasOwn(value, "sendFailure")) {
-      if (pending.operation !== "send" || operation !== "send" || Object.keys(value).length !== 2
-          || !["anchor-conflict", "saved-url"].includes(value.sendFailure)) throw fail("The browser Send failure receipt is malformed.", "web_browser_output_shape");
-      throw fail("ChatGPT Send readiness could not be verified. Its effect remains uncertain and the message will not be repeated.", "web_send_uncertain");
+      if (pending.operation !== "send" || operation !== "send" || Object.keys(value).some(key => !["operation", "sendFailure", "sendDiagnostic"].includes(key))
+          || !["anchor-conflict", "saved-url"].includes(value.sendFailure)
+          || value.sendDiagnostic !== undefined && (value.sendFailure !== "saved-url" || !["normal-controls-unavailable", "url-class-mismatch"].includes(value.sendDiagnostic))) throw fail("The browser Send failure receipt is malformed.", "web_browser_output_shape");
+      throw fail(`ChatGPT Send readiness could not be verified. Its effect remains uncertain and the message will not be repeated.${value.sendDiagnostic ? ` ROUTER_WEB_SEND_DIAGNOSTIC ${value.sendDiagnostic}` : ""}`, "web_send_uncertain");
     }
     if (Object.hasOwn(value, "needsFullContinuation") || Object.hasOwn(value, "noActions")) {
       // Only the exact nonce-framed pre-action cache miss can authorize one full
@@ -678,7 +679,7 @@ export function createInAppWebRuntime({
     }
     if (operation === "rollover") {
       if (value.rolledOver !== true || value.needsHistory !== true || value.previousChatUrl !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) || value.normal !== true
-          || value.url !== "https://chatgpt.com/" || value.tabId !== turn.conversation.tabId) throw fail("The saved-chat successor was not established.");
+          || !isNormalChatHomeUrl(value.url) || value.tabId !== turn.conversation.tabId) throw fail("The saved-chat successor was not established.");
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
       turn.conversation.needsHistory = true;
       turn.conversation.interruptedTurnId = undefined; turn.conversation.interruptedSendState = undefined;
@@ -686,10 +687,10 @@ export function createInAppWebRuntime({
       return emitBrowser(turn, "send", payload);
     }
     if (operation === "open" || operation === "continue") {
-      if (operation === "continue" && value.needsHistory === true && turn.conversation.rolloverRequired && value.url === "https://chatgpt.com/") turn.conversation.needsHistory = true;
+      if (operation === "continue" && value.needsHistory === true && turn.conversation.rolloverRequired && isNormalChatHomeUrl(value.url)) turn.conversation.needsHistory = true;
       if (value.normal !== true || !nonempty(value.tabId) || typeof value.url !== "string"
-          || (turn.conversation.needsHistory ? value.url !== "https://chatgpt.com/" || value.needsHistory !== true
-            : (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) && value.url !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl))) throw fail("The owned saved ChatGPT conversation was not established.");
+          || (turn.conversation.needsHistory ? !isNormalChatHomeUrl(value.url) || value.needsHistory !== true
+            : (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) ? value.url !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) : !isNormalChatHomeUrl(value.url))) throw fail("The owned saved ChatGPT conversation was not established.");
       turn.conversation.tabId = value.tabId;
       if (operation === "continue" && !turn.conversation.needsHistory && (value.conversationFull === true || turn.conversation.rolloverRequired)) return startRollover(turn, payload, value);
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
@@ -709,7 +710,7 @@ export function createInAppWebRuntime({
       if (value.sent !== true && !unanchored) throw fail("ChatGPT Send was not confirmed. The message will not be retried.");
       if (!messageIds(value.baselineReplyIds)
           || !unanchored && !uuid.test(value.generationTurnKey ?? "")) throw fail("The confirmed Send has no verified reply baseline and generation identity.");
-      const awaitingSavedUrl = unanchored && (turn.conversation.needsHistory || !turn.conversation.chatUrl) && value.url === "https://chatgpt.com/";
+      const awaitingSavedUrl = unanchored && (turn.conversation.needsHistory || !turn.conversation.chatUrl) && isNormalChatHomeUrl(value.url);
       if ((!isSavedChatUrl(value.url) && !awaitingSavedUrl) || (turn.conversation.needsHistory ? value.url === turn.conversation.chatUrl
         : turn.conversation.chatUrl && value.url !== turn.conversation.chatUrl)) throw fail("The confirmed Send did not establish the connected saved chat URL.");
       if (value.normal !== true || value.tabId !== turn.conversation.tabId) throw fail("The anchored Send does not belong to the owned browser tab.");

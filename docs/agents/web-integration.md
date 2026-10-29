@@ -64,6 +64,13 @@ URL cannot change. A first chat must establish its saved URL and unique marker
 together on the exact dispatched tab before any reply or tool activity is adopted.
 Send confirmation reads the URL, normal-chat controls and prompt marker in one
 DOM projection. It does not compare separate snapshots taken during navigation.
+Before the first saved URL is established, one shared normal-home predicate
+accepts the ChatGPT root, including ordinary query parameters. Temporary-chat
+parameters, credentials, fragments, foreign origins and other paths remain
+invalid. Browser metadata and page projections can report different normal-home
+forms during navigation; neither supplies generation ownership. The coherent
+page proof must still establish the saved URL and unique prompt marker together.
+Once a saved URL is established, its exact equality requirement remains.
 Across asynchronous work, both the native binding and the retained SDK browser
 and tab identities must still match before adopting that observation.
 
@@ -152,9 +159,15 @@ actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
 
-Initial home, successor home and navigated recovery wait for the exact expected
-URL, then the shared semantic readiness locator. One bounded allowance covers
-both waits. A fresh read still proves the empty composer or saved checkpoint,
+Initial and successor home wait for the shared semantic readiness locator, then
+prove the normal-home URL and empty composer together. Navigated saved recovery
+also waits for its exact recorded URL. One bounded allowance covers readiness.
+If home controls mount before a same-origin navigation settles, the home path
+captures the public browser navigation-event cursor, rereads the page to close
+the subscription race, and waits only for actual navigation events before another
+proof. Cursor capture is nonblocking; normal ready homes do not acquire this
+capability. Empty timeout results, lost event history or changed ownership fail.
+A fresh read still proves the empty composer or saved checkpoint,
 including its normalized text-prefix digest; a locator match is only a wakeup.
 Stable conflicting evidence fails without repeated reads or another action.
 
@@ -875,6 +888,17 @@ adapter plan only if changed. The initial refresh compares its own prepared
 candidate with the reviewed plan before effects; the final plan must retain that
 official runtime cohort. Acceptance records the actual final identities and the
 underlying deployment's acceptance and durable rollback receipts.
+The worker retains its verified official-runtime discovery only within that
+maintenance transaction. Final inspection revalidates the original configuration
+and runtime identity alongside current protected adapter ownership. Codex's cached
+MCP command may still name the replaced adapter while the app is closed; it is
+not rediscovered as a foreign command mid-transaction. Changed configuration,
+runtime files or launch selections still fail, and standalone discovery does not
+accept old adapter entries. Before deployment, the configuration owner supplies
+the exact input and expected output hashes of its managed configuration update.
+Only accepted underlying deployment may hand off that exact publication to final
+inspection, with the original MCP runtime anchors unchanged. Other configuration
+edits remain failures.
 The successful underlying checkout deployment publishes its ordinary protected
 completed owner immediately, independently of the outer Web result. Existing
 recovery discovery therefore retains backup custody even if a later Web check fails.

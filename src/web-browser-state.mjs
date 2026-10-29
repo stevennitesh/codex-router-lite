@@ -61,7 +61,7 @@ export function createSendReadyLocator(tab, ui) {
 
 // Home readiness schedules one fresh projection. Decorative headings are not
 // evidence, and an ordinary draft or reply is never cleared to obtain a home.
-export function createHomeBrowserState(tab, { ui, pluginChipSelector }) {
+export function createHomeBrowserState(tab, { ui, pluginChipSelector, homeUrl }) {
   const role = (name, kind = "button") => tab.playwright.getByRole(kind, { name, exact: true });
   const composer = role(ui.composerName, "textbox"), model = role(ui.modelButtonName), temporary = role(ui.temporaryButtonName);
   const enabled = control => control.filter({ has: tab.playwright.locator("xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") });
@@ -73,7 +73,7 @@ export function createHomeBrowserState(tab, { ui, pluginChipSelector }) {
   for (const control of [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")]) {
     ready = ready.filter({ hasNot: control.filter({ visible: true }) }).filter({ hasNot: control.nth(1) });
   }
-  return { ready, async inspect(timeoutMs = 1000) {
+  return { ready, async inspect(timeoutMs = 1000, includeUrl = false) {
     const proof = await ready.or(composer).evaluateAll((elements, { ui, pluginChipSelector }) => {
       const bodies = elements.filter(element => element.tagName === "BODY"), composers = elements.filter(element => element.tagName !== "BODY");
       if (bodies.length !== 1 || bodies[0].ownerDocument?.body !== bodies[0]) return null;
@@ -83,13 +83,60 @@ export function createHomeBrowserState(tab, { ui, pluginChipSelector }) {
         if (node.getAttribute(ui.contentEditableAttribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
         return Array.from(node.childNodes).every(empty);
       };
-      return bodies[0].ownerDocument.URL === "https://chatgpt.com/" && composers.length === 1
-        && composers[0].tagName === "DIV" && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && empty(composers[0]);
+      return { url: bodies[0].ownerDocument.URL, empty: composers.length === 1
+        && composers[0].tagName === "DIV" && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && empty(composers[0]) };
     }, { ui, pluginChipSelector }, { timeoutMs });
-    if (proof !== true) return proof;
-    const [modelEnabled, temporaryEnabled] = await Promise.all([model.isEnabled(), temporary.isEnabled()]);
-    return modelEnabled && temporaryEnabled;
+    if (proof === null) return null;
+    let normal = false;
+    if (proof.empty && homeUrl(proof.url)) {
+      const [modelEnabled, temporaryEnabled] = await Promise.all([model.isEnabled(), temporary.isEnabled()]);
+      normal = modelEnabled && temporaryEnabled;
+    }
+    return includeUrl ? { ...proof, normal } : normal;
   } };
+}
+
+// Most homes need only semantic readiness and one coherent projection. A
+// transitional document can already mount those controls; only an actual
+// navigation event may wake another projection in that case. Capture before
+// the fresh read so a navigation between inspection and subscription is retained.
+export async function waitForHomeBrowserReadiness(tab, { home, browserReadiness, allowance, assertCurrent, transitional }) {
+  const inspect = () => browserReadiness(home.ready, {
+    nextTimeout: () => { assertCurrent(); return allowance(1000); },
+    afterWait: ({ error, timedOut }) => { assertCurrent(); if (error && !timedOut) throw new Error("Normal home readiness failed."); },
+    inspect: async () => { assertCurrent(); const proof = await home.inspect(allowance(0, 1000), true); assertCurrent(); allowance(); return proof; },
+    ready: proof => proof !== null,
+  });
+  let proof = await inspect();
+  if (proof?.normal) return proof;
+  if (!proof?.empty || !transitional(proof.url)) return null;
+  const methods = ["Page.frameNavigated", "Page.navigatedWithinDocument"];
+  let cdp, captured;
+  assertCurrent();
+  try { cdp = await tab.capabilities.get("cdp"); } catch { return null; }
+  assertCurrent(); allowance();
+  try { await cdp.send("Page.enable", {}, { timeoutMs: allowance(0, 1000) }); } catch { return null; }
+  assertCurrent(); allowance();
+  try { captured = await cdp.readEvents({ methods, limit: 100, timeoutMs: 0 }); } catch { return null; }
+  assertCurrent(); allowance();
+  const valid = batch => Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 && batch.truncated === false && Array.isArray(batch.events);
+  if (!valid(captured)) return null;
+  let cursor = captured.cursor;
+  proof = await inspect();
+  while (!proof?.normal) {
+    if (!proof?.empty || !transitional(proof.url)) return null;
+    assertCurrent();
+    let batch;
+    try { batch = await cdp.readEvents({ afterSequence: cursor, methods, limit: 100, timeoutMs: allowance() }); }
+    catch { return null; }
+    assertCurrent(); allowance();
+    // Empty or truncated results cannot establish progress. Each finite read
+    // owns its SDK listener lifetime; no competing wait is left behind.
+    if (!valid(batch) || batch.cursor <= cursor || !batch.events.length) return null;
+    cursor = batch.cursor;
+    proof = await inspect();
+  }
+  return proof;
 }
 
 // This is scheduling evidence only. Recovery still verifies the exact saved
