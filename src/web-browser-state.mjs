@@ -103,23 +103,35 @@ export function createHomeBrowserState(tab, { ui, pluginChipSelector, homeUrl })
 export async function createBrowserNavigationObserver(tab, { allowance, assertCurrent }) {
   const methods = ["Page.frameNavigated", "Page.navigatedWithinDocument"];
   const valid = batch => Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 && batch.truncated === false && Array.isArray(batch.events);
+  const unavailable = (stage, error, reason) => {
+    assertCurrent(); allowance();
+    reason ??= /^Required documentation has not been read:/u.test(error?.message ?? "") ? "documentation-required"
+      : /^Capability is not available:/u.test(error?.message ?? "") ? "capability-unavailable"
+        : error?.name === "BrowserUseSecurityError" ? "security"
+          : /timed out|deadline expired|deadline exceeded/iu.test(error?.message ?? "") ? "timeout" : "sdk-error";
+    throw new Error(`Browser navigation observation failed. ROUTER_WEB_NAVIGATION_DIAGNOSTIC ${JSON.stringify({ stage, reason })}`);
+  };
   let cdp, captured;
   assertCurrent();
-  try { cdp = await tab.capabilities.get("cdp"); } catch { return null; }
+  try { cdp = await tab.capabilities.get("cdp"); } catch (error) { unavailable("capability-get", error); }
   assertCurrent(); allowance();
-  try { await cdp.send("Page.enable", {}, { timeoutMs: allowance(0, 1000) }); } catch { return null; }
+  // The SDK enforces a first-use documentation gate for both raw CDP commands
+  // and event reads. Capability lookup alone does not satisfy that contract.
+  try { await cdp.documentation(); } catch (error) { unavailable("capability-documentation", error); }
   assertCurrent(); allowance();
-  try { captured = await cdp.readEvents({ methods, limit: 100, timeoutMs: 0 }); } catch { return null; }
+  try { await cdp.send("Page.enable", {}, { timeoutMs: allowance(0, 1000) }); } catch (error) { unavailable("page-enable", error); }
   assertCurrent(); allowance();
-  if (!valid(captured)) return null;
+  try { captured = await cdp.readEvents({ methods, limit: 100, timeoutMs: 0 }); } catch (error) { unavailable("cursor-capture", error); }
+  assertCurrent(); allowance();
+  if (!valid(captured)) unavailable("cursor-capture", undefined, captured?.truncated === true ? "truncated-batch" : "invalid-batch");
   let cursor = captured.cursor;
   return { async next(timeoutMs = allowance()) {
     assertCurrent();
     let batch;
     try { batch = await cdp.readEvents({ afterSequence: cursor, methods, limit: 100, timeoutMs }); }
-    catch { return null; }
+    catch (error) { unavailable("navigation-wait", error); }
     assertCurrent(); allowance();
-    if (!valid(batch)) return null;
+    if (!valid(batch)) unavailable("navigation-wait", undefined, batch?.truncated === true ? "truncated-batch" : "invalid-batch");
     if (batch.cursor <= cursor || !batch.events.length) return false;
     cursor = batch.cursor;
     return true;

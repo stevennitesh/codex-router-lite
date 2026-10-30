@@ -309,6 +309,7 @@ function fakeBrowser() {
     }, getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
   const browser = { browserId: "same-session-iab",
+    documentation: async () => "Synthetic browser guidance",
     tabs: { list: async () => ui.present ? [{ id: tab.id, url: await tab.url() }] : [],
       get: async tabId => { ui.reacquired.push(tabId); assert.equal(tabId, tab.id); return tab; },
       new: async () => {

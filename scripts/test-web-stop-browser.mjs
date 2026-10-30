@@ -376,7 +376,8 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
     const originalTabId = tab.id;
     const navigationTab = { capabilities: { get: async id => {
       const capability = await navigationCall("capability-get", () => tab.capabilities.get(id));
-      return { send: (...args) => navigationCall("page-enable", () => capability.send(...args)),
+      return { documentation: () => navigationCall("capability-documentation", () => capability.documentation()),
+        send: (...args) => navigationCall("page-enable", () => capability.send(...args)),
         readEvents: async options => {
           const capturing = options.afterSequence === undefined;
           const batch = await navigationCall(capturing ? "cursor-capture" : "navigation-wait", () => capability.readEvents(options));
@@ -503,7 +504,8 @@ export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutM
     const navigationTab = { capabilities: { get: async id => {
       phase = "capability";
       requireContract(id === "cdp", "unexpected_navigation_capability");
-      return { send: async (...args) => { phase = "page-enable"; return capability.send(...args); }, readEvents: options => {
+      return { documentation: async () => { phase = "capability-documentation"; return capability.documentation(); },
+        send: async (...args) => { phase = "page-enable"; return capability.send(...args); }, readEvents: options => {
         phase = options.afterSequence === undefined ? "cursor-capture" : "navigation-wait";
         const result = capability.readEvents(options);
         if (options.afterSequence === undefined) {

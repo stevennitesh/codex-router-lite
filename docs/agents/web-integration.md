@@ -175,6 +175,11 @@ captures the public browser navigation-event cursor, rereads the page to close
 the subscription race, and waits only for actual navigation events before another
 proof. Cursor capture is nonblocking; normal ready homes do not acquire this
 capability. Empty timeout results, lost event history or changed ownership fail.
+Fresh browser acquisition loads the SDK's included guidance, and navigation
+observation loads its capability guidance before issuing commands or reading
+events. These are enforced SDK prerequisites, including after recovery; a warmed
+diagnostic session does not prove that a fresh runtime can use the capability.
+Observer failures retain a content-free stage and reason for diagnosis.
 A fresh read still proves the empty composer or saved checkpoint,
 including its normalized text-prefix digest; a locator match is only a wakeup.
 Stable conflicting evidence fails without repeated reads or another action.

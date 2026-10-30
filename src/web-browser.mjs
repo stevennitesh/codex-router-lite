@@ -737,6 +737,9 @@ async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFa
   if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("Expected exactly one same-session in-app browser.");
   if (state.browser && state.browser.browserId !== own[0].id) throw new Error("Owned browser identity changed.");
   state.browser ??= await state.agent.browsers.get(own[0].id);
+  // Browser guidance includes the SDK's enforced confirmations prerequisite for
+  // capability use. A bare browser handle does not mark that guidance as read.
+  await state.browser.documentation();
   state.sessionId = options.sessionId;
   state.runtimeModule = options.runtimeModule;
   emit({});
@@ -872,6 +875,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const browser = await agent.browsers.get(own[0].id);
     requireRecoveryOwnership();
     if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
+    await browser.documentation();
+    requireRecoveryOwnership();
     const tabs = await browser.tabs.list();
     requireRecoveryOwnership();
     const hinted = tabs.filter(tab => tab.id === proof.tabId);

@@ -6,7 +6,7 @@ import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
 import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
-import { browserObservationBudget } from "../src/web-browser-state.mjs";
+import { browserObservationBudget, createBrowserNavigationObserver } from "../src/web-browser-state.mjs";
 import { WEB_MODEL_REGISTRY, webModelSelection } from "../src/web-models.mjs";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
@@ -778,11 +778,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     capabilities: { get: async id => {
       assert.equal(id, "cdp");
       return {
+        async documentation() {
+          ui.navigationDocumentationReads = (ui.navigationDocumentationReads ?? 0) + 1;
+          await ui.onNavigationDocumentation?.(); ui.navigationDocumentationRead = true;
+        },
         async send(method, params, { timeoutMs }) {
+          if (!ui.browserDocumentationRead) throw new Error('Required documentation has not been read: "confirmations".');
+          if (!ui.navigationDocumentationRead) throw new Error('Required documentation has not been read: "capabilities/tab/cdp".');
           assert.equal(method, "Page.enable"); assert.deepEqual(params, {}); assert.ok(timeoutMs > 0);
           ui.navigationEnables = (ui.navigationEnables ?? 0) + 1; await ui.onNavigationEnable?.();
         },
         async readEvents(options) {
+          if (!ui.browserDocumentationRead) throw new Error('Required documentation has not been read: "confirmations".');
+          if (!ui.navigationDocumentationRead) throw new Error('Required documentation has not been read: "capabilities/tab/cdp".');
           assert.deepEqual(options.methods, ["Page.frameNavigated", "Page.navigatedWithinDocument"]);
           if (options.afterSequence === undefined) {
             assert.equal(options.timeoutMs, 0, "Cursor capture must never inherit an SDK waiting default.");
@@ -801,6 +809,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     } },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser",
+    documentation: async () => { ui.browserDocumentationReads = (ui.browserDocumentationReads ?? 0) + 1; ui.browserDocumentationRead = true; },
     tabs: { list: async () => { ui.tabReads += 1; return [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])]; },
       get: async id => { assert.equal(id, tab.id); return tab; },
       new: async () => {
@@ -1146,7 +1155,7 @@ test("home navigation events cannot accept timeout, foreign mode, truncated hist
       if (branch === "owner") f.activeTurn().turnId = "foreign-native-turn";
       return { cursor: 1, events: [{ sequence: 1, method: "Page.navigatedWithinDocument" }], hasMore: false, truncated: branch === "truncated" };
     };
-    await assert.rejects(f.run("open"), /normal ChatGPT home controls|owned tab changed|different native turn/);
+    await assert.rejects(f.run("open"), /normal ChatGPT home controls|navigation observation failed|owned tab changed|different native turn/);
     assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.navigationWaits, 1);
   }
 });
@@ -1765,7 +1774,37 @@ test("a first Send keeps an unsettled safe route private and waits for navigatio
   const observed = await f.runFast("observe", heldObserve);
   assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(observed.url, f.ui.url);
   assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.navigationWaits, 1);
+  assert.equal(f.ui.navigationDocumentationReads, 1, "A fresh browser runtime must satisfy the SDK's enforced CDP documentation gate.");
   assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("navigation failures retain their stage without exposing SDK payloads or losing owner checks", async () => {
+  const cases = [
+    ["capability-get", "capability-unavailable", 'Capability is not available: PRIVATE_CAPABILITY'],
+    ["capability-documentation", "sdk-error", "PRIVATE_DOCUMENTATION_ERROR"],
+    ["page-enable", "documentation-required", 'Required documentation has not been read: "PRIVATE_TOPIC".'],
+    ["page-enable", "timeout", "Timed out waiting for PRIVATE_URL"],
+    ["cursor-capture", "sdk-error", "PRIVATE_CURSOR_ERROR"],
+    ["navigation-wait", "sdk-error", "PRIVATE_EVENT_ERROR"],
+  ];
+  for (const [stage, reason, message] of cases) {
+    const invoke = async name => { if (name === stage) throw new Error(message); };
+    const capability = { documentation: () => invoke("capability-documentation"), send: () => invoke("page-enable"),
+      readEvents: async options => { await invoke(options.afterSequence === undefined ? "cursor-capture" : "navigation-wait");
+        return { cursor: 0, events: [], truncated: false }; } };
+    const tab = { capabilities: { get: async () => { await invoke("capability-get"); return capability; } } };
+    await assert.rejects(async () => {
+      const navigation = await createBrowserNavigationObserver(tab, { allowance: () => 1000, assertCurrent() {} });
+      await navigation.next();
+    }, error => {
+      assert.equal(error.message, `Browser navigation observation failed. ROUTER_WEB_NAVIGATION_DIAGNOSTIC ${JSON.stringify({ stage, reason })}`);
+      assert.doesNotMatch(error.message, /PRIVATE_/u); return true;
+    });
+  }
+  let current = true;
+  await assert.rejects(createBrowserNavigationObserver({ capabilities: { get: async () => ({ documentation: async () => {
+    current = false; throw new Error("PRIVATE_STALE_ERROR");
+  } }) } }, { allowance: () => 1000, assertCurrent() { if (!current) throw new Error("Owner changed."); } }), /Owner changed\./u);
 });
 
 test("a saved-looking first URL is not established before the unique marker exists", async () => {
