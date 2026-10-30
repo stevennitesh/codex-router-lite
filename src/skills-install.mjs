@@ -60,6 +60,7 @@ const RETIRE_PREFIX = ".codex-router-retire-";
 const RETIRE_JOURNAL = ".codex-router-retirement.json";
 const RETIRE_CONTENT = "content";
 const RETIRE_PUBLICATION = "publication";
+const RETIRE_RELINQUISHED = ".codex-router-publication-relinquished";
 const RETIRE_JOURNAL_MAX_BYTES = 16 * 1024;
 const ACTIVE_RETIREMENT_MAX_AGE_MS = 5 * 60 * 1000;
 const PUBLISH_MARKER = ".codex-router-publishing";
@@ -439,6 +440,14 @@ function readRetirementJournal(quarantine) {
     ) {
       return undefined;
     }
+    const relinquished = lstat(path.join(quarantine, RETIRE_RELINQUISHED));
+    if (relinquished) {
+      if (!relinquished.isFile() || relinquished.isSymbolicLink()) return undefined;
+      // Presence revokes both proofs, even if a crash interrupted its write.
+      parsed.publicationToken = null;
+      parsed.managedToken = null;
+      parsed.managedDigest = null;
+    }
     return parsed;
   } catch {
     return undefined;
@@ -456,19 +465,31 @@ function processIsAlive(pid) {
 
 function finishQuarantine(quarantine) {
   const journal = path.join(quarantine, RETIRE_JOURNAL);
+  const relinquished = path.join(quarantine, RETIRE_RELINQUISHED);
+  const relinquishedStat = lstat(relinquished);
+  if (relinquishedStat && (!relinquishedStat.isFile() || relinquishedStat.isSymbolicLink())) {
+    throw new Error(`Invalid skill transaction relinquishment at ${relinquished}.`);
+  }
   const entries = readdirSync(quarantine).sort();
   if (entries.length === 0) {
     rmdirSync(quarantine);
     return;
   }
-  if (entries.length !== 1 || entries[0] !== RETIRE_JOURNAL) {
+  if (entries.some(entry => ![RETIRE_JOURNAL, RETIRE_RELINQUISHED].includes(entry))) {
     throw new Error(`Unexpected content remains in skill transaction ${quarantine}.`);
+  }
+  if (entries.length === 1 && relinquishedStat) {
+    unlinkSync(relinquished);
+    rmdirSync(quarantine);
+    return;
   }
   const journalStat = lstat(journal);
   if (!journalStat?.isFile() || journalStat.isSymbolicLink()) {
     throw new Error(`Invalid skill transaction journal at ${journal}.`);
   }
+  // Remove the obsolete proof before its revocation so a crash cannot revive it.
   unlinkSync(journal);
+  if (relinquishedStat) unlinkSync(relinquished);
   rmdirSync(quarantine);
 }
 
@@ -594,13 +615,13 @@ function recoverAbandonedSkillRetirements(codexHome) {
       throw new Error(`Unsafe abandoned skill transaction at ${quarantine}; refusing mutation.`);
     }
     const entries = readdirSync(quarantine).sort();
-    if (entries.length === 0) {
-      rmdirSync(quarantine);
+    if (entries.length === 0 || (entries.length === 1 && entries[0] === RETIRE_RELINQUISHED)) {
+      finishQuarantine(quarantine);
       continue;
     }
     if (
       entries.some(
-        (entry) => ![RETIRE_CONTENT, RETIRE_JOURNAL, RETIRE_PUBLICATION].includes(entry),
+        (entry) => ![RETIRE_CONTENT, RETIRE_JOURNAL, RETIRE_PUBLICATION, RETIRE_RELINQUISHED].includes(entry),
       )
     ) {
       throw new Error(`Unrecognized abandoned skill transaction at ${quarantine}; refusing mutation.`);
@@ -803,7 +824,7 @@ function discardStagedSkill(staged) {
   }
 }
 
-function publishStagedSkill(staged, target, publicationToken, { onPublicationClaimed } = {}) {
+function publishStagedSkill(staged, target, publicationToken, { onPublicationClaimed, transaction } = {}) {
   try {
     mkdirSync(target);
   } catch (error) {
@@ -812,7 +833,23 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
     }
     throw error;
   }
+  const claimed = lstat(target);
+  const sameClaimedDirectory = candidate => candidate?.isDirectory() && !candidate.isSymbolicLink() &&
+    candidate.dev === claimed?.dev && candidate.ino === claimed?.ino;
+  const assertPublicationClaim = () => {
+    const marker = readBoundedStableFile(path.join(target, PUBLISH_MARKER), 256);
+    if (!sameClaimedDirectory(lstat(target)) || marker?.toString("utf8") !== `${publicationToken}\n`) {
+      throw Object.assign(new Error("skill publication changed after it was claimed"), {
+        code: "ERR_SKILL_PUBLICATION_CHANGED",
+      });
+    }
+  };
   try {
+    if (!sameClaimedDirectory(lstat(target))) {
+      throw Object.assign(new Error("skill publication directory changed after it was claimed"), {
+        code: "ERR_SKILL_PUBLICATION_CHANGED",
+      });
+    }
     writeFileSync(path.join(target, PUBLISH_MARKER), `${publicationToken}\n`, {
       encoding: "utf8",
       flag: "wx",
@@ -823,6 +860,7 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
     // errorOnExist is set. Keep each child exclusive, including a file appearing
     // between the copy's existence check and its actual write.
     for (const name of readdirSync(staged.content)) {
+      assertPublicationClaim();
       cpSync(path.join(staged.content, name), path.join(target, name), {
         recursive: true,
         force: false,
@@ -830,18 +868,35 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
         mode: constants.COPYFILE_EXCL,
       });
     }
+    assertPublicationClaim();
     const stagedDigest = directoryDigest(staged.content);
     const targetDigest = directoryDigest(target, { ignoreRootEntries: [PUBLISH_MARKER] });
     if (!stagedDigest || stagedDigest !== targetDigest) {
-      throw new Error("published skill did not match its validated staging tree");
+      throw Object.assign(new Error("published skill did not match its validated staging tree"), {
+        code: "ERR_SKILL_PUBLICATION_CHANGED",
+      });
     }
+    assertPublicationClaim();
     unlinkSync(path.join(target, PUBLISH_MARKER));
     return { published: true };
   } catch (error) {
     // Claiming the path with mkdir does not replace an existing directory on
     // Windows. If publication fails, remove only a directory that still carries
     // this operation's random marker; otherwise preserve it.
-    const marker = readBoundedStableFile(path.join(target, PUBLISH_MARKER), 256);
+    const conflicted = ["EEXIST", "ERR_FS_CP_EEXIST", "ERR_SKILL_PUBLICATION_CHANGED"].includes(error?.code);
+    const sameDirectory = sameClaimedDirectory(lstat(target));
+    const marker = sameDirectory ? readBoundedStableFile(path.join(target, PUBLISH_MARKER), 256) : undefined;
+    if (conflicted || !sameDirectory || marker?.toString("utf8") !== `${publicationToken}\n`) {
+      // Revoke both durable journal proofs before dropping the public claim.
+      // Equal competing bytes must not later authorize crash-recovery deletion.
+      const relinquished = path.join(transaction.quarantine, RETIRE_RELINQUISHED);
+      writeFileSync(relinquished, "", { encoding: "utf8", flag: "wx", flush: true });
+      protectPrivateFile(relinquished);
+      if (sameClaimedDirectory(lstat(target)) && marker?.toString("utf8") === `${publicationToken}\n`) {
+        unlinkSync(path.join(target, PUBLISH_MARKER));
+      }
+      throw error;
+    }
     if (marker?.toString("utf8") === `${publicationToken}\n`) {
       const cleanup = mkdtempSync(path.join(path.dirname(target), RETIRE_PREFIX));
       const cleanupContent = path.join(cleanup, RETIRE_CONTENT);
@@ -858,7 +913,7 @@ function publishStagedSkill(staged, target, publicationToken, { onPublicationCla
           path.join(cleanupContent, PUBLISH_MARKER),
           256,
         );
-        if (movedMarker?.toString("utf8") === `${publicationToken}\n`) {
+        if (sameClaimedDirectory(lstat(cleanupContent)) && movedMarker?.toString("utf8") === `${publicationToken}\n`) {
           rmSync(cleanupContent, { recursive: true, force: true });
           finishQuarantine(cleanup);
         } else {
@@ -1111,9 +1166,8 @@ function installSkillsUnlocked(
         continue;
       }
     }
-    const token = evidence.owned
-      ? ownership.skills[entry.name].token
-      : randomBytes(32).toString("hex");
+    // A replacement cannot inherit the previous generation's durable proof.
+    const token = randomBytes(32).toString("hex");
     // Build and validate the complete replacement before moving a working
     // managed skill out of the public namespace.
     const staged = stageManagedSkill(source, dest, entry.name, token, provenance, { onStaged });
@@ -1153,6 +1207,7 @@ function installSkillsUnlocked(
       }
       const publication = publishStagedSkill(staged, dest, publicationToken, {
         onPublicationClaimed,
+        transaction: retirement,
       });
       if (!publication.published) {
         const recovery = abandonRetirement(retirement);

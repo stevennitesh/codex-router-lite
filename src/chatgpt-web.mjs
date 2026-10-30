@@ -5,7 +5,7 @@ import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { probeRegularFile, readJsonFile } from "./file-probe.mjs";
 import { writePrivateJson } from "./file-security.mjs";
 import { STATE_DIR, PORTS } from "./paths.mjs";
-import { buildWebBridgeModels } from "./web-models.mjs";
+import { buildWebBridgeModels, WEB_ACCOUNT_CAPABILITY_KEYS } from "./web-models.mjs";
 
 export { buildWebBridgeModels } from "./web-models.mjs";
 
@@ -48,7 +48,7 @@ function requireRuntimeFiles(configuration) {
 
 function inAppConfiguration(value) {
   requireFields(value, ["runtimeModule", "pluginName", "pluginAppId", "pluginSelectionButtonName", "tunnelId", "tunnelClientPath", "capabilities", "mcpPort"], "in-app Web configuration");
-  requireFields(value.capabilities, ["solAvailable", "extraHighAvailable", "proAvailable"], "Web account capabilities");
+  requireFields(value.capabilities, WEB_ACCOUNT_CAPABILITY_KEYS, "Web account capabilities");
   const models = buildWebBridgeModels(value.capabilities);
   if (typeof value.pluginAppId !== "string" || !/^asdk_app_[a-zA-Z0-9_-]+$/u.test(value.pluginAppId)) {
     throw new Error("Invalid pluginAppId; supply the observed asdk_app_ identity.");
@@ -62,7 +62,7 @@ function inAppConfiguration(value) {
   }
   return {
     models,
-    capabilities: Object.fromEntries(["solAvailable", "extraHighAvailable", "proAvailable"].map(key => [key, value.capabilities[key]])),
+    capabilities: Object.fromEntries(WEB_ACCOUNT_CAPABILITY_KEYS.map(key => [key, value.capabilities[key]])),
     browser: {
       runtimeModule: absoluteFilePath(value.runtimeModule, [".mjs", ".js"], "official public browser runtime module"),
       pluginName: safeLabel(value.pluginName, "pluginName", 128),

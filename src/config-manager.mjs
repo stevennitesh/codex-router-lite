@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -335,7 +336,9 @@ function withManagedMultiAgent(contents, { protocol = readSubagentProtocol(), ex
     lines.splice(firstTable, 0, "", "[features]", ...managed);
   } else {
     const nextHeader = headers.find((header) => header.index > features.index);
-    lines.splice(nextHeader?.index ?? lines.length, 0, ...managed, "");
+    // Existing separators belong to the retained user content. Adding another
+    // outside the owned markers would survive removal and grow on every enable.
+    lines.splice(nextHeader?.index ?? lines.length, 0, ...managed);
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }
@@ -470,7 +473,13 @@ if (command === "status") {
   process.exit(0);
 }
 if (command === "validate-enable") {
-  process.stdout.write(`${JSON.stringify(snapshot(enabledContents(current)))}\n`);
+  const next = enabledContents(current);
+  // Maintenance records the actual owner's exact transform without exposing
+  // private configuration or authorizing arbitrary edits to unmanaged fields.
+  const result = process.argv[3] === "--publication-plan"
+    ? { beforeSha256: createHash("sha256").update(current).digest("hex"), afterSha256: createHash("sha256").update(next).digest("hex") }
+    : snapshot(next);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exit(0);
 }
 

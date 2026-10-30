@@ -132,9 +132,11 @@ After installing the adapter, review and trust **Stopping ChatGPT Web generation
 through Router adapter** in Codex Settings → Hooks, then fully quit and reopen Codex.
 Use the normal Codex app; no external Web launcher or special startup script is
 needed. Configuration alone does not establish live Stop readiness.
-The hook allows up to ten seconds for cancellation confirmation; an observed idle
-transition returns immediately. Updating an older three-second hook changes its
-definition, so review and trust the changed hook again before the normal restart.
+Codex caps Interrupt hooks at three seconds. Cleanup and its terminal receipt
+must fit that deadline; an observed idle transition returns immediately. A slow
+or cancelled readback remains unconfirmed. Updating the previously owned
+ten-second hook changes its definition, so review and trust the changed hook
+again before the normal restart.
 
 For the adapter manifest, installation commands, source-version matching and
 rollback, see [integration maintenance](agents/web-integration.md#adapter-installation-and-rollback).
@@ -169,9 +171,54 @@ Candidate validation happens before the coordinator drains work, and it resumes
 admission if installation fails before reload and prior state is restored.
 The serving Router must support Web-aware drain checks: active
 generations, uncertain Sends and unresolved native actions postpone the refresh.
-The override still requires all three Web counters to be known and zero.
-If an older Router cannot supply that proof, deploy and reload the current Router
-before applying the runtime refresh. Fully quit and reopen Codex normally when the command reports that
+Normal refresh requires all three Web counters to be known and zero. Forced
+maintenance may retain an uncertain Send only after active turns and unresolved
+actions are known zero, all Router requests have settled, and a fresh complete
+process census proves the full Codex host, managed adapter and both old and new
+official runtime cohorts have exited. Unreadable process identities fail closed.
+The registered SYSTEM sandbox broker can remain running; its actual tool-job
+descendants must settle. Confirmed process exits are distinct from denied
+inspection. The protected saved conversation records must have valid durable
+action-risk fields and remain byte-identical;
+the uncertain Send remains blocked from replay. Any saved unresolved native action
+blocks forced maintenance even if the serving Router has not loaded that record.
+Older history that cannot resume under the current browser contract can still
+be preserved when those risk fields are valid. Maintenance never migrates that
+history or makes it resumable.
+
+When missing old runtime files also prevent deployment, prepare the reviewed
+clean source candidate through the independent maintenance entrypoint:
+
+```powershell
+.\maintenance\deploy-web-runtime-candidate.ps1 -ExpectedRouterCommit <reviewed-full-commit> -CandidateBinary 'C:\absolute\switchyard-server.exe' -ExpectedBinarySha256 <reviewed-binary-sha256> -ReopenCodexOnSuccess
+```
+
+This checkout workflow requires its recorded installed root and binds the
+reviewed existing Switchyard binary and hash. It validates the candidate while
+Codex is open and returns protected result and log paths for an independent hidden
+worker. Its result reports `waiting-for-codex-exit` after worker validation. Fully quit Codex normally after the
+worker is prepared. The worker waits on actual process exit handles, revalidates
+the candidate, refreshes runtime selections, runs the existing guarded in-process
+Switchyard/Router checkout deployment without a second independent worker,
+then replans the adapter and applies only a changed final generation. It never
+quits Codex. The optional `-ReopenCodexOnSuccess` binds the currently registered
+desktop package and app identity during preparation, then asks Windows to reopen
+that same app only after validated success is durable and the deployment lock is
+released. No special launch arguments or startup hook are installed. Its separate
+`reopen` outcome records activation success or a fixed failure; an activation
+failure does not undo accepted software. Without that flag, reopen Codex only
+after `result.json` reports `succeeded: true`. A timeout, new app generation, changed candidate or unknown
+work stops the remaining maintenance. Keep the result/log paths for inspection
+after reopening. The default exit wait is thirty minutes and can be bounded with
+`-ExitTimeoutSeconds`.
+The acceptance includes the underlying checkout deployment receipt and durable
+rollback locations, the final adapter/runtime identities and preserved ledger
+digest. The final adapter must retain the reviewed official runtime cohort.
+The underlying deployment also retains its ordinary completed recovery owner
+before later Web checks, so its backup remains discoverable if those checks fail.
+
+An older Router without known Web counters cannot use the uncertainty exception.
+Fully quit and reopen Codex normally when the command reports that
 the adapter needs to reload. An unchanged Interrupt hook retains its trust. If the
 refresh reports a changed hook definition, review and trust it in Settings → Hooks;
 verify tools, Stop and same-chat continuation after activation.

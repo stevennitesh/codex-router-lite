@@ -54,8 +54,46 @@ The full bridge protocol and exact current Codex instructions are sent on first
 attachment or an instruction revision. A unique local prompt-owned DOM turn
 anchors observation and immediate Stop. It does not prove that ChatGPT accepted
 the input: optimistic turns can be followed by a site rejection and restored
-draft. Router starts ordinary observation immediately after this anchor, without
-waiting inside Send for a native tool that observation must deliver.
+draft. Send returns a dispatch receipt after its single click; an already mounted
+unique prompt-owned turn can accompany that receipt. Otherwise the existing held
+observation queue waits for the saved URL and turn identity. Preparation time
+cannot consume the later confirmation allowance. Missing turns and placeholder
+identities remain pending; duplicate markers or identities and a valid marker
+superseded by another valid turn fail without another Send. An established saved
+URL cannot change. A first chat must establish its saved URL and unique marker
+together on the exact dispatched tab before any reply or tool activity is adopted.
+Send confirmation reads the URL, normal-chat controls and prompt marker in one
+DOM projection. It does not compare separate snapshots taken during navigation.
+Preparation still requires the normal ChatGPT root, including ordinary query
+parameters. After the single first Send, a secure same-origin route with no
+temporary-chat parameter, credentials or fragment may remain unconfirmed while
+navigation settles. Its path is not saved, returned as a successful normal chat,
+or retained in the dispatch receipt. The held queue receives an explicit
+content-free URL-pending receipt. A saved-looking URL without its unique prompt
+marker is also not an established binding. Browser metadata can lag that first
+navigation; only the coherent page proof establishes the saved URL and unique
+prompt marker together. A ready marker on an unsettled URL waits for a captured
+navigation event, followed by a fresh coherent read, rather than repeatedly
+waiting on an already-ready marker. Navigation capture and the fresh read close
+the subscription race. Each native read spends its existing short allowance;
+the adapter retains its original confirmation deadline. Missing or truncated
+navigation evidence fails closed, and elapsed time never proves settlement.
+Once a saved URL is established, its exact equality requirement remains.
+Across asynchronous work, both the native binding and the retained SDK browser
+and tab identities must still match before adopting that observation.
+
+The public SDK's semantic locator waits signal browser readiness, followed by a
+fresh ownership proof. Send readiness includes the unique latest prompt marker
+and valid new turn identity; elapsed time never establishes success. Short native
+callbacks retain Stop responsiveness while the adapter owns the pending wait.
+The active turn and native executions retain bounded failure deadlines. A capped
+SDK wait may rearm only inside its caller's remaining allowance after a coherent
+state read. Paste readiness, picker verification and dispatch share their
+preparation deadline; exact enabled-control readiness replaces manual polling.
+Expired pre-dispatch work cannot click Send or Stop. An attempted action retains
+its uncertainty and no-replay rules. The first anchored observation also supplies
+current delivery evidence to Stop; before an anchor exists, cancellation can drain
+native work but cannot safely click an unowned page control.
 
 Current-generation substantive assistant output or an authenticated current-token
 broker handler acknowledges input. Registration, declaration updates, Stop visibility
@@ -102,12 +140,19 @@ unresolved native action. Bootstrap reuses the same binding identity. If a parti
 binding still owns a tab, ordinary open refuses it rather than creating another
 tab or changing its draft. This does not replace an established saved conversation.
 
-If the tab closes or Codex restarts, Router reopens the recorded chat URL in that
-Codex conversation's browser and checks the previous reply's identity and text
-prefix before continuing. If Stop preceded a readable answer, a confirmed
-generation's unique latest turn can establish ownership in the recorded saved
-chat instead. Recovery requires the confirmed generation checkpoint and matching
-saved-chat proof.
+Native REPL handles are a cache: Interrupt or restart can remove them while the
+original tab survives. Continuation can restore the binding on that exact tab
+at its recorded saved URL without opening or navigating a tab. If the original
+tab is absent, recovery may reacquire one unique saved-URL match or reopen the
+recorded chat in that Codex conversation's browser. Every path requires the
+confirmed generation checkpoint and matching saved-chat proof, including the
+previous reply's identity and text prefix. If Stop preceded a readable answer,
+the confirmed generation's unique latest turn can establish ownership instead.
+Successful recovery retains `recovered:true` and reports `bindingRestored:true`.
+Only the original surviving tab without recovery navigation reports both
+`tabReopened:false` and `tabNavigated:false`. A new tab or changed tab identity
+reports `tabReopened:true`; recovery navigation or reload reports
+`tabNavigated:true`.
 An existing tab restored to the known immediate predecessor of a completed
 checkpoint may be stale. Recovery may reload that exact saved URL once, only
 after checking that all mounted replies belong to the saved baseline, its last
@@ -122,13 +167,42 @@ actual outcome is known. A deleted or inaccessible chat, a changed nonempty tab,
 a user draft, missing ownership, unreadable history or inconsistent reply
 evidence fails explicitly rather than silently starting a replacement chat.
 
+Initial and successor home wait for the shared semantic readiness locator, then
+prove the normal-home URL and empty composer together. Navigated saved recovery
+also waits for its exact recorded URL. One bounded allowance covers readiness.
+If home controls mount before a same-origin navigation settles, the home path
+captures the public browser navigation-event cursor, rereads the page to close
+the subscription race, and waits only for actual navigation events before another
+proof. Cursor capture is nonblocking; normal ready homes do not acquire this
+capability. Empty timeout results, lost event history or changed ownership fail.
+Fresh browser acquisition loads the SDK's included guidance, and navigation
+observation loads its capability guidance before issuing commands or reading
+events. These are enforced SDK prerequisites, including after recovery; a warmed
+diagnostic session does not prove that a fresh runtime can use the capability.
+Observer failures retain a content-free stage and reason for diagnosis.
+A fresh read still proves the empty composer or saved checkpoint,
+including its normalized text-prefix digest; a locator match is only a wakeup.
+Stable conflicting evidence fails without repeated reads or another action.
+
 ### Observation and completion
 
 Each confirmed Send owns one rendered logical turn. That turn can contain
 commentary, tool activity and several assistant messages. Router reads the latest
 answer within that turn; it does not bind the whole generation to its first
 assistant message. Older turns and embedded tool widgets cannot establish a new
-answer. Missing or ambiguous turn/message identities fail explicitly.
+answer. Before input acceptance, a held observation may see the original turn
+temporarily unmount or return behind an unsettled placeholder or pre-Send turn.
+Each short read then returns only a private content-free ownership-pending frame
+to the adapter, which continues within its original deadline. This applies after
+an earlier owned empty read too. The frame never reaches the tool broker and
+cannot acknowledge input or adopt a reply. Only the original unique latest key
+can resume observation; older turns remounting before it cannot displace that
+proof. The binding retains already verified historical turn keys across ordinary
+continuation, so a known history-only remount may also remain pending. A duplicate
+original key or an unowned new foreign UUID fails immediately. Post-acceptance
+ownership loss and ambiguous message identities still fail explicitly.
+Terminal ownership diagnostics report current turn counts and whether the latest
+identity matched, without text or identities.
 
 Bootstrap installs separately versioned observer and mutation helpers in the
 native Node REPL binding. Observation, retention, ordinary continuation and Send
@@ -153,9 +227,23 @@ wait establishes anchor readiness without repeatedly scanning full history.
 Readiness alone does not acknowledge input or establish ownership.
 Mutation checks share a coherent semantic read within each phase; checks before
 and after model selection or handoff remain separate fresh observations.
-A semantic locator union reads
-the owned turn, controls and current URL together, between independent ownership
-and navigation checks. Each native browser read returns
+Public SDK exact-name locators own accessible-name resolution, including text,
+direct labels and `aria-labelledby`. SDK-guarded BODY profiles prove Stop state,
+mounted control cardinality and absence of temporary-chat controls in the same
+read as the owned turn, Regenerate nodes and current URL. Only semantic Regenerate
+nodes outside answer, user, reasoning, tool and code content can establish their
+position after the answer; quoted controls cannot supply or duplicate that proof.
+The last observed Stop state only orders profile probes. Ordinary active reads
+and steady inactive reads use one projection; a state transition can require a
+second profile. Exact site error or capacity text uses separate uncommon indicator
+projections rather than adding per-control RPCs to every read. These projections
+use normal-mode and cardinality guards independent of Stop state, then refresh the
+current Stop and answer frame before returning. Indicator evidence cannot survive
+loss of the unique latest generation. Every profile and indicator read spends the
+same short-read allowance, including owned-tab preflight; late positive proof is
+rejected. This allowance derives from the adapter's native finish headroom after
+its transport margin, with no new allowance for a second profile. These projections
+retain independent ownership and navigation checks. Each native browser read returns
 control promptly so Interrupt cleanup can run in the official Node REPL child.
 With the Router MCP adapter installed, one pending native observation call spans
 those short reads. While input acceptance is pending, the first substantive
@@ -254,6 +342,17 @@ An unchanged declaration set reuses its private accepted registry. Each update
 still evaluates current tool choice and advances its broker revision; changed
 schemas rebuild the registry without reassigning reserved wire identities.
 
+The official tunnel exposes health snapshots, not a reliable readiness event
+stream. Its owned health-URL file is watched before launch to wake the first
+sample on publication; unavailable or missed notifications retain the paced
+fallback. The notification itself never establishes readiness. Each health sample
+reads one bounded `/health?details=true`
+aggregate and requires its current control-plane success evidence. Local readiness
+alone cannot establish hosted connectivity. Browser observation likewise retains
+short callbacks and pacing where the SDK exposes no general state subscription;
+these yield for Interrupt. Failure deadlines, retry backoff and idle-session TTLs
+remain separate from event readiness and never establish successful completion.
+
 The loopback MCP listener retains at most 32 SDK sessions. Admission reclaims
 expired sessions immediately and, under pressure, the least recently used fully
 inactive session. An HTTP upload or response, accepted handler, unresolved native
@@ -281,6 +380,11 @@ captures its partial reply and continues in that same chat. Stale cleanup cannot
 stop a newer turn. Revocation does not undo
 a tool that native Codex has already started. A missing or changed native rollout
 prevents the runtime from asserting cancellation authority.
+The watcher subscribes to the session directory tree before discovery and the
+first read. File-change events coalesce into bounded reads of only the exact
+rollout, with file identity checked after closing its handle. No handle stays
+open between events, so archival can proceed. Watch failure or replacement loses
+authority; the missing-rollout deadline never manufactures a Stop event.
 
 Terminal turns release unused prompts, declarations and browser-answer copies
 only after their request, cancellation watcher and ordered state writes settle.
@@ -331,11 +435,13 @@ The optional Router MCP adapter retains the actual originating browser operation
 metadata for fixed cleanup in the same official Node REPL child. It preserves
 opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
-Interrupt hook calls the adapter's own callback with a ten-second timeout.
-The shared contract reserves transport headroom within that deadline and waits
-on the same inactivity predicate after one Stop click. Fast transitions return
-immediately; the longer failure bound allows Pro's controls to settle after
-cancellation. Elapsed time never supplies confirmation.
+Interrupt hook calls the adapter's own callback with the host's maximum
+three-second timeout. The shared contract reserves transport and terminal-receipt
+headroom within that deadline and waits on the same inactivity predicate after
+one Stop click. Fast transitions return immediately; a slow provider or browser
+readback remains unconfirmed. A larger configured timeout cannot extend the
+[host limit](https://learn.chatgpt.com/docs/hooks#config-shape).
+Elapsed time never supplies confirmation.
 Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
 keep their original messages and cancellation scope; their arrival or forwarding
 does not expire the originating authority before the trusted callback arrives.
@@ -382,8 +488,12 @@ or an observed composer transition after an acknowledged click: the exact
 visible afterward. The second path proves that ChatGPT returned its composer to
 idle; it does not assert a completed answer or remote transport closure. A click
 error or a no-click observation still requires the explicit complete state.
-Readiness uses a bounded locator wait followed by a coherent ownership and state
-read, without repeated sleep/read calls. The wait itself never grants success.
+Readiness uses a shared conditional locator wait followed by a coherent ownership
+and state read. If the public SDK caps that wait before the original deadline,
+or its condition changes before the read, Router can rearm the same condition
+within the remaining budget. Only recognized original SDK timeout reasons permit
+rearming after a rejected wait; other errors receive one decisive state read.
+Rearming adds no sleeps or Stop clicks. The wait itself never grants success.
 If the click rejects after settling, cleanup can still read the complete state;
 an observed inactive generation is reported with its action error preserved,
 rather than pretending the click acknowledged or repeating it. Retention acknowledgement
@@ -451,8 +561,9 @@ Keep the following checks separate so a failure identifies its own boundary:
    observed tab retention. Acknowledged click, confirmed inactivity and tab
    survival are distinct facts. Report an unavailable confirmation as unknown.
 5. **Continuation:** send a separate short recall request after Stop and require
-   completed delivery in the same saved URL, tab and binding. Do not resume the
-   interrupted work or supply the marker in the request.
+   completed delivery in the same saved URL, tab and native binding identity.
+   Missing REPL handles may use the [same-tab binding restoration](#ownership-and-recovery)
+   above. Do not resume the interrupted work or supply the marker in the request.
 
 Run native-tool verification separately when the tool path changes. A recovery
 check does not need a native command, and a browser-contract fixture does not
@@ -498,11 +609,15 @@ directly does not exercise native cancellation and cannot replace this step.
 
 Run `wait --phase stop` with that same native turn identity. Only after its
 interrupted-turn event and matching positive adapter receipt pass, send the
-`continuation` prompt and wait for its exact new turn. Require the saved chat,
-tab and binding to survive, the original marker to be recalled without supplying
-it, and no recovery/reopen, uncertain Send or unresolved native action. The
-helper writes bounded allowlisted receipts and waits on file changes; elapsed
-timeouts only bound failures. It does not replay a failed action or change keys,
+`continuation` prompt and wait for its exact new turn. Require the original saved
+chat, tab and native binding identity, the marker recalled without supplying it,
+and no uncertain Send or unresolved native action. Verified same-tab binding
+restoration is allowed only with `bindingRestored:true`, `tabReopened:false` and
+`tabNavigated:false`; reopening or recovery navigation fails this check. The
+helper writes bounded allowlisted receipts and waits on file changes. Its deadline
+performs one final authoritative inspection so a delayed or coalesced notification
+cannot overwrite terminal evidence with a timeout. Pending evidence alone reaches
+the failure deadline. It does not replay a failed action or change keys,
 hook trust, runtime selection, protected ledgers or rollback copies.
 
 If sign-in, tool approval, an account safety block or ambiguous native UI prevents
@@ -519,17 +634,28 @@ node scripts/test-web-stop-browser.mjs --serve
 It prints `fixtureUrl` and serves only the test HTML. In the current official
 browser REPL, import `scripts/test-web-stop-browser.mjs` by its absolute file URL,
 create a disposable blank tab with the documented SDK, and call
-`runWebStopBrowserContract({ tab, fixtureUrl })`. Require every returned row's
+`runWebStopBrowserContract({ tab, fixtureUrl })`,
+`runWebObservationBrowserContract({ tab, fixtureUrl })` and
+`runWebSendBrowserContract({ tab, fixtureUrl })`, then
+`runWebLifecycleBrowserContract({ tab, fixtureUrl })`. Require every returned row's
 `passed` value to be true. The harness refuses an existing non-fixture tab before
 navigation. Close that tab and stop the fixture server afterward.
 
 The cases cover hidden mounted Stop, accessible names from `aria-labelledby`,
 name normalization, ambiguous Stop/idle controls, a replacement generation,
 the acknowledged Stop-to-idle transition, missing positive inactivity evidence,
-and explicit completion. Fixture transitions use actual button clicks, not
+and explicit completion. Observation cases exercise the same SDK-backed profiles
+used in production, including labelledby Regenerate controls, temporary-mode
+rejection and quoted-content exclusion. Fixture transitions use actual button clicks, not
 sleep-driven state changes; timeouts are failure bounds. These checks expose SDK
-and markup assumptions, while the live check establishes the current ChatGPT
+and markup assumptions. Send cases use explicit fixture buttons to publish a
+marker and then its UUID, verify the actual shared production locator and
+projection, and reject duplicate, superseded and historical anchors. No sleep
+publishes those state transitions. The live check establishes the current ChatGPT
 path. Neither guarantees compatibility with arbitrary future updates.
+Lifecycle cases cover delayed control hydration, duplicate or temporary home
+controls, wrong-origin rejection, checkpoint rendering and completion, duplicate
+or superseded recovery identities, and exact URL waits before and after navigation.
 
 ## Adapter installation and rollback
 
@@ -646,7 +772,12 @@ the separate installation stage only after that review:
 The installer returns its activation result. Use `web status` for optional
 combined diagnostics; a second `adapter-status` call is unnecessary.
 
-The installer stages its code and launcher in private durable Router state. It
+The installer builds its code and launcher at a unique final path in private
+durable Router state, avoiding a directory rename while Windows may hold the
+compiled executable open. The path contains the content generation plus a unique
+suffix; the verified ownership receipt selects it only after the complete build
+passes validation. Interrupted unselected builds are preserved and ignored.
+Existing hash-only generations remain valid for reuse and rollback. It
 preserves the original User `CODEX_CLI_PATH` selection, including an unset value,
 and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
 compatibility; the adapter does not pin the whole app to that CLI build. Updating
@@ -681,7 +812,7 @@ restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. An unchanged managed hook retains its trust. The exact owned older
-three-second hook is updated to the current ten-second definition; review and
+ten-second hook is updated to the current three-second definition; review and
 trust that changed definition in Codex before verifying Stop. Preserve a compatible
 Router source, adapter generation and private configuration for rollback;
 rolling back launch selections alone restores the original installation baseline.
@@ -715,11 +846,87 @@ capabilities and runtime-key storage. It preserves an unchanged hook definition;
 The current generation
 remains fixed during admitted calls, and failed refreshes preserve or restore
 still-owned prior state. A reported Codex restart is needed to load the new adapter.
-Online refresh requires explicit known-idle Web counters from the serving Router,
-including the gaps between native HTTP requests. Older drain replies do not
-establish this proof; deploy and reload the new Router before refreshing runtime
-selections. Recovery requires the same idle proof before restoring prior state;
+Normal online refresh requires explicit known-idle Web counters from the serving
+Router, including the gaps between native HTTP requests. Forced maintenance can
+retain uncertain Sends when the authenticated closed drain reports zero active
+requests, known zero active turns and unresolved actions, and finite nonnegative
+uncertainty. It additionally requires a fresh complete Windows process census
+showing no full Codex/ChatGPT host, managed adapter, or official process beneath
+either runtime's CLI/Node/browser roots, including code-mode hosts and descendant
+tool processes. The old cohort comes from the retained protected
+adapter manifest, even when its external app files were removed; the validated
+new candidate owns the current anchors. Generic Router Node processes are not
+browser-child proof. Inaccessible or incomplete process identities fail closed.
+HTTP request completion and cancellation events alone never prove child exit.
+Rejected process proofs retain bounded process IDs, creation ticks, known process
+names, image-path hashes, match reasons and ancestry from the rejecting census.
+Refresh identifies the pre-drain, post-drain or pre-mutation checkpoint. No
+command text or executable paths are retained in these diagnostics.
+The census distinguishes positive exit from denied live inspection. The
+registered SYSTEM sandbox broker is verified through Windows service/registry
+ownership, its package image and service-manager ancestry; it is not an app/tool
+client that must exit. Its actual tool descendants remain relevant and no service
+is stopped for maintenance.
+The census retains every process row and ancestry. Native generation inspection
+is limited to conservative runtime/name/path candidates, incomplete rows and
+their descendants; positively unrelated rows still remain in the census. This
+reduces repeated Windows process opens without treating incomplete identities as
+exit proof. Scheduled-launcher checks query only `wscript.exe` rows before matching
+the registered launch command.
+
+The coordinator validates protected conversation ledgers with the runtime's shared
+durable-risk projection, rejects every unresolved native action even when its
+record is not loaded by the serving Router, requires durable evidence for each
+reported uncertain Send, and verifies
+their original hashes at selection changes and after reload. It never clears an
+uncertainty bit or replays Send.
+Historical V1 history fields remain opaque and byte-preserved when the risk
+projection is valid. The full resume validator retains its stricter current
+history/binding requirements; preservation does not make older history executable.
+Only exact UUID mapping filenames carry current conversation risk. Protected
+bounded regular recovery sidecars are hashed and preserved as opaque bytes;
+their historical contents never become executable state. Links, directories and
+unreadable sidecars remain failures, and changes to either mappings or sidecars
+withhold maintenance acceptance.
+The forced restart revalidates closed admission,
+the same Web counters and the live owned Router process before bypassing only its
+redundant drain; it cannot force a newly opened admission state. Recovery still
+requires the ordinary known-zero Web proof before restoring prior state;
 new or uncertain work defers compensation and retains the refreshed generation.
+Older drain replies establish neither the normal proof nor this forced exception.
+The [independent maintenance entrypoint](../CHATGPT-WEB.md#refresh-after-a-codex-update)
+uses the existing protected WMI worker/request/result lifecycle to await a full
+normal quit, with actual exit handles followed by a fresh complete census. It
+validates the reviewed clean candidate before waiting and after exit, refreshes
+before the existing in-process guarded checkout deployment, and applies a final
+adapter plan only if changed. The initial refresh compares its own prepared
+candidate with the reviewed plan before effects; the final plan must retain that
+official runtime cohort. Acceptance records the actual final identities and the
+underlying deployment's acceptance and durable rollback receipts.
+The worker retains its verified official-runtime discovery only within that
+maintenance transaction. Final inspection revalidates the original configuration
+and runtime identity alongside current protected adapter ownership. Codex's cached
+MCP command may still name the replaced adapter while the app is closed; it is
+not rediscovered as a foreign command mid-transaction. Changed configuration,
+runtime files or launch selections still fail, and standalone discovery does not
+accept old adapter entries. Before deployment, the configuration owner supplies
+the exact input and expected output hashes of its managed configuration update.
+Only accepted underlying deployment may hand off that exact publication to final
+inspection, with the original MCP runtime anchors unchanged. Other configuration
+edits remain failures.
+The successful underlying checkout deployment publishes its ordinary protected
+completed owner immediately, independently of the outer Web result. Existing
+recovery discovery therefore retains backup custody even if a later Web check fails.
+An early reopen aborts before the next selection change. The optional
+`-ReopenCodexOnSuccess` records the registered desktop package, manifest and
+AppUserModelId at preparation. After all acceptance is validated, the completed
+success is durable and the deployment lock is released, it revalidates that exact
+registration and invokes Windows registered-app activation with no app arguments.
+The separate reopen outcome cannot roll back accepted deployment. Other flows
+and this command without the flag never auto-launch Codex. No runtime patch or
+global startup hook is involved. Retained generations are preserved for recovery;
+removed official runtime files mean the old adapter alone is not a usable Web
+rollback, and its live recovery must be verified separately.
 The explicit `stop install-adapter` command routes an installed, locally owned
 replacement through this same coordinator, including its manifest validation and
 browser update. Unresolved ownership or prepared recovery is rejected before

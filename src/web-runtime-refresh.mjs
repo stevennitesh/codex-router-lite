@@ -8,8 +8,9 @@ import { privateFileIsProtected, writePrivateFile } from "./file-security.mjs";
 import { webBridgeSettingsWithRuntime } from "./chatgpt-web.mjs";
 import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
-import { prepareRouterServiceMutation, resumeRouterAdmission } from "./service-drain.mjs";
+import { prepareRouterServiceMutation, resumeRouterAdmission, assertRouterAdmissionStillClosed } from "./service-drain.mjs";
 import { inspectWebStopAdapterRuntimeRefresh, ownedWebStopAdapterEntry, withWebStopAdapterRuntimeRefresh } from "./web-stop-adapter-install.mjs";
+import { assertWebMaintenanceAbsent, snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } from "./web-maintenance-proof.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -63,9 +64,25 @@ export function discoverWebRuntimeAnchors(options = {}) {
     (dependencies.assertCodexIdentity ?? assertCodexExecutableIdentity)(identity);
     const sdkPackageJson = localPath(path.join(options.sourceRoot ?? SOURCE_ROOT, "node_modules", "@modelcontextprotocol", "sdk", "package.json"));
     readRegular(sdkPackageJson);
+    const configurationSha256 = hash(configBytes);
+    let expectedConfigSha256 = configurationSha256;
+    const mcpAnchors = source => [tomlStringValue(source, table, "command"),
+      ...["NODE_REPL_NODE_PATH", "BROWSER_USE_CODEX_APP_VERSION", "NODE_REPL_TRUSTED_SERVICES"].map(name => tomlStringValue(source, environment, name))];
     return { anchors: { node, officialCli, officialNodeRepl, runtimeModule, sdkPackageJson },
+      configurationSha256,
+      acceptConfigurationPublication(publication) {
+        if (publication?.beforeSha256 !== configurationSha256 || expectedConfigSha256 !== configurationSha256
+            || !/^[a-f0-9]{64}$/u.test(publication?.afterSha256 ?? "")) throw new Error("Managed configuration publication does not match the retained discovery input.");
+        const bytes = readRegular(configPath);
+        if (hash(bytes) !== publication.afterSha256) throw new Error("Managed configuration publication changed; unrelated configuration edits were preserved.");
+        if (JSON.stringify(mcpAnchors(scanTomlDocument(bytes.toString("utf8")))) !== JSON.stringify(mcpAnchors(document))) {
+          throw new Error("Managed configuration publication changed the official MCP runtime anchors.");
+        }
+        expectedConfigSha256 = publication.afterSha256;
+      },
       assertCurrent() {
-        if (hash(readRegular(configPath)) !== hash(configBytes)) throw new Error("Official MCP runtime configuration changed during refresh; retry.");
+        if (hash(readRegular(configPath)) !== expectedConfigSha256) throw new Error("Official MCP runtime configuration changed during refresh; retry.");
+        readRegular(browserService, 16 * 1024 * 1024);
         (dependencies.assertCodexIdentity ?? assertCodexExecutableIdentity)(identity);
       } };
   } catch (cause) {
@@ -85,7 +102,12 @@ function context(options) {
     serviceLock: dependencies.serviceLock ?? (operation => withServiceOperationLock(operation, { stateDir })),
     drain: dependencies.drain ?? prepareRouterServiceMutation,
     resume: dependencies.resume ?? resumeRouterAdmission,
-    restart: dependencies.restart ?? (async () => (await import("./service.mjs")).runServiceCommandUnlocked("restart", ["restart"], { quiet: true })) };
+    closed: dependencies.assertClosedAdmission ?? assertRouterAdmissionStillClosed,
+    absent: dependencies.assertProcessesAbsent ?? ((adapter, checkpoint) => assertWebMaintenanceAbsent(adapter, { checkpoint })),
+    ledgers: dependencies.snapshotLedgers ?? snapshotWebConversationLedgers,
+    unchanged: dependencies.assertLedgersUnchanged ?? assertWebConversationLedgersUnchanged,
+    restart: dependencies.restart ?? (async ({ force = false, closedAdmission, beforeMutation } = {}) => (await import("./service.mjs")).runServiceCommandUnlocked("restart",
+      ["restart", ...(force ? ["--force-service-replacement"] : [])], { quiet: true, closedAdmission, beforeMutation })) };
 }
 
 function savedSettings(ctx) {
@@ -110,9 +132,22 @@ function confirmedIdleDrain(drain) {
     && [state.activeTurns, state.uncertainSends, state.unresolvedActions].every(count => Number.isSafeInteger(count) && count === 0);
 }
 
+function settledForcedDrain(drain) {
+  const state = drain?.webRuntime;
+  return drain?.status === "forced" && drain.state === "closed" && drain.activeRequests === 0
+    && object(state) && state.known === true
+    && [state.activeTurns, state.uncertainSends, state.unresolvedActions].every(count => Number.isSafeInteger(count) && count >= 0)
+    && state.activeTurns === 0 && state.unresolvedActions === 0;
+}
+
 function prepare(ctx, options) {
   const before = savedSettings(ctx);
   const discovery = options.manifestPath ? null : (options.dependencies?.discover ?? discoverWebRuntimeAnchors)(options);
+  // A maintenance transaction may retain its verified discovery while replacing
+  // the owned adapter selected by the still-closed app's cached MCP command.
+  // Reusing it permits only the recorded owner's configuration publication;
+  // unrelated edits and changed CLI identity still fail.
+  discovery?.assertCurrent();
   const adapter = inspectWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions,
     ...(options.manifestPath ? { manifestPath: localPath(options.manifestPath) } : { anchors: discovery.anchors }) });
   const nextValue = webBridgeSettingsWithRuntime(before.value, adapter.candidate.runtimeModule), nextText = json(nextValue);
@@ -136,12 +171,22 @@ function prepare(ctx, options) {
   return { before, nextText: settingsChanged ? nextText : before.text, adapter, discovery, plan };
 }
 
+// The independent maintenance entrypoint validates the same candidate before
+// waiting and after exit; it never derives authority from installed file age.
+export function inspectWebRuntimeMaintenance(options = {}) {
+  const prepared = prepare(context(options), options);
+  return { plan: prepared.plan, adapter: prepared.adapter };
+}
+
 export async function refreshWebRuntime(options = {}) {
   if (options.forceServiceReplacement === true && !options.apply) throw new Error("Forced service replacement requires --apply.");
   const ctx = context(options);
   let prepared;
   try { prepared = prepare(ctx, options); }
   catch (cause) { if (cause instanceof SyntaxError) throw new Error("Web runtime refresh metadata contains invalid JSON.", { cause }); throw cause; }
+  if (options.expectedMaintenance && JSON.stringify({ plan: prepared.plan, adapter: prepared.adapter }) !== JSON.stringify(options.expectedMaintenance)) {
+    throw new Error("Prepared maintenance runtime candidate changed; no runtime selection was changed.");
+  }
   if (!options.apply) return prepared.plan;
   if (!prepared.plan.changed) return { ...prepared.plan, mode: "applied", applied: false, routerReloaded: false };
   return ctx.serviceLock(async () => {
@@ -150,19 +195,58 @@ export async function refreshWebRuntime(options = {}) {
     if (savedSettings(ctx).text !== prepared.before.text) throw new Error("Saved Web bridge settings changed; retry runtime refresh.");
     let drain, settingsAttempted = false, restartAttempted = false, settingsRestored = true, rollbackAllowed = true;
     try {
+      // In particular, an early app reopen must be rejected before the force
+      // request can cancel work admitted after independent exit preparation.
+      if (options.forceServiceReplacement === true) ctx.absent(prepared.adapter, "before-drain");
       drain = await ctx.drain({ force: options.forceServiceReplacement === true });
-      if (!confirmedIdleDrain(drain)) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
+      const forcedUncertainty = options.forceServiceReplacement === true && settledForcedDrain(drain) && drain.webRuntime.uncertainSends > 0;
+      if (!confirmedIdleDrain(drain) && !forcedUncertainty) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
+      let ledgers;
+      if (options.forceServiceReplacement === true) {
+        if (drain.status === "forced") await ctx.closed(drain);
+        ctx.absent(prepared.adapter, "after-drain");
+        ledgers = ctx.ledgers(ctx.stateDir, { isPrivate: ctx.private });
+        if (ledgers.some(row => row.kind !== "sidecar" && row.unresolvedActions !== 0)
+            || forcedUncertainty && ledgers.filter(row => row.uncertainSend).length < drain.webRuntime.uncertainSends) throw new Error("Router did not confirm a known idle Web runtime with protected durable uncertain Send evidence and no unresolved native action; no runtime selection was changed.");
+      }
+      const assertMaintenanceCurrent = () => {
+        if (ledgers) {
+          try {
+            ctx.absent(prepared.adapter, "before-runtime-mutation");
+            ctx.unchanged(ctx.stateDir, ledgers, { isPrivate: ctx.private });
+          } catch (cause) {
+            let unchanged = false;
+            try {
+              const observed = inspectWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions, manifest: prepared.adapter.manifest });
+              unchanged = savedSettings(ctx).text === prepared.before.text
+                && observed.receiptSha256 === prepared.adapter.receiptSha256 && observed.hooksSha256 === prepared.adapter.hooksSha256
+                && JSON.stringify(observed.environment) === JSON.stringify(prepared.adapter.environment);
+            } catch { /* Unknown or prepared ownership cannot authorize recovery. */ }
+            if (unchanged) cause.runtimeRefreshSelectionsUnchanged = true;
+            else { rollbackAllowed = false; cause.runtimeRefreshRollbackAllowed = false; }
+            throw cause;
+          }
+        }
+      };
       const result = await withWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions,
         ...(options.manifestPath ? { manifestPath: localPath(options.manifestPath) } : { manifest: prepared.adapter.manifest }),
-        expected: prepared.adapter }, async adapter => {
+        expected: prepared.adapter, beforeMutation: assertMaintenanceCurrent }, async adapter => {
         try {
           prepared.discovery?.assertCurrent();
           await ctx.catalogLock(() => {
+            assertMaintenanceCurrent();
             settingsAttempted = true;
             compareSettings(ctx, prepared.before.text, prepared.nextText);
           });
           restartAttempted = true;
-          if (await ctx.restart() !== 0) throw new Error("Router reload failed after runtime refresh.");
+          assertMaintenanceCurrent();
+          // Forward force, but revalidate the original closed admission instead
+          // of forcing another drain that could interrupt newly admitted work.
+          const retainedClosedDrain = options.forceServiceReplacement === true && drain.status === "forced";
+          if (await ctx.restart({ force: retainedClosedDrain,
+            ...(retainedClosedDrain ? { closedAdmission: drain } : {}),
+            ...(ledgers ? { beforeMutation: assertMaintenanceCurrent } : {}) }) !== 0) throw new Error("Router reload failed after runtime refresh.");
+          assertMaintenanceCurrent();
           if (savedSettings(ctx).text !== prepared.nextText) throw new Error("Web settings changed during Router reload; foreign changes were preserved.");
           const current = inspectWebStopAdapterRuntimeRefresh({ ...ctx.adapterOptions,
             ...(options.manifestPath ? { manifestPath: localPath(options.manifestPath) } : { manifest: prepared.adapter.manifest }) });
@@ -201,7 +285,7 @@ export async function refreshWebRuntime(options = {}) {
         }
       });
       return { ...prepared.plan, mode: "applied", applied: true, routerRestartRequired: false,
-        routerReloaded: true, adapterGeneration: path.basename(result.managedDirectory),
+        routerReloaded: true, adapterGeneration: result.generation,
         next: result.hookDefinitionChanged
           ? "Fully quit and reopen Codex normally to load the refreshed adapter. Review and trust the modified Router Interrupt hook in Codex, then verify Stop and same-chat continuation."
           : "Fully quit and reopen Codex normally to load the refreshed adapter. Existing hook trust is retained; verify Stop and same-chat continuation." };

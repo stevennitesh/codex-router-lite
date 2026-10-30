@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
+import { waitForBrowserReadiness } from "../src/web-browser-state.mjs";
 import { readStopResult, stopCode } from "../src/web-stop-adapter.mjs";
 import { STOP_BUDGET } from "../src/web-stop-contract.mjs";
 
@@ -96,15 +97,20 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
         assert.equal(options.state, 'visible');
         assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= STOP_BUDGET.scriptMs);
         touch('readiness_wait', thread);
+        if (surface.readinessError) throw surface.readinessError;
         if (surface.pauseReadiness) await surface.pauseReadiness;
+        // The installed public SDK caps a selector wait independently of the
+        // caller's requested timeout. Model that boundary when a case needs it.
+        const timeoutMs = Math.min(options.timeoutMs, surface.readinessMaxWaitMs ?? options.timeoutMs);
         const delayMs = surface.readinessDelayMs ?? 0;
-        model.now += Math.min(delayMs, options.timeoutMs);
+        model.now += Math.min(delayMs, timeoutMs);
         model.now += surface.readinessTerminalMs ?? 0;
         surface.onReadinessSettled?.();
         const ready = this.resolve().some(element => element === body || element.visible);
-        if (!ready || delayMs > options.timeoutMs) {
-          model.now += Math.max(0, options.timeoutMs - delayMs);
-          throw new Error('Readiness was not observed');
+        if (!ready || delayMs > timeoutMs) {
+          model.now += Math.max(0, timeoutMs - delayMs);
+          throw surface.readinessTimeoutError
+            ?? new Error(`Timed out after ${timeoutMs}ms waiting for selector owned-inactive-body: no match`);
         }
       }
       async evaluateAll(reader, args, options) {
@@ -178,8 +184,8 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  // Existing boundary cases keep a short modeled allowance. Cases covering the
-  // production window pass the shared contract budget explicitly.
+  // Boundary cases default to the production script allowance; deadline tests
+  // can inject a smaller budget or name the shared contract explicitly.
   const run = async ({ thread = model.owner, turn = model.turn, budgetMs = 2400, delivery } = {}) => {
     const identity = { threadId: thread, turnId: turn, sessionId: id(99) };
     const source = stopCode(stopConfig, identity, budgetMs, delivery)
@@ -579,14 +585,15 @@ test("one readiness wait confirms delayed Stop completion in the same tab within
   assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
 });
 
-test("delayed site cancellation stays unknown in the old window and confirms only after the owned state barrier in the new window", { timeout: 10_000 }, async () => {
-  for (const budgetMs of [2400, STOP_BUDGET.scriptMs]) {
+test("site cancellation is confirmed only when its owned state transition falls within the host budget", async () => {
+  for (const transitionAt of [1800, 3200]) {
+    const budgetMs = STOP_BUDGET.scriptMs;
     const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
     const entered = Promise.withResolvers(), transition = Promise.withResolvers();
     f.first.pauseReadiness = transition.promise;
-    f.first.readinessDelayMs = 3200;
+    f.first.readinessDelayMs = transitionAt;
     f.first.onReadinessSettled = () => {
-      if (f.model.now >= 3200) { f.first.visible = false; f.first.idleVisible = true; }
+      if (f.model.now >= transitionAt) { f.first.visible = false; f.first.idleVisible = true; }
     };
     f.model.onCall = name => { if (name === "readiness_wait") entered.resolve(); };
     const pending = f.run({ budgetMs });
@@ -595,7 +602,7 @@ test("delayed site cancellation stays unknown in the old window and confirms onl
     assert.equal(clicked(f).length, 1);
     transition.resolve();
     const result = await pending;
-    if (budgetMs === 2400) {
+    if (transitionAt > budgetMs) {
       assert.equal(result.code, "stop_confirmation_failed");
       assert.equal(result.readbackStopVisible, true); assert.equal(result.generationInactive, false);
     } else {
@@ -607,7 +614,121 @@ test("delayed site cancellation stays unknown in the old window and confirms onl
     const repeated = await f.run({ budgetMs });
     assert.equal(repeated.clickAttempted, false);
     assert.equal(f.first.state.reconciliationStop, receipt);
-    assert.equal(clicked(f).length, 1, "A larger allowance never authorizes a second click.");
+    assert.equal(clicked(f).length, 1, "Another callback never authorizes a second click.");
+  }
+});
+
+test("attached readiness keeps its caller deadline and original timeout across an SDK-capped wait", async () => {
+  const reasons = ["Playwright selector deadline exceeded", "Timed out after 3000ms waiting for selector owned-anchor: no match"];
+  for (const reason of reasons) for (const prefix of ["", "Error: "]) {
+    const rejection = new Error(`${prefix}${reason}\nlocator.waitFor(attached) timed out`);
+    let now = 0, attempts = 0, reads = 0;
+    const requested = [], settled = [];
+    const observation = await waitForBrowserReadiness({ waitFor: async options => {
+      assert.equal(options.state, "attached"); requested.push(options.timeoutMs);
+      if (++attempts === 1) { now = 3000; throw rejection; }
+    } }, {
+      state: "attached", nextTimeout: () => 6000 - now,
+      afterWait: result => settled.push(result),
+      inspect: async () => { reads += 1; return { ownedAnchorReady: attempts === 2 }; },
+      ready: value => value.ownedAnchorReady,
+    });
+    assert.deepEqual(observation, { ownedAnchorReady: true }); assert.deepEqual(requested, [6000, 3000]);
+    assert.equal(reads, 2); assert.equal(settled[0].error, rejection); assert.equal(settled[0].timedOut, true);
+    assert.equal(settled[1].error, undefined); assert.equal(settled[1].timedOut, false);
+  }
+});
+
+test("a caller can preserve an unknown attached-wait error before any decisive read or retry", async () => {
+  for (const reason of [
+    "Error: strict mode violation: private selector",
+    "Browser error: Playwright selector deadline exceeded",
+    "Error: Error: Timed out after 3000ms waiting for selector private selector",
+  ]) {
+    const rejection = new Error(`${reason}\nlocator.waitFor(attached) timed out`), events = [];
+    await assert.rejects(waitForBrowserReadiness({ waitFor: async ({ state }) => {
+      assert.equal(state, "attached"); events.push("wait"); throw rejection;
+    } }, {
+      state: "attached", nextTimeout: () => 6000,
+      afterWait: ({ error, timedOut }) => {
+        assert.equal(error, rejection); assert.equal(timedOut, false); events.push("reject"); throw error;
+      },
+      inspect: async () => { events.push("inspect"); return true; }, ready: Boolean,
+    }), error => error === rejection);
+    assert.deepEqual(events, ["wait", "reject"]);
+  }
+});
+
+test("the hook keeps its host deadline when the public SDK caps an earlier readiness wait", async () => {
+  const reasons = ["Playwright selector deadline exceeded", "Timed out after 1000ms waiting for selector owned-inactive-body: no match"];
+  for (const reason of reasons) for (const prefix of ["", "Error: "]) {
+    const timeoutError = new Error(`${prefix}${reason}\nlocator.waitFor(visible) timed out`);
+    const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
+    f.first.readinessMaxWaitMs = 1000; f.first.readinessTimeoutError = timeoutError;
+    const transitionAt = 1200, tab = f.first.state.tab;
+    f.model.onCall = name => {
+      if (name === "readiness_wait") f.first.readinessDelayMs = Math.max(0, transitionAt - f.model.now);
+    };
+    f.first.onReadinessSettled = () => {
+      if (f.model.now >= transitionAt) { f.first.visible = false; f.first.idleVisible = true; }
+    };
+    const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs }); stopped(result);
+    assert.equal(result.inactivityEvidence, "composer_restored"); assert.equal(result.readbackComplete, false);
+    assert.equal(result.elapsedMs, transitionAt);
+    assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 2);
+    assert.equal(clicked(f).length, 1); assert.equal(f.first.state.tab, tab);
+    assert(!f.calls.some(call => call.name === "wait"), "The owned condition schedules every wait without sleeps.");
+  }
+});
+
+test("capped readiness waits cannot confirm a generation that remains active for the whole hook deadline", async () => {
+  const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 600;
+  const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
+  assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+  assert.equal(result.generationInactive, false); assert.equal(result.readbackStopVisible, true);
+  assert(result.elapsedMs >= STOP_BUDGET.scriptMs - 300 && result.elapsedMs < STOP_BUDGET.scriptMs);
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 4);
+  assert.equal(clicked(f).length, 1); assert.equal(result.retained, true);
+});
+
+test("an early non-timeout wait rejection gets one decisive read without being retried", async () => {
+  // The SDK appends this wait label even to non-timeout errors. Only its
+  // original timeout reason, with at most one SDK Error prefix, may rearm it.
+  for (const reason of [
+    "strict mode violation: private selector",
+    "Browser error: Playwright selector deadline exceeded",
+    "Error: Error: Playwright selector deadline exceeded",
+    "Browser error: Timed out after 3000ms waiting for selector private selector",
+    "Error: Error: Timed out after 3000ms waiting for selector private selector",
+  ]) {
+    const f = fixture(); f.first.keepVisible = true;
+    f.first.readinessError = new Error(`${reason}\nlocator.waitFor({ state: "visible" }) timed out after 2100ms`);
+    f.model.onCall = name => { if (name === "readiness_wait") f.model.now += 1000; };
+    const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
+    assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
+    assert.equal(result.readbackStopVisible, true); assert.equal(clicked(f).length, 1);
+    assert(!JSON.stringify(result).includes("private selector"));
+  }
+});
+
+test("a second capped condition wait still fences native authority, binding, ledger and saved URL changes", async () => {
+  for (const change of ["metadata", "owner", "ledger", "url"]) {
+    const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 1000;
+    let waits = 0, changedAt;
+    f.model.onCall = name => {
+      if (name !== "readiness_wait" || ++waits !== 2) return;
+      if (change === "metadata") f.context.nodeRepl.requestMeta["x-codex-turn-metadata"].turn_id = f.second.turn;
+      if (change === "owner") f.context.routerWebActiveTurns.set(f.first.thread, { ...f.first.active });
+      if (change === "ledger") f.first.ledger.lastTurn.completed = true;
+      if (change === "url") f.first.url = f.second.url;
+      changedAt = f.calls.length;
+    };
+    const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
+    assert.equal(result.outcome, "blocked");
+    assert.equal(result.code, { metadata: "metadata_mismatch", owner: "owner_changed", ledger: "ledger_invalid", url: "tab_url_mismatch" }[change]);
+    assert.equal(waits, 2); assert.equal(clicked(f).length, 1); assert.equal(result.retained, true);
+    assert(!f.calls.slice(changedAt).some(call => ["click", "handoff", "readiness_wait"].includes(call.name)));
   }
 });
 
@@ -967,8 +1088,25 @@ test("a readiness match is scheduling only and cannot replace the final coherent
   f.model.onCall = name => { if (name === "generation" && clicked(f).length) f.first.idleVisible = false; };
   const result = await f.run();
   assert.equal(result.code, "stop_confirmation_failed"); assert.equal(result.inactivityEvidence, "none");
-  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
+  assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 2);
+  assert.equal(result.elapsedMs, 2100, "The transient match cannot end confirmation before its own deadline.");
   assert.equal(clicked(f).length, 1);
+});
+
+test("a transient readiness match rearms the owned condition until the coherent composer proof is present", async () => {
+  const f = fixture(); f.first.keepGenerating = true; f.first.idleAfterClick = true;
+  let waits = 0, lostFirstMatch = false;
+  f.model.onCall = name => {
+    if (name === "readiness_wait" && ++waits === 2) f.first.readinessDelayMs = 700;
+    if (name === "generation" && clicked(f).length && !lostFirstMatch) {
+      f.first.idleVisible = false; lostFirstMatch = true;
+    }
+  };
+  f.first.onReadinessSettled = () => { if (waits === 2) f.first.idleVisible = true; };
+  const result = await f.run(); stopped(result);
+  assert.equal(result.inactivityEvidence, "composer_restored"); assert.equal(result.readbackComplete, false);
+  assert.equal(result.elapsedMs, 700); assert.equal(waits, 2); assert.equal(clicked(f).length, 1);
+  assert.equal(f.first.state.reconciliationStop.acknowledged, true);
 });
 
 test("semantic Stop provenance is preserved when direct labels disagree", async () => {
@@ -1063,6 +1201,20 @@ const deliveryFor = f => ({ bindingId: f.first.ledger.bindingId, tabId: f.first.
 const makeUncertainLedger = f => {
   f.first.ledger.uncertainSend = true; f.first.ledger.lastTurn.sendState = "uncertain";
 };
+
+test("Stop before the new Send anchor preserves uncertainty and cannot act on the prior generation", async () => {
+  for (const prior of [false, true]) {
+    const f = fixture(); makeUncertainLedger(f);
+    f.first.state.sendConfirmed = false;
+    delete f.first.state.generationTurnKey;
+    if (!prior) { delete f.first.ledger.chatUrl; delete f.first.ledger.generationTurnKey; }
+    const before = JSON.stringify(f.first.ledger);
+    const result = await f.run();
+    assert.equal(result.outcome, "blocked"); assert.equal(result.code, "ledger_invalid");
+    assert.deepEqual(mutations(f), []); assert.equal(JSON.stringify(f.first.ledger), before);
+    assert.equal(f.calls.some(call => ["get_browser", "get_tab", "generation"].includes(call.name)), false);
+  }
+});
 
 test("only exact confirmed Send delivery can cancel before Router consumes its result", async () => {
   for (const fresh of [false, true]) for (const previous of [false, true]) {

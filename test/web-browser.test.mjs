@@ -5,7 +5,8 @@ import path from "node:path";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserObservationBudget, createBrowserNavigationObserver } from "../src/web-browser-state.mjs";
 import { WEB_MODEL_REGISTRY, webModelSelection } from "../src/web-models.mjs";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { domElement, domText, messageId, replyElement } from "./web-dom-fixture.mjs";
@@ -16,6 +17,8 @@ const readReplies = (elements, options = {}) => readBrowserReplies(elements, { .
 const token = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
 const bindingId = "unit_test";
 const base = { bindingId, frameToken: token, sessionId: "current-session", turnId: "first-turn", modelFamily: "GPT-6", power: 0 };
+const pendingAcceptance = { inputAcknowledgementPending: true,
+  observationWait: { url: "http://127.0.0.1:5123/" + token + "/observe/web_turn_" + token + "?revision=0" } };
 const plugin = { pluginName: "Current tools", pluginAppId: "asdk_current_123", pluginSelectionButtonName: "Current tools The current tool collection" };
 const fullConversationText = "You've reached the maximum length for this conversation, but you can keep talking by starting a new chat.";
 const schema = { type: "object", properties: { code: { type: "string" }, title: { type: "string" }, timeout_ms: { type: "integer", minimum: 1, maximum: 60000 } }, required: ["code"] };
@@ -174,6 +177,25 @@ test("input acknowledgement is a strict observe-only boolean in canonical browse
   }
 });
 
+test("Send requires explicit family and Power before a browser program can be dispatched", () => {
+  const { modelFamily, power, ...identity } = base;
+  for (const selection of [{}, { modelFamily }, { power }, { modelFamily: "", power },
+    { modelFamily, power: -1 }, { modelFamily, power: 5 }, { modelFamily, power: "0" }]) {
+    assert.throws(() => browserScript({ ...identity, operation: "send", prompt: "Request", ...selection }),
+      /requires explicit bounded model family and Power/u);
+  }
+  for (const operation of ["bootstrap", "open", "observe", "retain", "continue", "rollover"]) {
+    const options = { ...identity, operation, runtimeModule: "current-runtime.mjs",
+      ...(["continue", "rollover"].includes(operation) ? { expectedOwnerTurnIds: [base.turnId] } : {}),
+      ...(operation === "rollover" ? { previousChatUrl: "https://chatgpt.com/c/owned" } : {}) };
+    for (const selection of [{}, { modelFamily, power }]) {
+      assert.equal(readBrowserProgram(browserScript({ ...options, ...selection })).operation, operation);
+    }
+    assert.throws(() => browserScript({ ...options, power: 5 }), /Invalid bounded browser selection arguments/u);
+    assert.throws(() => browserScript({ ...options, modelFamily: "" }), /Invalid bounded browser selection arguments/u);
+  }
+});
+
 test("observer and mutation generations invalidate only their exact dependency sources and controls", async () => {
   const source = readFileSync(new URL("../src/web-browser.mjs", import.meta.url), "utf8");
   const stateSource = readFileSync(new URL("../src/web-browser-state.mjs", import.meta.url), "utf8");
@@ -188,7 +210,11 @@ test("observer and mutation generations invalidate only their exact dependency s
   for (const changed of [
     { state: stateSource.replace(/(export const browserDom = Object\.freeze\(\{)/u, '$1\n  sourceVariant: "changed DOM contract",') },
     ...["temporaryToggleName", "temporaryHeadingName", "stopButtonExactName", "turnKeyAttribute", "composerName", "requestErrorText", "retryButtonExactName"].map(changeDom),
-    ...["isSavedChatUrl", "waitForBrowserState", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    ...["isSavedChatUrl", "isNormalChatHomeUrl", "isPendingChatUrl", "readBrowserReplies", "createBrowserView", "runBrowserObservation"].map(changeFunction),
+    { state: stateSource.replace(/(export async function createBrowserNavigationObserver\([^\n]*\) \{)/u, "$1\n  /* changed navigation observation owner */") },
+    { state: stateSource.replace(/(export function createBrowserAllowance\([^\n]*\) \{)/u, "$1\n  /* changed shared allowance owner */") },
+    { state: stateSource.replace("shortReadMs: observationFinishGraceMs - observationTransportMarginMs", "shortReadMs: observationFinishGraceMs - observationTransportMarginMs - 1") },
+    { state: stateSource.replace(/(export function createObservationBrowserState\([^\n]*\) \{)/u, "$1\n  /* changed semantic projection owner */") },
   ]) {
     const variant = await loadVariant(changed);
     assert.notEqual(variant.browserHelperVersion, browserHelperVersion);
@@ -201,6 +227,9 @@ test("observer and mutation generations invalidate only their exact dependency s
   const send = browserScript({ ...base, operation: "send", prompt: "Request" });
   for (const [changed] of [
     ...["runBrowserSend", "createBrowserOperationContext", "selectBrowserModel"].map(name => [changeFunction(name), true]),
+    ...["createHomeBrowserState", "createRecoveryBrowserState"].map(name => [{ state: stateSource.replace(new RegExp(`(export function ${name}\\([^\\n]*\\) \\{)`, "u"), "$1\n  /* changed lifecycle owner */") }, true]),
+    [{ state: stateSource.replace(/(export async function waitForHomeBrowserReadiness\([^\n]*\) \{)/u, "$1\n  /* changed home navigation owner */") }, true],
+    [{ state: stateSource.replace(/(export async function waitForBrowserReadiness\([^\n]*\) \{)/u, "$1\n  /* changed shared readiness owner */") }, true],
     ...["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
       "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
       "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"].map(name => [changeDom(name), false]),
@@ -305,7 +334,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     complete: false, attachedName: null, typed: [], sendClicks: 0, startNewChatClicks: 0, newTabs: 0, closeCount: 0, handoffs: 0,
     powerMoves: [], present: true, temporary: false, badPowerStep: false, stripChip: false, sendFailure: false, missingPower: false,
     familyText: "GPT-6", familyClicks: 0, familyExpanded: false, familyExpansionClicks: 0, clippedFamilyClicks: 0, familySwitches: 0,
-    sendEnabled: true, waitedMs: 0, actions: [],
+    sendEnabled: true, waitedMs: 0, actions: [], dispatches: [],
     composerVisible: true, composerText: "", composerSelected: false, draftCleared: false,
     modelButtonVisible: true, temporaryButtonVisible: true, temporaryHeadingVisible: true,
     tabId: "owned-tab", navigations: [], replyReads: 0, urlReads: 0, controlReads: 0, tabReads: 0, observationReads: 0, composerReads: 0, viewportReads: 0,
@@ -329,6 +358,10 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     if (scope === "composer") domElement("div", { contenteditable: "true" }, node);
     return node;
   };
+  // The installed SDK's role queries omit accessibility-hidden nodes. A zero
+  // bounding box alone affects visibility, rather than role cardinality.
+  const roleAccessible = value => value.hidden !== true && value.visible !== false && value.visibilityStyle !== "hidden"
+    && value.getAttribute?.("hidden") == null && value.getAttribute?.("aria-hidden") !== "true";
   const replyRoot = () => {
     const replies = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
     const all = [...new Set(replies.map(element => element.closest('[data-chatgpt-selection-message-id]') ?? element))];
@@ -365,7 +398,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   };
   const makeUnion = locators => ({
     or(other) { return makeUnion([...locators, other]); },
-    async evaluateAll(callback, argument) {
+    async evaluateAll(callback, argument, options) {
+      if (argument.observation || argument.indicator) {
+        ui.projectionRequests ??= [];
+        ui.projectionRequests.push({ at: now, timeoutMs: options.timeoutMs, indicator: argument.indicator });
+      }
       if (argument.mutation) {
         ui.mutationReads += 1;
         await ui.onMutationRead?.(argument);
@@ -373,8 +410,11 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       } else ui.observationReads += 1;
       if (!argument.mutation || locators.some(value => value.name?.startsWith('[data-turn-key],'))) {
         ui.replyReads += 1;
-        ui.onReplyRead?.(argument);
+        ui.onReplyRead?.(argument, options);
       }
+      // Resolve semantic guards before constructing the projected tree. The
+      // policy fixture rebuilds nodes; later guards must not reparent replies.
+      const matchingBodies = new Map(locators.filter(value => value.guardedBody).map(value => [value.guardedBody, value.guardedBody.resolve().length > 0]));
       const root = replyRoot(), body = domElement("body", {}, root);
       const document = { body, get URL() { return ui.url ?? "https://chatgpt.com/"; },
         defaultView: { getComputedStyle: element => ({ visibility: element.visibilityStyle ?? "visible" }) } };
@@ -396,17 +436,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         ...(chip ? [chip] : []), domText(ui.composerText))];
       for (const composer of composers) Object.defineProperty(composer, "innerText", { configurable: true, get: () => ui.composerText });
       const elements = [];
-      for (const { kind, name, scopeSelector, guardedBody } of locators) {
-        if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || guardedBody.resolve().length ? [body] : []
+      for (const { kind, name, scopeSelector, guardedBody, visibleOnly } of locators) {
+        if (kind === "selector") elements.push(...(name === "body" ? !guardedBody || matchingBodies.get(guardedBody) ? [body] : []
           : name.startsWith("span[app-mention") ? chip ? [chip] : [] : root.querySelectorAll(name)));
-        else if (kind === "textbox" && name === "Ask ChatGPT" && argument.mutation) elements.push(...composers);
+        else if (kind === "textbox" && name === "Ask ChatGPT") elements.push(...(namedControls[name] ?? composers));
         else if (name === "Regenerate response") {
           const scope = scopeSelector ? root.querySelectorAll(scopeSelector) : [root];
-          const matches = scope.flatMap(element => element.querySelectorAll('[aria-label="Regenerate response"]'));
+          const matches = ui.observationControls?.[name] ?? scope.flatMap(element => element.querySelectorAll(browserDom.buttonSelector))
+            .filter(element => (element.sdkAccessibleName ?? element.getAttribute("aria-label") ?? element.textContent) === name);
           for (const element of matches) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
           elements.push(...matches);
         } else if (name === "Start new chat") elements.push(...(ui.fullButtons ?? []).filter(candidate => candidate.text === name && candidate.visible !== false).map(candidate => siteIndicator(candidate, "button")));
-        else if (name in namedControls) elements.push(...namedControls[name]);
+        else if (name in namedControls) elements.push(...namedControls[name].filter(element => roleAccessible(element)
+          && (!visibleOnly || !element.getBoundingClientRect || element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0)));
         else if (kind === "text") {
           const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
             ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })), { text: ui.composerText, scope: "composer" }];
@@ -417,20 +459,42 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return callback([...new Set(elements)], argument);
     },
   });
-  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = []) => ({
-    kind, name, scopeSelector,
+  const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false, enabledOnly = false) => ({
+    kind, name, scopeSelector, visibleOnly,
+    resolve() {
+      const explicit = ui.observationControls?.[name];
+      const values = explicit ?? (kind === "textbox" && name === "Ask ChatGPT" ? ui.composerVisible ? ui.composerElements ?? [{}] : []
+        : kind === "button" && name === "Select ChatGPT model" ? ui.modelButtonVisible ? [{}] : []
+        : kind === "button" && name === "Temporary chat" ? ui.temporaryButtonVisible ? [{}] : []
+        : kind === "selector" ? (scopeSelector ? replyRoot().querySelectorAll(scopeSelector) : [replyRoot()]).flatMap(root => root.querySelectorAll(name))
+        : kind === "text" ? [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text })),
+        ...ui.texts.map(text => ({ text })), { text: ui.composerText }].filter(value => value.text === name)
+        : name === "Turn off temporary chat" ? ui.temporary ? [{}] : []
+          : name === "Temporary chat" ? ui.temporary && ui.temporaryHeadingVisible ? [{}] : [] : []);
+      return values.filter(value => ["selector", "text"].includes(kind) || roleAccessible(value))
+        .map(value => ({ ...value, visible: value.visible !== false && value.visibilityStyle !== "hidden"
+        && (!value.getBoundingClientRect || value.getBoundingClientRect().width > 0 && value.getBoundingClientRect().height > 0) }))
+        .filter(value => (!visibleOnly || value.visible) && (!enabledOnly || !(name === "Select ChatGPT model" ? ui.modelButtonDisabled : ui.temporaryButtonDisabled)));
+    },
     or(other) { return makeUnion([this, other]); },
-    nth(index) { return { resolve: () => {
-      const count = ui.observationControls?.[name]?.length ?? Number(name === "Temporary chat"
-        ? ui.temporary && ui.temporaryHeadingVisible : name === "Turn off temporary chat" && ui.temporary);
-      return Array.from({ length: count }, () => ({})).slice(index, index + 1);
-    } }; },
+    nth(index) { return { resolve: () => this.resolve().slice(index, index + 1) }; },
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
-    locator(selector) { return makeLocator("selector", selector); },
+    locator(selector) { return makeLocator("selector", selector, false, kind === "selector" ? name : scopeSelector); },
     filter({ hasText: text, visible, has, hasNot }) {
-      if (visible !== undefined) return makeLocator(kind, name, visible);
+      if (kind === "textbox" && name === "Ask ChatGPT" && has?.name === "xpath=self::div[@contenteditable='true']") {
+        const result = makeLocator(kind, name, visibleOnly), resolve = result.resolve;
+        result.resolve = () => {
+          const values = ui.composerElements ?? [ui.composerNode];
+          return values.every(value => !value || value.tagName === "DIV" && value.getAttribute("contenteditable") === "true") ? resolve() : [];
+        };
+        return result;
+      }
+      if (kind === "button" && ["Send", "Select ChatGPT model", "Temporary chat"].includes(name)
+          && has?.name === "xpath=self::*[not(@disabled) and not(@aria-disabled='true')]") return makeLocator(kind, name, visibleOnly, scopeSelector, hasText, hasIdentity, excludedKeys, globalGenerationGuard, true);
+      if (visible !== undefined) return makeLocator(kind, name, visible, scopeSelector, hasText, hasIdentity, excludedKeys, globalGenerationGuard, enabledOnly);
       if (name === '[data-turn-key]') return makeLocator(kind, name, visibleOnly, scopeSelector, text ?? hasText, Boolean(has) || hasIdentity,
-        hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys);
+        hasNot ? [...hasNot.name.matchAll(/@data-turn-key='([^']+)'/gu)].map(match => match[1]) : excludedKeys,
+        globalGenerationGuard || Boolean(has?.name?.includes("count(")));
       assert.equal(kind, "selector");
       assert.equal(name, '[role="menuitemradio"]');
       return makeLocator("family-text", text);
@@ -460,7 +524,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (kind === "selector" && name.startsWith("span[app-mention")) return ui.chip;
       return true;
     },
-    async click() {
+    async click(options = {}) {
+      ui.dispatches.push({ kind, name, at: now, timeoutMs: options.timeoutMs });
       if (name === "Select ChatGPT model") { ui.actions.push("model-menu"); ui.menu = !ui.menu; ui.familyExpanded = false; ui.onModel?.(); }
       else if (name === "Select model" && kind === "menuitem") {
         assert.equal(ui.menu && !ui.familyExpanded, true);
@@ -512,6 +577,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async textContent() { ui.controlReads += 1; await ui.onControlRead?.({ kind, name, method: "textContent" }); return kind === "family-text" ? ui.familyText : name; },
     async innerText() { return name === "Ask ChatGPT" ? ui.composerText : ui.power === 0 ? "GPT-6 Instant" : "GPT-6 Thinking"; },
     async press(key) {
+      ui.dispatches.push({ kind, name, key, at: now });
       if (name === "Power") {
         assert.equal(ui.menu && !ui.familyExpanded, true, 'Power is operated in the visible Power view.');
         if (key === "Escape") ui.menu = false;
@@ -531,6 +597,14 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
     async waitFor({ state, timeoutMs }) {
+      if (kind === "button" && name === "Send") {
+        assert.equal(state, "visible");
+        for (let spent = 0; !ui.sendEnabled && spent < timeoutMs && fastTimers; spent += 100) {
+          const elapsed = Math.min(100, timeoutMs - spent); now += elapsed; ui.waitedMs += elapsed; ui.onWait?.();
+        }
+        if (!ui.sendEnabled) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        return;
+      }
       if (state === "attached") {
         assert.equal(kind, "selector");
         if (name === '[data-turn-key]') {
@@ -539,15 +613,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
           ui.generationWaits += 1;
           await ui.onGenerationWait?.({ marker: hasText, timeoutMs });
           if (ui.generationWaitError) throw ui.generationWaitError;
-          const ready = () => replyRoot().querySelectorAll(name).filter(turn => turn.textContent.includes(hasText)
-            && !excludedKeys.includes(turn.getAttribute('data-turn-key'))
-            && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.getAttribute('data-turn-key'))).length === 1;
+          const ready = () => {
+            const turns = replyRoot().querySelectorAll(name), markers = turns.filter(turn => turn.textContent.includes(hasText)
+              && !excludedKeys.includes(turn.getAttribute('data-turn-key')));
+            const valid = markers.filter(turn => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.getAttribute('data-turn-key')));
+            return valid.length === 1 && (!globalGenerationGuard || markers.length === 1 && markers[0] === turns.at(-1)
+              && turns.filter(turn => turn.getAttribute('data-turn-key') === markers[0].getAttribute('data-turn-key')).length === 1);
+          };
           if (!ready() && fastTimers) {
             // The SDK wait is one call. This harness advances its failure bound;
             // only a qualifying rendered marker/identity can satisfy readiness.
             now += timeoutMs; ui.waitedMs += timeoutMs; ui.onWait?.();
           }
-          if (!ready()) throw new Error("The generation marker did not attach with one valid identity.");
+          if (!ready()) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out");
           return;
         }
         ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint");
@@ -579,7 +657,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         return callback(ui.viewportElements ?? replyRoot().querySelectorAll(name), argument);
       }
       ui.replyReads += 1;
-      ui.onReplyRead?.();
+      ui.onReplyRead?.(argument);
       if (name === '[data-turn-key]' || name.startsWith('[data-turn-key],')) {
         return callback(replyRoot().querySelectorAll(name), argument);
       }
@@ -590,8 +668,10 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
   // explicit fixture inputs; the installed-browser fixture covers real accname
   // and XPath/filter behavior independently.
   const stopControls = () => [
-    ...Array.from({ length: ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
-      name: "Stop", visible: ui.stop })),
+    ...Array.from({ length: ui.observationControls?.Stop?.length ?? ui.stopCount ?? Number(ui.stop || ui.hiddenMountedStop) }, (_, index) => ({ kind: "stop", index,
+      name: "Stop", accessible: ui.observationControls?.Stop ? roleAccessible(ui.observationControls.Stop[index]) : ui.stop,
+      visible: ui.observationControls?.Stop ? ui.observationControls.Stop[index].visibilityStyle !== "hidden"
+        && (!ui.observationControls.Stop[index].getBoundingClientRect || ui.observationControls.Stop[index].getBoundingClientRect().width > 0) : ui.stop })),
     ...Array.from({ length: ui.stop ? ui.idleDuringStop ?? 0 : ui.idleButtonCount }, (_, index) => ({ kind: "idle", index,
       name: browserIdleButtonExactName, visible: true })),
   ];
@@ -602,13 +682,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     return body;
   };
   class StopPolicyLocator {
-    constructor(resolve) { this.resolve = resolve; }
+    constructor(resolve, purpose = "stop", selector) { this.resolve = resolve; this.purpose = purpose; this.selector = selector; }
     filter(options) {
       assert(Object.keys(options).every(key => ["has", "hasNot", "visible"].includes(key)));
       return new StopPolicyLocator(() => this.resolve().filter(element =>
         (options.visible === undefined || element.visible === options.visible)
         && (!options.has || options.has.resolve().length > 0)
-        && (!options.hasNot || options.hasNot.resolve().length === 0)));
+        && (!options.hasNot || options.hasNot.resolve().length === 0)), ["Ask ChatGPT", "Select ChatGPT model"].includes(options.has?.name) ? "home" : this.purpose, this.selector);
     }
     nth(index) { return new StopPolicyLocator(() => this.resolve().slice(index, index + 1)); }
     or(other) { if (other.kind) return makeUnion([Object.assign(this, { kind: "selector", name: "body", guardedBody: this }), other]); return new StopPolicyLocator(() => {
@@ -619,7 +699,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }); }
     getByRole(kind, options) {
       assert.equal(kind, "button"); assert.equal(options.exact, true);
-      return new StopPolicyLocator(() => this.resolve().length ? stopControls().filter(element => element.name === options.name) : []);
+      return new StopPolicyLocator(() => this.resolve().length ? stopControls().filter(element => element.name === options.name && element.accessible !== false) : []);
     }
     async count() {
       ui.controlReads += 1;
@@ -628,6 +708,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async click({ timeoutMs }) {
       assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      ui.stopClickTimeoutMs = timeoutMs;
       ui.stopRequests += 1;
       await ui.onStopRequest?.();
       const matches = this.resolve();
@@ -636,14 +717,28 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async waitFor({ state, timeoutMs }) {
       assert.equal(state, "visible"); assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      if (this.purpose === "home" || this.purpose === "checkpoint") {
+        if (this.purpose === "home") { ui.homeWaits = (ui.homeWaits ?? 0) + 1; await ui.onHomeWait?.({ timeoutMs }); }
+        else { ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint"); await ui.onAttachmentWait?.({ selector: this.selector, timeoutMs }); }
+        if (!this.resolve().length) {
+          if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; }
+          throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        }
+        return;
+      }
       ui.stopWaits += 1;
       await ui.onStopWait?.();
       if (!this.resolve().some(element => element.tagName === "BODY" || element.visible)) throw new Error("Stop readiness was not observed.");
     }
     async evaluateAll(reader, argument, { timeoutMs }) {
       assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
-      ui.stopReads += 1;
-      await ui.onStopRead?.();
+      if (argument?.normalMode) {
+        ui.normalReads = (ui.normalReads ?? 0) + 1;
+        await ui.onNormalRead?.();
+      } else {
+        ui.stopReads += 1;
+        await ui.onStopRead?.();
+      }
       return reader(this.resolve(), argument);
     }
   }
@@ -655,9 +750,12 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     return new StopPolicyLocator(() => {
       const body = stopBody(), turns = body.querySelectorAll("[data-turn-key]"), matching = turns.filter(turn => turn.getAttribute("data-turn-key") === key);
       const states = matching.length === 1 ? matching[0].querySelectorAll("[data-talvt-turn-state]") : [];
+      const message = /\[@data-chatgpt-selection-message-id='([^']+)'/u.exec(selector)?.[1];
+      const messages = message ? body.querySelectorAll(`[data-chatgpt-selection-message-id="${message}"]`) : [];
       return matching.length === 1 && turns.at(-1)?.getAttribute("data-turn-key") === key
-        && (!selector.includes("data-talvt-turn-state") || states.length === 1 && states[0].getAttribute("data-talvt-turn-state") === "complete") ? [body] : [];
-    });
+        && (!selector.includes("data-talvt-turn-state") || states.length === 1 && states[0].getAttribute("data-talvt-turn-state") === "complete")
+        && (!message || messages.length === 1 && messages[0].closest('[data-turn-key]') === matching[0]) ? [body] : [];
+    }, selector.includes('data-chatgpt-selection-message-id') ? "checkpoint" : "stop", selector);
   };
   const roleLocator = (kind, options) => {
     const result = makeLocator(kind, options.name);
@@ -668,13 +766,50 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     return result;
   };
-  const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
+  const tab = { get id() { return ui.tabId; }, url: async () => { ui.urlReads += 1; return ui.sdkUrl ?? ui.url ?? "https://chatgpt.com/"; }, goto: async url => { ui.url = url; ui.navigations.push(url); ui.onGoto?.(url); },
     reload: async () => { ui.reloads += 1; ui.actions.push("reload"); await ui.onReload?.(); if (ui.reloadFailure) throw new Error("Reload failed."); },
-    playwright: { getByRole: roleLocator, getByText: (text, options) => {
+    playwright: { waitForURL: async (expected, { timeoutMs }) => {
+      ui.urlWaits = (ui.urlWaits ?? 0) + 1;
+      await ui.onUrlWait?.({ url: expected, timeoutMs });
+      if (ui.url !== expected) { if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; } throw new Error("URL did not become ready."); }
+    }, getByRole: roleLocator, getByText: (text, options) => {
       assert.equal(options.exact, true); return makeLocator("text", text);
     }, locator: name => name === "body" || name.startsWith("xpath=//body[") ? stopLocator(name) : makeLocator("selector", name) },
+    capabilities: { get: async id => {
+      assert.equal(id, "cdp");
+      return {
+        async documentation() {
+          ui.navigationDocumentationReads = (ui.navigationDocumentationReads ?? 0) + 1;
+          await ui.onNavigationDocumentation?.(); ui.navigationDocumentationRead = true;
+        },
+        async send(method, params, { timeoutMs }) {
+          if (!ui.browserDocumentationRead) throw new Error('Required documentation has not been read: "confirmations".');
+          if (!ui.navigationDocumentationRead) throw new Error('Required documentation has not been read: "capabilities/tab/cdp".');
+          assert.equal(method, "Page.enable"); assert.deepEqual(params, {}); assert.ok(timeoutMs > 0);
+          ui.navigationEnables = (ui.navigationEnables ?? 0) + 1; await ui.onNavigationEnable?.();
+        },
+        async readEvents(options) {
+          if (!ui.browserDocumentationRead) throw new Error('Required documentation has not been read: "confirmations".');
+          if (!ui.navigationDocumentationRead) throw new Error('Required documentation has not been read: "capabilities/tab/cdp".');
+          assert.deepEqual(options.methods, ["Page.frameNavigated", "Page.navigatedWithinDocument"]);
+          if (options.afterSequence === undefined) {
+            assert.equal(options.timeoutMs, 0, "Cursor capture must never inherit an SDK waiting default.");
+            ui.navigationCaptures = (ui.navigationCaptures ?? 0) + 1;
+            await ui.onNavigationCapture?.();
+            return ui.navigationCapture ?? { cursor: 0, events: [], hasMore: false, truncated: false };
+          }
+          assert.ok(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0);
+          ui.navigationWaits = (ui.navigationWaits ?? 0) + 1;
+          const result = await ui.onNavigationWait?.(options);
+          if (result) return result;
+          if (fastTimers) { now += options.timeoutMs; ui.waitedMs += options.timeoutMs; }
+          return { cursor: options.afterSequence, events: [], hasMore: false, truncated: false };
+        },
+      };
+    } },
     close: async () => { ui.closeCount += 1; ui.present = false; }, markHandoff: async () => { ui.handoffs += 1; } };
   const browser = { browserId: "owned-browser",
+    documentation: async () => { ui.browserDocumentationReads = (ui.browserDocumentationReads ?? 0) + 1; ui.browserDocumentationRead = true; },
     tabs: { list: async () => { ui.tabReads += 1; return [...(ui.present ? [{ id: tab.id, url: ui.url ?? "https://chatgpt.com/" }] : []), ...(ui.extraTabs ?? [])]; },
       get: async id => { assert.equal(id, tab.id); return tab; },
       new: async () => {
@@ -720,12 +855,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     await run("open");
   };
   return { ui, run, runFast: (operation, extra) => run(operation, extra, false), ready, tab, browser, agent, runtimeModule, getState: () => nativeContext[bindingName],
+    advance(milliseconds) { assert.equal(fastTimers, true); assert(Number.isSafeInteger(milliseconds) && milliseconds >= 0); now += milliseconds; ui.waitedMs += milliseconds; },
     loseBinding({ preserveOwner = false } = {}) { delete nativeContext[bindingName]; if (!preserveOwner) nativeContext.routerWebActiveTurns?.delete(sessionId); },
     activeTurn: () => nativeContext.routerWebActiveTurns?.get(sessionId) };
 }
 
-async function recoverableFixture({ completed = true, text = "  Observed 🔧 reply\n" } = {}) {
-  const f = fixture({ fastTimers: true });
+async function recoverableFixture({ completed = true, text = "  Observed ðŸ”§ reply\n", nativeContext = {} } = {}) {
+  const f = fixture({ fastTimers: true, nativeContext });
   await f.ready();
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push(text);
@@ -793,8 +929,8 @@ function assistantMessage(index, text, attributes = {}) {
   return replyElement(text, messageId(index), attributes).parentElement;
 }
 
-function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false } = {}) {
-  const action = domElement('button', { 'aria-label': 'Regenerate response' });
+function observedTurn(key, prompt, content = [], { complete = true, actionFirst = false,
+  action = domElement('button', { 'aria-label': 'Regenerate response' }) } = {}) {
   return domElement('section', { 'data-turn-key': key }, domElement('div', { 'data-talvt-turn-state': complete ? 'complete' : 'streaming' },
     domElement('h4', {}, domText('You said:')), domElement('div', {}, domText(prompt)),
     ...(actionFirst ? [action] : []), ...content, ...(!actionFirst && complete ? [action] : [])));
@@ -805,7 +941,7 @@ test("generation snapshots return only a marker match and do not read prior prom
   const marker = 'Router generation: native-turn';
   const turn = observedTurn(messageId(100), privatePrompt, [assistantMessage(20, 'Public answer')]);
   const root = domElement('main', {}, turn);
-  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector},${browserDom.buttonSelector}`);
   let promptReads = 0;
   Object.defineProperty(turn, 'textContent', { get() { promptReads += 1; return `${privatePrompt}\n${marker}`; } });
   const options = { assistantSelector: scopedReplySelector, regenerateName: 'Regenerate response' };
@@ -824,7 +960,7 @@ test("anchored projection reads only the owned body and completion metadata whil
   const historical = observedTurn(messageId(100), "Old request", [historicalAnswer]);
   const current = observedTurn(messageId(200), "Current request", [currentAnswer]);
   const root = domElement("main", {}, historical, current);
-  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector}`);
+  const selected = root.querySelectorAll(`[data-turn-key],${scopedReplySelector},${browserDom.buttonSelector}`);
   const oldBody = historicalAnswer.querySelector(scopedReplySelector), oldText = oldBody.childNodes[0];
   let historicalBodyReads = 0, historicalMetadataReads = 0, currentBodyReads = 0;
   Object.defineProperty(oldText, "textContent", { get() { historicalBodyReads += 1; return "Historical answer"; } });
@@ -867,10 +1003,22 @@ test("Send projections read global identities and only new candidate markers wit
     [[messageId(10), messageId(100), ""], [messageId(20), messageId(200), ""]]);
   const anchor = readReplies([old, current], { ...options, projection: "anchor", generationMarker: "Router generation: current-turn",
     baselineTurnKeys: [messageId(100)] });
-  assert.deepEqual(anchor, { replies: [], turns: [{ turnKey: messageId(100), matchesGenerationMarker: false },
-    { turnKey: messageId(200), matchesGenerationMarker: true }] });
+  assert.deepEqual(anchor, { replies: [], turns: [{ turnKey: messageId(100), matchesGenerationMarker: false, nestedInTurn: false },
+    { turnKey: messageId(200), matchesGenerationMarker: true, nestedInTurn: false }] });
   assert.throws(() => readReplies([old, current, oldRoot, currentRoot], options), /historical text or completion metadata/,
     "Recovery keeps the full historical body and completion proof.");
+});
+
+test("anchor projection distinguishes nested turn elements using only bounded parent-ownership booleans", () => {
+  const nested = observedTurn(messageId(200), "Router generation: current-turn PRIVATE_NESTED_CANARY");
+  const outer = observedTurn(messageId(100), "Private historical prompt", [domElement("div", {}, nested)]);
+  const root = domElement("main", {}, outer);
+  const anchor = readReplies(root.querySelectorAll(browserDom.turnSelector), { projection: "anchor",
+    generationMarker: "Router generation: current-turn", baselineTurnKeys: [messageId(100)] });
+  assert.deepEqual(anchor.turns, [{ turnKey: messageId(100), matchesGenerationMarker: false, nestedInTurn: false },
+    { turnKey: messageId(200), matchesGenerationMarker: true, nestedInTurn: true }]);
+  assert.deepEqual(anchor.replies, []);
+  assert.doesNotMatch(JSON.stringify(anchor), /PRIVATE_NESTED_CANARY|Private historical prompt|Router generation:/u);
 });
 
 test("Send baseline retains global duplicate and malformed identity rejection without reading any answer body", async () => {
@@ -920,41 +1068,122 @@ test("open accepts a personalized or absent decorative home heading when the emp
   }
 });
 
-test("open observes deferred hydration of the composer and both controls without opening or navigating again", async () => {
+test("open waits for explicit control hydration events and never advances on a partial home", async () => {
   const f = fixture({ fastTimers: true });
   await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
-  f.ui.composerVisible = false;
-  f.ui.modelButtonVisible = false;
-  f.ui.temporaryButtonVisible = false;
-  f.ui.onWait = () => {
-    assert.equal(f.activeTurn()?.state.tab, f.tab, "The owned tab is interruptible while its initial controls hydrate.");
-    f.ui.composerVisible = f.ui.waitedMs >= 100;
-    f.ui.modelButtonVisible = f.ui.waitedMs >= 200;
-    f.ui.temporaryButtonVisible = f.ui.waitedMs >= 300;
-  };
-  const result = await f.run("open");
-  assert.equal(result.normal, true);
-  assert.equal(f.ui.waitedMs, 300);
-  assert.equal(f.ui.newTabs, 1);
-  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+  Object.assign(f.ui, { composerVisible: false, modelButtonVisible: false, temporaryButtonVisible: false });
+  const entered = Promise.withResolvers(), released = Promise.withResolvers();
+  f.ui.onWait = () => assert.fail("Startup must not schedule a timer poll.");
+  f.ui.onHomeWait = async () => { entered.resolve(); await released.promise; };
+  let finished = false;
+  const opening = f.run("open").then(result => { finished = true; return result; });
+  await entered.promise;
+  assert.equal(f.activeTurn()?.state.tab, f.tab);
+  f.ui.composerVisible = true; await Promise.resolve();
+  assert.equal(finished, false); assert.equal(f.ui.handoffs, 0);
+  f.ui.modelButtonVisible = true; await Promise.resolve();
+  assert.equal(finished, false); assert.equal(f.ui.handoffs, 0);
+  f.ui.temporaryButtonVisible = true; released.resolve();
+  assert.equal((await opening).normal, true);
+  assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.homeWaits, 1); assert.equal(f.ui.urlWaits, undefined);
+  assert.equal(f.ui.navigationEnables, undefined);
+  assert.equal(f.ui.newTabs, 1); assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 0);
 });
 
-test("normal home waits for both independent temporary-mode visibility reads", { timeout: 2000 }, async () => {
-  const f = fixture();
-  await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
-  const started = new Set(), barrier = Promise.withResolvers();
-  f.ui.onControlRead = async ({ kind, name, method }) => {
-    if (method !== "isVisible" || !["Turn off temporary chat", "Temporary chat"].includes(name)
-        || name === "Temporary chat" && kind !== "heading") return;
-    started.add(name);
-    if (started.size === 2) barrier.resolve();
-    await barrier.promise;
-  };
-  assert.equal((await f.run("open")).normal, true);
-  assert.deepEqual([...started].sort(), ["Temporary chat", "Turn off temporary chat"]);
-  assert.equal(f.ui.sendClicks, 0);
-  assert.equal(f.ui.newTabs, 1);
+test("open waits for delayed home navigation controls for every accepted SDK and DOM home variant", async () => {
+  for (const sdkUrl of ["https://chatgpt.com", "https://chatgpt.com/", "https://chatgpt.com/?model=synthetic", "https://chatgpt.com/auth/loading"]) {
+    for (const domUrl of ["https://chatgpt.com/", "https://chatgpt.com/?model=synthetic"]) {
+      const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+      const requested = Promise.withResolvers(), arrived = Promise.withResolvers();
+      f.tab.goto = async url => {
+        f.ui.navigations.push(url); f.ui.url = "https://chatgpt.com/auth/loading";
+        f.ui.composerVisible = false; f.ui.modelButtonVisible = false; f.ui.temporaryButtonVisible = false;
+      };
+      f.ui.onUrlWait = () => assert.fail("Home navigation must not wait for a canonical-only location.");
+      f.ui.onHomeWait = async () => { requested.resolve(); await arrived.promise; };
+      const opening = f.run("open"); await requested.promise;
+      assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.replyReads, 0);
+      Object.assign(f.ui, { url: domUrl, sdkUrl, composerVisible: true, modelButtonVisible: true, temporaryButtonVisible: true });
+      arrived.resolve();
+      const opened = await opening;
+      assert.equal(opened.normal, true); assert.equal(opened.url, domUrl);
+      assert.equal(f.ui.urlWaits, undefined); assert.equal(f.ui.homeWaits, 1); assert.equal(f.ui.waitedMs, 0);
+      assert.equal(f.ui.handoffs, 1); assert.equal(f.ui.sendClicks, 0);
+    }
+  }
+});
+
+test("fully mounted home controls wait for a navigation event before accepting canonical or query home", async () => {
+  for (const homeUrl of ["https://chatgpt.com/", "https://chatgpt.com/?model=synthetic"]) {
+    const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    const subscribed = Promise.withResolvers(), navigated = Promise.withResolvers();
+    f.ui.onGoto = () => { f.ui.url = "https://chatgpt.com/auth/loading"; f.ui.sdkUrl = f.ui.url; };
+    f.ui.onNavigationWait = async () => {
+      subscribed.resolve(); await navigated.promise;
+      return { cursor: 1, events: [{ sequence: 1, method: "Page.navigatedWithinDocument" }], hasMore: false, truncated: false };
+    };
+    const opening = f.run("open"); await subscribed.promise;
+    assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.sendClicks, 0);
+    f.ui.url = homeUrl; navigated.resolve();
+    const opened = await opening;
+    assert.equal(opened.url, homeUrl); assert.equal(opened.normal, true);
+    assert.equal(f.ui.navigationCaptures, 1); assert.equal(f.ui.navigationWaits, 1); assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.urlWaits, undefined);
+  }
+});
+
+test("home navigation subscribes before its authoritative read and never misses an already completed transition", async () => {
+  const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+  f.ui.onGoto = () => { f.ui.url = "https://chatgpt.com/arbitrary-transition"; };
+  f.ui.onNavigationCapture = () => { f.ui.url = "https://chatgpt.com/?model=synthetic"; };
+  f.ui.onNavigationWait = () => assert.fail("The read after capture must see navigation that already completed.");
+  assert.equal((await f.run("open")).url, f.ui.url);
+  assert.equal(f.ui.navigationCaptures, 1); assert.equal(f.ui.navigationWaits, undefined); assert.equal(f.ui.handoffs, 1);
+});
+
+test("home navigation events cannot accept timeout, foreign mode, truncated history or a changed owner", async () => {
+  for (const branch of ["timeout", "foreign", "temporary", "draft", "truncated", "tab", "owner"]) {
+    const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    f.ui.onGoto = () => { f.ui.url = "https://chatgpt.com/arbitrary-transition"; };
+    f.ui.onNavigationWait = () => {
+      if (branch === "timeout") { f.advance(10000); return { cursor: 0, events: [], hasMore: false, truncated: false }; }
+      f.ui.url = branch === "foreign" ? "https://foreign.invalid/" : branch === "temporary"
+        ? "https://chatgpt.com/?temporary-chat=true" : "https://chatgpt.com/?model=synthetic";
+      if (branch === "draft") f.ui.composerText = "Private manual draft";
+      if (branch === "tab") f.getState().tab = { ...f.tab };
+      if (branch === "owner") f.activeTurn().turnId = "foreign-native-turn";
+      return { cursor: 1, events: [{ sequence: 1, method: "Page.navigatedWithinDocument" }], hasMore: false, truncated: branch === "truncated" };
+    };
+    await assert.rejects(f.run("open"), /normal ChatGPT home controls|navigation observation failed|owned tab changed|different native turn/);
+    assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.navigationWaits, 1);
+  }
+});
+
+test("home-shaped old controls cannot establish ownership at an unrelated location", async () => {
+  for (const url of ["https://chatgpt.com/auth/loading", "https://chatgpt.com/c/other-chat", "https://foreign.invalid/", "https://chatgpt.com/?temporary-chat=true"]) {
+    const f = fixture({ fastTimers: true }); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    f.ui.onGoto = () => { f.ui.url = url; };
+    await assert.rejects(f.run("open"), /Empty normal ChatGPT home controls/);
+    assert.equal(f.ui.handoffs, 0); assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.urlWaits, undefined);
+  }
+});
+
+test("initial retention cannot publish a changed draft, location, tab or native owner as a ready home", async () => {
+  for (const change of ["draft", "URL", "tab", "owner"]) {
+    const f = fixture(); await f.run("bootstrap", { runtimeModule: "current-runtime.mjs" });
+    const retain = f.tab.markHandoff;
+    f.tab.markHandoff = async () => {
+      await retain();
+      if (change === "draft") f.ui.composerText = "Manual draft during retention";
+      if (change === "URL") f.ui.url = "https://chatgpt.com/c/manual-conversation";
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      if (change === "owner") f.activeTurn().turnId = "foreign-turn";
+    };
+    await assert.rejects(f.run("open"), /normal home changed|different native turn/);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.handoffs, 1); assert.equal(f.ui.sendClicks, 0);
+    if (change === "draft") assert.equal(f.ui.composerText, "Manual draft during retention");
+  }
 });
 
 test("a missing initial control ends open's bounded hydration wait without navigation retry or Send", async () => {
@@ -963,7 +1192,7 @@ test("a missing initial control ends open's bounded hydration wait without navig
     await f.run("bootstrap", { sessionId: "current-session", runtimeModule: "validated-runtime.mjs" });
     f.ui[control] = false;
     await assert.rejects(f.run("open"), /controls did not become ready within 10 seconds/);
-    assert.equal(f.ui.waitedMs, 10000);
+    assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
     assert.equal(f.ui.newTabs, 1);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
     assert.equal(f.ui.sendClicks, 0);
@@ -978,6 +1207,9 @@ test("initial normal home verification rejects history, drafts, ambiguous compos
     ui => { ui.texts = ["Existing answer"]; },
     ui => { ui.composerText = "Existing draft"; },
     ui => { ui.composerElements = [domElement("div", { contenteditable: "true" }), domElement("div", { contenteditable: "true" })]; },
+    ui => { ui.observationControls = { "Select ChatGPT model": [domElement("button"), domElement("button")] }; },
+    ui => { ui.observationControls = { "Temporary chat": [domElement("button"), domElement("button")] }; },
+    ui => { ui.stop = true; ui.stopCount = 2; },
     ui => { ui.stop = true; },
     ui => { ui.temporary = true; },
     ui => { ui.temporary = true; ui.temporaryHeadingVisible = false; },
@@ -1028,6 +1260,46 @@ test("every registered Web model and effort verifies its exact family and stepwi
       assert.equal(invalid.ui.sendClicks, 0);
     });
   }
+});
+
+test("every registered route and effort stops before mutation when shared Send allowance is consumed", async t => {
+  for (const model of WEB_MODEL_REGISTRY) for (const effort of Object.keys(model.efforts)) {
+    await t.test(`${model.slug} ${effort}`, async () => {
+      const selection = webModelSelection(model.slug, effort);
+      for (const switchFamily of [false, true]) for (const stage of ["family", "Power", "dispatch"]) {
+        const f = fixture({ fastTimers: true }); await f.ready();
+        f.ui.familyText = selection.family;
+        f.ui.checked = !switchFamily;
+        let delayed = false;
+        f.ui.onControlRead = ({ kind, name }) => {
+          if (delayed || stage === "dispatch") return;
+          if (stage === "family" && kind === "family-text" || stage === "Power" && name === browserDom.powerSliderSelector) {
+            delayed = true; f.advance(10001);
+          }
+        };
+        f.ui.onMutationRead = () => {
+          if (stage === "dispatch" && f.ui.mutationReads === 4) { delayed = true; f.advance(10001); }
+        };
+        await assert.rejects(f.run("send", { ...plugin, prompt: "Bounded request", modelFamily: selection.family, power: selection.power }), /deadline expired before dispatch; nothing sent/);
+        assert.equal(delayed, true, stage);
+        assert.equal(f.ui.sendClicks, 0, stage);
+        assert.equal(f.getState().sendClicked, false);
+        assert.equal(f.ui.dispatches.every(dispatch => dispatch.at < 10000), true, "No picker or Send mutation can start after expiry.");
+        await assert.rejects(f.run("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
+      }
+    });
+  }
+});
+
+test("Send dispatch uses the remaining shared allowance while reserving final ownership confirmation", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let delayed = false;
+  f.ui.onControlRead = ({ kind }) => {
+    if (!delayed && kind === "family-text") { delayed = true; f.advance(6000); }
+  };
+  await f.run("send", { ...plugin, prompt: "Leave confirmation headroom" });
+  assert.equal(f.ui.dispatches.find(dispatch => dispatch.name === "Send").timeoutMs, 2500);
+  assert.equal(f.ui.sendClicks, 1);
 });
 
 test("missing Power attributes prevent Send", async () => {
@@ -1234,11 +1506,11 @@ test("each coherent Send phase freshly rejects draft, plugin, navigation and sem
   }
 });
 
-test("semantic mutation reads reject duplicate mounted controls even when hidden", async () => {
+test("semantic mutation reads reject duplicate controls recognized by the SDK", async () => {
   for (const control of ["Stop", "Turn off temporary chat", "Temporary chat"]) {
     const f = fixture(); await f.ready();
     f.ui.onMutationRead = () => {
-      if (control === "Stop") f.ui.stopCount = 2;
+      if (control === "Stop") { f.ui.stop = true; f.ui.stopCount = 2; }
       else f.ui.observationControls = { [control]: [domElement(control === "Temporary chat" ? "h2" : "button"),
         domElement(control === "Temporary chat" ? "h2" : "button")] };
     };
@@ -1263,46 +1535,122 @@ test("Send rechecks active ownership and exact draft after the awaited retention
   }
 });
 
-test("generation readiness waits for a rendered marker and settled UUID before its single authoritative snapshot", async () => {
+const heldObserve = { inputAcknowledgementPending: true, observationWait: { url: `http://127.0.0.1:40123/${"a".repeat(64)}/observe/web_turn_${"b".repeat(32)}?revision=0` } };
+
+test("Send dispatch yields immediately and held observation anchors only the released marker and valid UUID", async () => {
   for (const delayed of ["marker", "identity"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const reads = f.ui.replyReads;
     let pending;
     f.ui.onSend = () => {
       pending = f.ui.userMessages[0];
       if (delayed === "marker") f.ui.userMessages = [];
       else pending.messageId = "settling-renderer-identity";
     };
-    f.ui.onGenerationWait = ({ timeoutMs }) => {
-      assert.equal(timeoutMs, 10000);
-      pending.messageId = messageId(1001);
-      f.ui.userMessages = [pending];
-    };
     const sent = await f.run("send", { ...plugin, prompt: "Current request" });
-    assert.equal(sent.sent, true);
-    assert.equal(sent.generationTurnKey, messageId(1001));
-    assert.equal(f.ui.generationWaits, 1);
-    assert.equal(f.ui.replyReads - reads, 2, "Only the identity baseline and authoritative anchor read the mounted conversation.");
+    assert.equal(sent.sent, false); assert.equal(sent.dispatched, true); assert.equal(sent.generationPending, true);
+    assert.equal(Object.hasOwn(sent, "generationTurnKey"), false);
+    assert.equal(f.ui.generationWaits, 0); assert.equal(f.getState().sendConfirmed, false);
+    f.ui.onGenerationWait = ({ timeoutMs }) => {
+      assert.equal(timeoutMs, 1000);
+      pending.messageId = messageId(1001); f.ui.userMessages = [pending];
+    };
+    const observed = await f.run("observe", heldObserve);
+    assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(observed.assistantText, "");
+    assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.generationWaits, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
+    assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("marker readiness cannot replace global turn uniqueness, latest ownership or fresh URL and cancellation guards", async () => {
-  for (const change of ["duplicate identity", "newer manual turn", "foreign URL", "owner changed", "wait failed"]) {
+test("initial anchor conflicts fail with a strict content-free receipt while absent or placeholder anchors stay pending", async () => {
+  for (const loss of ["missing", "duplicate marker", "duplicate key", "foreign latest", "invalid key"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    f.ui.onGenerationWait = () => {
+    f.ui.onSend = () => {
       const current = f.ui.userMessages[0];
+      if (loss === "missing") f.ui.userMessages = [];
+      if (loss === "duplicate marker") f.ui.userMessages.push({ ...current, messageId: messageId(2000) });
+      if (loss === "duplicate key") f.ui.userMessages.push({ ...current, text: "Different private request" });
+      if (loss === "foreign latest") f.ui.userMessages.push({ ...current, messageId: messageId(2000), text: "Different private request" });
+      if (loss === "invalid key") current.messageId = "renderer-placeholder";
+    };
+    const sent = await f.run("send", { ...plugin, prompt: "PRIVATE_REQUEST" });
+    if (["missing", "invalid key"].includes(loss)) {
+      assert.equal(sent.generationPending, true);
+      assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+      assert.equal(f.ui.generationWaits, 1);
+    } else assert.deepEqual(sent, { operation: "send", sendFailure: "anchor-conflict" });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/);
+  }
+});
+
+test("held anchor readiness rejects superseding turns, changed URL and owner changes after the semantic wait", async () => {
+  for (const change of ["duplicate identity", "newer manual turn", "foreign URL", "owner changed"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    let current;
+    f.ui.onSend = () => { current = f.ui.userMessages[0]; f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => {
+      f.ui.userMessages = [current];
       if (["duplicate identity", "newer manual turn"].includes(change)) f.ui.userMessages.push({ ...current,
         messageId: change === "duplicate identity" ? current.messageId : messageId(2000), text: "Manual user request" });
-      if (change === "foreign URL") f.ui.url = "https://chatgpt.com/c/foreign-chat";
+      if (change === "foreign URL") f.ui.url = "https://foreign.invalid/c/foreign-chat";
       if (change === "owner changed") f.activeTurn().turnId = "foreign-turn";
-      if (change === "wait failed") f.ui.generationWaitError = new Error("Native locator wait failed.");
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Current request" }), /effect is uncertain|different native turn/);
-    assert.equal(f.ui.sendClicks, 1);
-    assert.equal(f.getState().sendConfirmed, false);
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/);
+    await assert.rejects(f.run("observe", heldObserve), /ambiguous|owned saved|different native turn/);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("an SDK timeout or readiness race returns pending and the next state event can resolve the original Send", async () => {
+  for (const race of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    let current;
+    f.ui.onSend = () => { current = f.ui.userMessages[0]; f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => { if (race) f.ui.userMessages = [current]; };
+    f.ui.onReplyRead = argument => { if (race && argument?.projection === "anchor" && f.ui.generationWaits === 1) current.messageId = "renderer-placeholder"; };
+    assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    f.ui.onReplyRead = undefined; f.ui.userMessages = [current]; current.messageId = messageId(1001);
+    const owned = await f.run("observe", heldObserve);
+    assert.equal(owned.generationTurnKey, current.messageId); assert.equal(owned.assistantText, "");
     assert.equal(f.ui.sendClicks, 1);
   }
+});
+
+test("nested foreign widgets and quoted markers cannot establish a Send anchor or expose private diagnostics", async () => {
+  for (const quotesMarker of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => {
+      const current = f.ui.userMessages[0];
+      const widget = observedTurn(messageId(2000), quotesMarker ? current.text : "PRIVATE_WIDGET_CANARY");
+      f.ui.messageRoot = domElement("main", {}, observedTurn(current.messageId, current.text, [domElement("div", {}, widget)]));
+    };
+    assert.deepEqual(await f.run("send", { ...plugin, prompt: "PRIVATE_MARKER_CANARY" }), { operation: "send", sendFailure: "anchor-conflict" });
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
+  }
+});
+
+test("held anchor waits keep cancellation and native selector failures terminal and content-free", async () => {
+  for (const message of ["Native browser disconnected.\nlocator.waitFor(attached) timed out", "Operation aborted by native cancellation.",
+    "Error: Error: Playwright selector deadline exceeded\nlocator.waitFor(attached) timed out"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.userMessages = []; };
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.onGenerationWait = () => { throw new Error(`${message} PRIVATE_SELECTOR_CANARY`); };
+    await assert.rejects(f.run("observe", heldObserve), error => {
+      assert.equal(error.message, "The pending Send selector wait failed."); return true;
+    });
+    assert.equal(f.ui.generationWaits, 1); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("a dispatched Send reads its settled anchor without spending preparation time on a selector wait", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onSend = () => { f.advance(9500); };
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  assert.equal(sent.sent, true); assert.equal(f.getState().sendConfirmed, true);
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
 });
 
 test("a long paste waits for Send readiness, types its payload and short marker once, and sends once", async () => {
@@ -1397,57 +1745,364 @@ test("a changed draft while bulk paste or the short marker settles prevents Send
   }
 });
 
-test("Send waits within its existing budget for one saved URL before confirming persistence", async () => {
-  const f = fixture({ fastTimers: true });
-  await f.ready();
+test("Send hands delayed saved URL establishment to held observation without another click", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.deferSavedUrl = true;
-  f.ui.onWait = () => { if (f.ui.waitedMs >= 300) f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
   const sent = await f.run("send", { ...plugin, prompt: "Wait for saved URL" });
-  assert.equal(sent.normal, true);
-  assert.equal(sent.url, "https://chatgpt.com/c/owned-conversation");
-  assert.equal(f.ui.waitedMs, 300);
-  assert.equal(f.ui.sendClicks, 1);
-  assert.equal(f.ui.typed.length, 2);
+  assert.equal(sent.generationPending, true); assert.equal(sent.url, "https://chatgpt.com/");
+  assert.equal(f.ui.waitedMs, 0); assert.equal(f.getState().sendConfirmed, false);
+  f.ui.url = "https://chatgpt.com/c/owned-conversation";
+  const observed = await f.run("observe", heldObserve);
+  assert.equal(observed.normal, true); assert.equal(observed.url, f.ui.url);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.typed.length, 2);
   assert.equal(f.getState().sendConfirmed, true);
 });
 
-test("paste readiness, saved URL and generation proof consume one shared Send deadline", async () => {
-  for (const delayed of ["saved URL", "generation"]) {
+test("a first Send keeps an unsettled safe route private and waits for navigation when its marker is already ready", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/PRIVATE_TRANSITION_CANARY?private=PRIVATE_QUERY_CANARY"; };
+  const sent = await f.runFast("send", { ...plugin, prompt: "PRIVATE_REQUEST_CANARY" });
+  assert.deepEqual(sent, { operation: "send", sent: false, dispatched: true, generationPending: true,
+    tabId: f.tab.id, url: null, normal: false, urlPending: true, conversationFull: false, baselineReplyIds: [] });
+  assert.doesNotMatch(JSON.stringify(sent), /PRIVATE_|https:/u);
+  assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().generationTurnKey, undefined);
+  f.ui.onGenerationWait = () => assert.fail("A ready marker must not be used to wait for navigation.");
+  f.ui.onNavigationWait = ({ afterSequence }) => {
+    f.ui.url = "https://chatgpt.com/c/settled-chat";
+    return { cursor: afterSequence + 1, events: [{ method: "Page.navigatedWithinDocument" }], truncated: false };
+  };
+  const observed = await f.runFast("observe", heldObserve);
+  assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(observed.url, f.ui.url);
+  assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.navigationWaits, 1);
+  assert.equal(f.ui.navigationDocumentationReads, 1, "A fresh browser runtime must satisfy the SDK's enforced CDP documentation gate.");
+  assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("navigation failures retain their stage without exposing SDK payloads or losing owner checks", async () => {
+  const cases = [
+    ["capability-get", "capability-unavailable", 'Capability is not available: PRIVATE_CAPABILITY'],
+    ["capability-documentation", "sdk-error", "PRIVATE_DOCUMENTATION_ERROR"],
+    ["page-enable", "documentation-required", 'Required documentation has not been read: "PRIVATE_TOPIC".'],
+    ["page-enable", "timeout", "Timed out waiting for PRIVATE_URL"],
+    ["cursor-capture", "sdk-error", "PRIVATE_CURSOR_ERROR"],
+    ["navigation-wait", "sdk-error", "PRIVATE_EVENT_ERROR"],
+  ];
+  for (const [stage, reason, message] of cases) {
+    const invoke = async name => { if (name === stage) throw new Error(message); };
+    const capability = { documentation: () => invoke("capability-documentation"), send: () => invoke("page-enable"),
+      readEvents: async options => { await invoke(options.afterSequence === undefined ? "cursor-capture" : "navigation-wait");
+        return { cursor: 0, events: [], truncated: false }; } };
+    const tab = { capabilities: { get: async () => { await invoke("capability-get"); return capability; } } };
+    await assert.rejects(async () => {
+      const navigation = await createBrowserNavigationObserver(tab, { allowance: () => 1000, assertCurrent() {} });
+      await navigation.next();
+    }, error => {
+      assert.equal(error.message, `Browser navigation observation failed. ROUTER_WEB_NAVIGATION_DIAGNOSTIC ${JSON.stringify({ stage, reason })}`);
+      assert.doesNotMatch(error.message, /PRIVATE_/u); return true;
+    });
+  }
+  let current = true;
+  await assert.rejects(createBrowserNavigationObserver({ capabilities: { get: async () => ({ documentation: async () => {
+    current = false; throw new Error("PRIVATE_STALE_ERROR");
+  } }) } }, { allowance: () => 1000, assertCurrent() { if (!current) throw new Error("Owner changed."); } }), /Owner changed\./u);
+});
+
+test("a saved-looking first URL is not established before the unique marker exists", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  let marker;
+  f.ui.onSend = () => { marker = f.ui.userMessages.pop(); };
+  const sent = await f.runFast("send", { ...plugin, prompt: "Request" });
+  assert.equal(sent.generationPending, true); assert.match(sent.url, /\/c\//u);
+  assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().sendConfirmed, false);
+  f.ui.url = "https://chatgpt.com/c/coherently-settled-chat"; f.ui.sdkUrl = sent.url;
+  f.ui.userMessages.push(marker);
+  const observed = await f.runFast("observe", heldObserve);
+  assert.equal(observed.url, f.ui.url); assert.equal(f.getState().savedUrl, f.ui.url);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("pending Send navigation captures the inspection race and empty event waits remain bounded", async () => {
+  for (const race of [false, true]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    f.ui.sendEnabled = false;
-    f.ui.deferSavedUrl = delayed === "saved URL";
-    let sentMessages;
-    f.ui.onSend = () => { if (delayed === "generation") sentMessages = f.ui.userMessages.splice(0); };
-    f.ui.onWait = () => {
-      if (f.ui.waitedMs >= 8000) f.ui.sendEnabled = true;
-      // This evidence arrives within a fresh phase budget, but after the
-      // original Send budget. Resetting a deadline would wrongly confirm it.
-      if (f.ui.waitedMs >= 11000) {
-        f.ui.url = "https://chatgpt.com/c/owned-conversation";
-        if (sentMessages) f.ui.userMessages = sentMessages;
-      }
+    f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/unsettled"; };
+    await f.runFast("send", { ...plugin, prompt: "Request" });
+    if (race) f.ui.onNavigationCapture = () => { f.ui.url = "https://chatgpt.com/c/settled"; };
+    const before = f.ui.observationReads;
+    const observed = await f.runFast("observe", heldObserve);
+    if (race) {
+      assert.equal(observed.url, f.ui.url); assert.equal(f.ui.navigationWaits, undefined);
+    } else {
+      assert.deepEqual(observed, { operation: "observe", ownershipPending: true });
+      assert.equal(f.ui.navigationWaits, 1); assert.equal(f.ui.waitedMs, 1000);
+      assert.equal(f.ui.observationReads - before, 2, "No repeated snapshots after an empty navigation wait.");
+      assert.equal(f.getState().savedUrl, undefined); assert.equal(f.getState().sendConfirmed, false);
+    }
+    assert.equal(f.ui.generationWaits, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("pending navigation rejects truncated evidence, changed owners and unsafe or ambiguous destinations", async () => {
+  for (const change of ["truncated capture", "truncated wait", "owner", "tab", "browser", "late event", "foreign", "temporary", "fragment", "credentials", "duplicate marker", "foreign latest"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.url = "https://chatgpt.com/unsettled"; };
+    await f.runFast("send", { ...plugin, prompt: "Request" });
+    if (change === "truncated capture") f.ui.navigationCapture = { cursor: 0, events: [], truncated: true };
+    f.ui.onNavigationWait = ({ afterSequence }) => {
+      f.ui.url = "https://chatgpt.com/c/settled";
+      if (change === "owner") f.activeTurn().turnId = "foreign-owner";
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      if (change === "browser") f.getState().browser = { ...f.browser };
+      if (change === "late event") f.advance(3000);
+      if (change === "foreign") f.ui.url = "https://foreign.invalid/c/settled";
+      if (change === "temporary") f.ui.url += "?temporary-chat=true";
+      if (change === "fragment") f.ui.url += "#private";
+      if (change === "credentials") f.ui.url = "https://private:secret@chatgpt.com/c/settled";
+      if (["duplicate marker", "foreign latest"].includes(change)) f.ui.userMessages.push({ ...f.ui.userMessages[0],
+        messageId: messageId(2000), ...(change === "foreign latest" ? { text: "Another request" } : {}) });
+      return { cursor: afterSequence + 1, events: [{ method: "Page.navigatedWithinDocument" }], truncated: change === "truncated wait" };
     };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Shared deadline" }), /its effect is uncertain/);
-    assert.equal(f.ui.waitedMs, 10000);
-    assert.equal(f.getState().sendConfirmed, false);
-    assert.equal(f.ui.sendClicks, 1);
-    await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);
+    await assert.rejects(f.runFast("observe", heldObserve), /navigation|different native turn|pending browser Send changed|deadline|owned saved conversation|ambiguous/u);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().savedUrl, undefined);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
 
-test("a missing saved URL or temporary URL after Send remains uncertain and cannot repeat Send", async () => {
-  for (const url of ["https://chatgpt.com/", "https://chatgpt.com/c/owned-conversation?temporary-chat=true"]) {
+test("initial and successor home readiness admit normal query controls with independent SDK metadata", async () => {
+  for (const home of ["https://chatgpt.com", "https://chatgpt.com/?model=synthetic"]) {
     const f = fixture({ fastTimers: true });
+    f.ui.onGoto = () => { f.ui.url = home; f.ui.sdkUrl = home; };
     await f.ready();
+    assert.equal(f.ui.sendClicks, 0); assert.equal(f.getState().savedUrl, undefined);
+    assert.equal((await f.run("continue", { turnId: "initial-next", interruptedTurnId: base.turnId })).url, home);
+    await f.runFast("send", { ...plugin, turnId: "initial-next", prompt: "Initial request" });
+    f.ui.sdkUrl = undefined; f.ui.texts.push("Completed initial answer"); f.ui.complete = true;
+    await f.run("observe", { turnId: "initial-next" }); await f.run("retain", { turnId: "initial-next" });
+    showFullConversation(f.ui);
+    const previousChatUrl = f.getState().savedUrl;
+    f.ui.onStartNewChat = () => { f.ui.url = home; f.ui.sdkUrl = "https://chatgpt.com/auth/loading"; };
+    const rolled = await f.run("rollover", { turnId: "successor", previousChatUrl });
+    assert.equal(rolled.url, home); assert.equal(rolled.needsHistory, true);
+    const continued = await f.run("continue", { turnId: "successor-next", needsHistory: true });
+    assert.equal(continued.url, home); assert.equal(continued.needsHistory, true);
+    assert.equal(f.ui.startNewChatClicks, 1); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("normal home URL admission allows controls but excludes other routes, temporary mode and credentials", () => {
+  for (const value of ["https://chatgpt.com", "https://chatgpt.com/", "https://chatgpt.com?model=synthetic", "https://chatgpt.com/?model=synthetic"]) {
+    assert.equal(isNormalChatHomeUrl(value), true);
+  }
+  for (const value of [null, "bad", "https://elsewhere.test/", "http://chatgpt.com/", "https://chatgpt.com/c/foreign",
+    "https://chatgpt.com/auth/login", "https://chatgpt.com/?temporary-chat=false", "https://chatgpt.com/#private",
+    "https://user:private@chatgpt.com/", "https://chatgpt.com:444/"]) assert.equal(isNormalChatHomeUrl(value), false);
+});
+
+test("cached pending Send programs admit independent SDK home variants and coherent DOM query homes", async () => {
+  for (const sdkUrl of ["https://chatgpt.com", "https://chatgpt.com/?model=synthetic"]) {
+    for (const domUrl of ["https://chatgpt.com/", "https://chatgpt.com/?model=synthetic"]) {
+      const f = fixture({ fastTimers: true }); await f.ready();
+      let pending;
+      f.ui.onSend = () => { pending = f.ui.userMessages.pop(); f.ui.url = domUrl; f.ui.sdkUrl = sdkUrl; };
+      const sent = await f.runFast("send", { ...plugin, prompt: "PRIVATE_PENDING_REQUEST" });
+      assert.equal(sent.generationPending, true); assert.equal(sent.url, domUrl);
+      assert.equal(f.getState().sendConfirmed, false);
+      assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+      assert.equal(f.getState().sendConfirmed, false);
+      f.ui.userMessages.push(pending); f.ui.url = "https://chatgpt.com/c/owned-conversation";
+      const observed = await f.run("observe", heldObserve);
+      assert.equal(observed.url, f.ui.url); assert.equal(observed.generationTurnKey, pending.messageId);
+      assert.equal(f.getState().sendConfirmed, true); assert.equal(f.ui.sendClicks, 1);
+    }
+  }
+});
+
+test("pending Send URL diagnostics stay bounded and reject unsafe SDK metadata", async () => {
+  for (const sdkUrl of ["https://chatgpt.com/?temporary-chat=true",
+    "https://private-user:private-password@chatgpt.com/"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    let pending;
+    f.ui.onSend = () => { pending = f.ui.userMessages.pop(); f.ui.url = "https://chatgpt.com/"; };
+    await f.runFast("send", { ...plugin, prompt: "PRIVATE_PENDING_REQUEST" });
+    f.ui.sdkUrl = sdkUrl; f.ui.url = "https://chatgpt.com/c/owned-conversation"; f.ui.userMessages.push(pending);
+    await assert.rejects(f.run("observe", heldObserve), error => {
+      assert.match(error.message, /ROUTER_WEB_SEND_DIAGNOSTIC/);
+      assert.doesNotMatch(error.message, /PRIVATE_PENDING_REQUEST|private-user|private-password|foreign-private-id|https:/);
+      return true;
+    });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.runFast("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/);
+  }
+});
+
+test("first-chat navigation establishes its saved URL and marker in one coherent Send proof", async () => {
+  // The old URL/mode/anchor/URL sequence rejected a provisional first saved
+  // location changing before the anchor read, although no saved URL was owned.
+  for (const provisional of ["https://chatgpt.com/", "https://chatgpt.com/c/provisional-location"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
     f.ui.deferSavedUrl = true;
-    f.ui.onSend = () => { f.ui.url = url; };
-    await assert.rejects(f.run("send", { ...plugin, prompt: "Uncertain persistence" }), /no verified saved conversation URL/);
-    assert.equal(f.getState().sendConfirmed, false);
-    assert.equal(f.getState().sendClicked, true);
-    assert.equal(f.ui.waitedMs, 10000);
+    f.ui.onSend = () => { f.ui.url = provisional; };
+    f.ui.onReplyRead = options => { if (options?.projection === "anchor") f.ui.url = "https://chatgpt.com/c/owned-conversation"; };
+    const sent = await f.run("send", { ...plugin, prompt: "Initial saved URL transition" });
+    assert.equal(sent.sent, true); assert.equal(sent.url, f.ui.url);
+    assert.equal(f.getState().sendConfirmed, true);
+    const observed = await f.run("observe", heldObserve);
+    assert.equal(observed.generationTurnKey, messageId(1001)); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("post-click Send confirmation is one coherent projection without URL or per-control RPCs", async () => {
+  const f = fixture(); await f.ready();
+  let before;
+  const counts = () => ({ url: f.ui.urlReads, controls: f.ui.controlReads, projections: f.ui.observationReads });
+  f.ui.onSend = () => { before = counts(); };
+  const sent = await f.run("send", { ...plugin, prompt: "Coherent dispatch" });
+  assert.equal(sent.sent, true);
+  const after = counts();
+  assert.deepEqual({ url: after.url - before.url, controls: after.controls - before.controls,
+    projections: after.projections - before.projections }, { url: 0, controls: 0, projections: 1 });
+});
+
+test("dispatch and pending confirmation reject temporary and duplicate mounted controls without replay", async () => {
+  for (const pending of [false, true]) for (const control of ["Stop", "Turn off temporary chat", "Temporary chat"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const interfere = () => {
+      if (control === "Stop") { f.ui.stop = true; f.ui.stopCount = 2; }
+      else if (control === "Turn off temporary chat") f.ui.temporary = true;
+      else f.ui.observationControls = { [control]: [domElement("h2"), domElement("h2")] };
+    };
+    if (pending) f.ui.onSend = () => { f.ui.userMessages = []; };
+    else f.ui.onSend = interfere;
+    const result = await f.run("send", { ...plugin, prompt: "Private current request" });
+    if (pending) {
+      assert.equal(result.generationPending, true); interfere();
+      await assert.rejects(f.run("observe", heldObserve), /normal-mode controls are unrecognized or ambiguous/);
+    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "normal-controls-unavailable" });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Never repeat" }), /cannot be replayed/);
+  }
+});
+
+test("accessibility-hidden mode controls are omitted by SDK role queries in dispatch and observation", async () => {
+  for (const hidden of ["hidden", "visibility", "aria-hidden"]) {
+    const f = fixture(); await f.ready();
+    const control = (tag, name) => {
+      const element = domElement(tag, { "aria-label": name });
+      if (hidden === "hidden") element.setAttribute("hidden", "");
+      else if (hidden === "visibility") element.visibilityStyle = "hidden";
+      else element.setAttribute("aria-hidden", "true");
+      return element;
+    };
+    f.ui.onSend = () => {
+      f.ui.observationControls = Object.fromEntries([["Stop", "button"], ["Turn off temporary chat", "button"], ["Temporary chat", "h2"]]
+        .map(([name, tag]) => [name, [control(tag, name), control(tag, name)]]));
+    };
+    const sent = await f.run("send", { ...plugin, prompt: "Normal saved request" });
+    assert.equal(sent.sent, true);
+    f.ui.texts.push("Owned saved answer"); f.ui.complete = true;
+    assert.equal((await f.run("observe")).completed, true);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("post-click Send proof retains the exact tab, browser and binding identity across awaits", async () => {
+  for (const change of ["tab", "id", "SDK tab identity", "browser"]) {
+    const f = fixture(); await f.ready();
+    f.ui.onSend = () => {
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      else if (change === "id") f.getState().tabId = "replacement-tab";
+      else if (change === "SDK tab identity") f.ui.tabId = "replacement-tab";
+      else f.getState().browser = { ...f.browser };
+    };
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Owned dispatch" }), /active browser Send changed/);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.getState().sendConfirmed, false);
+  }
+});
+
+test("pending and anchored observations retain the exact SDK tab and browser across the coherent read", async () => {
+  for (const pending of [false, true]) for (const change of ["tab", "id", "SDK tab identity", "browser"]) {
+    const f = fixture(); await f.ready();
+    let current;
+    if (pending) f.ui.onSend = () => { current = f.ui.userMessages.splice(0); };
+    await f.run("send", { ...plugin, prompt: "Owned current request" });
+    if (pending) f.ui.userMessages = current;
+    f.ui.onReplyRead = options => {
+      if (!(pending ? options?.projection === "anchor" : options?.observation)) return;
+      if (change === "tab") f.getState().tab = { ...f.tab };
+      else if (change === "id") f.getState().tabId = "replacement-tab";
+      else if (change === "SDK tab identity") f.ui.tabId = "replacement-tab";
+      else f.getState().browser = { ...f.browser };
+    };
+    await assert.rejects(f.run("observe", heldObserve), /pending browser Send changed|observed browser generation changed/);
+    if (pending) assert.equal(f.getState().sendConfirmed, false);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("paste preparation cannot determine delayed post-click saved URL or generation ownership", async () => {
+  for (const delayed of ["saved URL", "generation"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.sendEnabled = false; f.ui.deferSavedUrl = delayed === "saved URL";
+    let sentMessages;
+    f.ui.onSend = () => { if (delayed === "generation") sentMessages = f.ui.userMessages.splice(0); };
+    f.ui.onWait = () => { if (f.ui.waitedMs >= 8000) f.ui.sendEnabled = true; };
+    const sent = await f.run("send", { ...plugin, prompt: "Shared preparation deadline" });
+    assert.equal(sent.generationPending, true); assert.equal(f.ui.waitedMs, 8000);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.ui.sendClicks, 1);
+    assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    f.advance(3000);
+    f.ui.url = "https://chatgpt.com/c/owned-conversation";
+    if (sentMessages) f.ui.userMessages = sentMessages;
+    const owned = await f.run("observe", heldObserve);
+    assert.equal(owned.generationTurnKey, messageId(1001)); assert.equal(owned.normal, true);
+    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "No replay" }), /cannot be replayed/);
+  }
+});
+
+test("an initial home URL stays pending while a temporary URL fails without a second Send", async () => {
+  for (const url of ["https://chatgpt.com/", "https://chatgpt.com/c/owned-conversation?temporary-chat=true"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.deferSavedUrl = true; f.ui.onSend = () => { f.ui.url = url; };
+    const result = await f.run("send", { ...plugin, prompt: "Uncertain persistence" });
+    if (url === "https://chatgpt.com/") {
+      assert.equal(result.generationPending, true);
+      assert.deepEqual(await f.run("observe", heldObserve), { operation: "observe", ownershipPending: true });
+    } else assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "url-class-mismatch",
+      sendUrlDiagnostic: { input: "parsed", protocolValid: true, originValid: true, pathClass: "saved-chat",
+        temporaryChatPresent: true, hashPresent: false, credentialsPresent: false } });
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().sendClicked, true);
     assert.equal(f.ui.sendClicks, 1);
     await assert.rejects(f.run("send", { ...plugin, prompt: "Never repeat" }), /cannot be replayed/);
+  }
+});
+
+test("rejected post-click URLs report only bounded structure and retain uncertain Send guards", async () => {
+  const parsed = { input: "parsed", protocolValid: true, originValid: true, pathClass: "home",
+    temporaryChatPresent: false, hashPresent: false, credentialsPresent: false };
+  const unknown = { protocolValid: null, originValid: null, pathClass: null,
+    temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+  const cases = [
+    [17, { input: "non-string", ...unknown }],
+    ["PRIVATE_URL_CANARY", { input: "unparseable", ...unknown }],
+    ["http://chatgpt.com/?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY", { ...parsed, protocolValid: false, originValid: false }],
+    ["https://PRIVATE_HOST_CANARY.invalid/PRIVATE_PATH_CANARY", { ...parsed, originValid: false, pathClass: "other" }],
+    ["https://chatgpt.com/PRIVATE_PATH_CANARY#PRIVATE_HASH_CANARY", { ...parsed, pathClass: "other", hashPresent: true }],
+    ["https://chatgpt.com/c/private-chat-id?PRIVATE_QUERY_CANARY=PRIVATE_VALUE_CANARY#PRIVATE_HASH_CANARY",
+      { ...parsed, pathClass: "saved-chat", hashPresent: true }],
+    ["https://PRIVATE_USER_CANARY:PRIVATE_PASSWORD_CANARY@chatgpt.com/c/private-chat-id",
+      { ...parsed, pathClass: "saved-chat", credentialsPresent: true }],
+    ["https://chatgpt.com/?temporary-chat=PRIVATE_VALUE_CANARY", { ...parsed, temporaryChatPresent: true }],
+  ];
+  for (const [url, expected] of cases) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    f.ui.onSend = () => { f.ui.url = url; f.ui.sdkUrl = "https://chatgpt.com/"; };
+    const result = await f.runFast("send", { ...plugin, prompt: "PRIVATE_PROMPT_CANARY" });
+    assert.deepEqual(result, { operation: "send", sendFailure: "saved-url", sendDiagnostic: "url-class-mismatch",
+      sendUrlDiagnostic: expected });
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|private-chat-id|https?:/u);
+    assert.equal(f.getState().sendConfirmed, false); assert.equal(f.getState().sendClicked, true);
+    assert.equal(f.ui.sendClicks, 1);
+    await assert.rejects(f.runFast("send", { ...plugin, prompt: "Never replay" }), /cannot be replayed/u);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
@@ -1648,7 +2303,7 @@ test("a rollover attempt that never reaches proven home cannot retry its click o
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
   await assert.rejects(f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url }), /did not reach an empty normal home within 10 seconds/);
-  assert.equal(f.ui.waitedMs, 10000);
+  assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
   await assert.rejects(f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url }), /cannot be clicked again/);
   await assert.rejects(f.run("continue", { turnId: "next-turn", needsHistory: true, interruptedTurnId: base.turnId }), /not a proven empty normal home/);
   assert.equal(f.ui.startNewChatClicks, 1);
@@ -1661,13 +2316,13 @@ test("rollover waits for normal home hydration after its one click without anoth
   const f = await recoverableFixture();
   showFullConversation(f.ui);
   f.ui.deferRolloverHome = true;
-  f.ui.onWait = () => {
-    if (f.ui.waitedMs >= 300) Object.assign(f.ui, { url: "https://chatgpt.com/", texts: [],
+  f.ui.onHomeWait = () => {
+    Object.assign(f.ui, { url: "https://chatgpt.com/?model=synthetic", texts: [],
       composerText: "", chip: false, fullBanners: [], fullButtons: [] });
   };
   const rolled = await f.run("rollover", { turnId: "next-turn", previousChatUrl: f.recovery.url });
   assert.equal(rolled.rolledOver, true);
-  assert.equal(f.ui.waitedMs, 300);
+  assert.equal(f.ui.waitedMs, 0);
   assert.equal(f.ui.startNewChatClicks, 1);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
@@ -2023,10 +2678,164 @@ test("a duplicate generation key or a later foreign turn cannot supply the final
   }
 });
 
+test("pending acceptance defers only content-free short reads until the original unique latest generation returns", async () => {
+  for (const initial of ["missing", "later blank", "historical only", "later historical"]) {
+    const f = fixture(); await f.ready();
+    f.ui.texts = ["Historical private answer"];
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
+    const historical = () => observedTurn(messageId(900), "Historical private request", [assistantMessage(0, "Historical private answer")]);
+    assert.deepEqual(f.getState().baselineTurnKeys, [messageId(900)]);
+    f.ui.messageRoot = initial === "missing" ? domElement("main", {})
+      : initial === "later blank" ? domElement("main", {}, owned(), observedTurn("rendering-placeholder", "", [], { complete: false }))
+        : initial === "historical only" ? domElement("main", {}, historical()) : domElement("main", {}, owned(), historical());
+    const composer = f.ui.composerText = "Keep this private draft";
+    const typed = [...f.ui.typed], reads = f.ui.observationReads, completed = f.getState().completed;
+    f.ui.onStopWait = () => { assert.fail("Observation must yield after its short coherent read."); };
+    const pending = await f.run("observe", pendingAcceptance);
+    assert.deepEqual(pending, { operation: "observe", ownershipPending: true });
+    assert.equal(f.ui.observationReads - reads, 2, "The first inactive read probes active then inactive SDK profiles.");
+    assert.deepEqual(f.getState().generationReplyIds, [], "Unowned text never becomes generation evidence.");
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.getState().completed, completed);
+    f.ui.messageRoot = domElement("main", {}, historical(), owned());
+    const observed = await f.run("observe", pendingAcceptance);
+    assert.deepEqual([observed.assistantText, observed.completed, observed.generationTurnKey], ["Owned answer", true, sent.generationTurnKey]);
+    assert.equal(f.ui.observationReads - reads, 3, "The later inactive call uses one fresh coherent reply read.");
+    assert.equal(f.ui.stopWaits, 0);
+    assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("pending acceptance rejects duplicate original keys and unowned new foreign UUIDs without waiting", async () => {
+  for (const loss of ["duplicate", "replacement", "later request", "later blank UUID", "nested request"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    const owned = () => observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]);
+    const foreign = () => observedTurn(messageId(701), "Manual user request", [assistantMessage(21, "Foreign answer")]);
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [], { complete: false }));
+    assert.equal((await f.run("observe", pendingAcceptance)).replyUnavailableReason, "no-new-message");
+    f.ui.messageRoot = loss === "duplicate" ? domElement("main", {}, owned(), owned())
+      : loss === "replacement" ? domElement("main", {}, foreign())
+        : loss === "later request" ? domElement("main", {}, owned(), foreign())
+          : loss === "later blank UUID" ? domElement("main", {}, owned(), observedTurn(messageId(701), "", [], { complete: false }))
+            : domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [foreign()]));
+    const typed = [...f.ui.typed], composer = f.ui.composerText;
+    f.ui.onStopWait = () => { assert.fail("A foreign or duplicate UUID cannot wait for another ownership view."); };
+    const observed = await f.run("observe", pendingAcceptance);
+    assert.equal(observed.replyUnavailableReason, loss === "duplicate" ? "duplicate-generation-turn" : "generation-turn-not-latest");
+    assert.deepEqual([observed.replyId, observed.assistantText, observed.completed, observed.generationReplyIds], [null, "", false, []]);
+    assert.equal(observed.ownershipPending, undefined);
+    assert.deepEqual(observed.ownershipDiagnostic, { anchorCount: loss === "duplicate" ? 2 : Number(loss !== "replacement"),
+      turnCount: 2 - Number(loss === "replacement"), latestMatches: loss === "duplicate",
+      foreignTurnCount: Number(loss !== "duplicate") });
+    assert.doesNotMatch(JSON.stringify(observed.ownershipDiagnostic), /private|answer|[a-f0-9]{8}-/iu);
+    assert.equal(f.ui.stopWaits, 0);
+    assert.equal(f.getState().generationTurnKey, sent.generationTurnKey);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Do not replay" }), /cannot be replayed/u);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("held pending acceptance retains unmounted verified history and accepts older newly mounted UUIDs before its unique latest anchor", async () => {
+  const f = fixture(); await f.ready();
+  const first = await f.run("send", { ...plugin, prompt: "First request" });
+  const historical = () => observedTurn(first.generationTurnKey, "First request", [assistantMessage(10, "First completed answer")]);
+  f.ui.messageRoot = domElement("main", {}, historical());
+  assert.equal((await f.run("observe", pendingAcceptance)).completed, true);
+  await f.run("retain");
+  f.ui.messageRoot = domElement("main", {});
+  const turnId = "following-turn";
+  await f.run("continue", { turnId });
+  assert.deepEqual(f.getState().baselineTurnKeys, [first.generationTurnKey]);
+  f.ui.onSend = () => {
+    const user = f.ui.userMessages.at(-1);
+    f.ui.messageRoot = domElement("main", {}, observedTurn(user.messageId, user.text, [], { complete: false }));
+  };
+  const current = await f.run("send", { ...plugin, prompt: "Following request", turnId });
+  assert.deepEqual(f.getState().baselineTurnKeys, [first.generationTurnKey], "The prior confirmed turn remains known despite being absent from Continue and pre-Send.");
+  f.ui.onStopWait = () => { assert.fail("Remounted history cannot start an observation selector wait."); };
+  const options = { ...pendingAcceptance, turnId };
+  f.ui.messageRoot = domElement("main", {}, historical());
+  assert.deepEqual(await f.run("observe", options), { operation: "observe", ownershipPending: true });
+  assert.deepEqual(f.getState().generationReplyIds, []);
+  const newlyMountedKey = messageId(702);
+  assert.equal(f.getState().baselineTurnKeys.includes(newlyMountedKey), false);
+  f.ui.messageRoot = domElement("main", {}, observedTurn(newlyMountedKey, "Earlier mounted request", [assistantMessage(30, "Earlier mounted answer")]),
+    historical(), observedTurn(current.generationTurnKey, "Following request", [assistantMessage(20, "Current answer")]));
+  const observed = await f.run("observe", options);
+  assert.deepEqual([observed.generationTurnKey, observed.replyId, observed.assistantText, observed.completed],
+    [current.generationTurnKey, messageId(20), "Current answer", true]);
+  assert.deepEqual(observed.generationReplyIds, [messageId(20)]);
+  assert.equal(observed.ownershipPending, undefined);
+  assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.sendClicks, 2);
+});
+
+test("pending-acceptance renewal tolerates remounts after an owned empty read without selector waits or cached ownership", async () => {
+  const f = fixture(); await f.ready();
+  const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+  f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [], { complete: false }));
+  const first = await f.run("observe", pendingAcceptance);
+  assert.equal(first.replyUnavailableReason, "no-new-message");
+  f.ui.onStopWait = () => { assert.fail("A later adapter read or renewal cannot start a selector wait."); };
+  const reads = f.ui.observationReads;
+  f.ui.messageRoot = domElement("main", {});
+  assert.deepEqual(await f.run("observe", pendingAcceptance), { operation: "observe", ownershipPending: true });
+  f.ui.messageRoot = domElement("main", {}, observedTurn("rendering-placeholder", "Private placeholder", [assistantMessage(21, "Unowned private text")], { complete: false }));
+  assert.deepEqual(await f.run("observe", pendingAcceptance), { operation: "observe", ownershipPending: true });
+  assert.deepEqual(f.getState().generationReplyIds, []);
+  f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]));
+  const later = await f.run("observe", pendingAcceptance);
+  assert.deepEqual([later.replyId, later.assistantText, later.completed], [messageId(20), "Owned answer", true]);
+  assert.equal(later.ownershipDiagnostic, undefined);
+  assert.equal(f.ui.observationReads - reads, 3);
+  assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
+});
+
+test("post-acknowledgement or unheld observations fail missing ownership without a pending frame", async () => {
+  for (const options of [{}, { ...pendingAcceptance, inputAcknowledgementPending: false }, { inputAcknowledgementPending: true }]) {
+    const f = fixture(); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.messageRoot = domElement("main", {});
+    f.ui.onStopWait = () => { assert.fail("A post-acknowledgement observation cannot wait for another ownership view."); };
+    const observed = await f.run("observe", options);
+    assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest");
+    assert.equal(observed.ownershipPending, undefined);
+    assert.deepEqual(observed.ownershipDiagnostic, { anchorCount: 0, turnCount: 0, latestMatches: false, foreignTurnCount: 0 });
+    assert.equal(f.ui.stopWaits, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("pending ownership reads preserve native errors, cancellation, URL and exact-owner guards without another Send", async () => {
+  for (const change of ["native error", "native cancellation", "native owner", "URL", "generation key"]) {
+    const f = fixture(); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Current request" });
+    f.ui.messageRoot = domElement("main", {});
+    const typed = [...f.ui.typed], composer = f.ui.composerText;
+    f.ui.onReplyRead = () => {
+      if (change === "native error") throw new Error("Native selector execution failed.");
+      if (change === "native cancellation") throw Object.assign(new Error("Native operation aborted."), { name: "AbortError" });
+      f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Current request", [assistantMessage(20, "Owned answer")]));
+      if (change === "native owner") f.activeTurn().turnId = "foreign-turn";
+      if (change === "URL") f.ui.url = "https://chatgpt.com/c/another-conversation";
+      if (change === "generation key") f.getState().generationTurnKey = messageId(999);
+    };
+    await assert.rejects(f.run("observe", pendingAcceptance), /Native selector execution failed|Native operation aborted|different native turn|normal saved URL|generation changed/u);
+    assert.equal(f.ui.stopWaits, 0);
+    assert.deepEqual(f.getState().generationReplyIds, []);
+    assert.equal(f.ui.composerText, composer); assert.deepEqual(f.ui.typed, typed);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
 test("Send cannot confirm an old remounted turn without this turn's short marker or replay its uncertain effect", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   f.ui.onSend = () => { f.ui.messageRoot = domElement('main', {}, observedTurn(messageId(700), 'Use turn_token previous_token unchanged. Request', [assistantMessage(99, 'Old answer')])); };
-  await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /unique prompt-owned turn/);
+  assert.equal((await f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' })).generationPending, true);
+  assert.deepEqual(await f.run('observe', heldObserve), { operation: 'observe', ownershipPending: true });
   assert.equal(f.getState().sendConfirmed, false);
   await assert.rejects(f.run('send', { ...plugin, prompt: 'Use turn_token fresh_token unchanged. Request' }), /already attempted/);
   assert.equal(f.ui.sendClicks, 1);
@@ -2267,22 +3076,58 @@ test("continuation reports one sanitized bounded identity diagnostic before anot
   }
 });
 
-test("lost kernel recovery uses the current same-session browser and verifies a raw UTF8 reply prefix with UTF16 length", async () => {
-  const f = await recoverableFixture();
-  f.loseBinding();
+test("lost kernel globals restore the exact existing tab without reopening or navigation and verify a raw UTF8 reply prefix with UTF16 length", async () => {
+  const nativeContext = {}, f = await recoverableFixture({ nativeContext });
+  const originalState = f.getState(), originalTab = f.tab;
+  for (const key of Object.keys(nativeContext)) delete nativeContext[key];
+  assert.equal(f.getState(), undefined);
+  assert.equal(f.activeTurn(), undefined);
   f.browser.browserId = "browser-after-restart";
   f.ui.texts[0] += "Later visible suffix";
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.normal, true);
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, false);
+  assert.equal(continued.tabId, f.recovery.tabId);
   assert.equal(continued.url, f.recovery.url);
   assert.equal(continued.assistantText, f.text + "Later visible suffix");
   assert.equal(f.getState().browser.browserId, "browser-after-restart");
+  assert.notEqual(f.getState(), originalState);
+  assert.equal(f.getState().tab, originalTab);
   assert.equal(f.activeTurn().turnId, "next-turn");
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.reloads, 0);
+});
+
+test("full-chat binding recovery reports browser effects only while the recovered tab identity survives retention", async () => {
+  for (const changeDuringRetention of [false, true]) {
+    const f = await recoverableFixture();
+    f.loseBinding();
+    showFullConversation(f.ui);
+    const handoff = f.tab.markHandoff;
+    let recoveryHandoffs = 0;
+    f.tab.markHandoff = async () => {
+      await handoff();
+      if (++recoveryHandoffs === 2 && changeDuringRetention) f.ui.tabId = "changed-tab";
+    };
+    const continuation = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    if (changeDuringRetention) await assert.rejects(continuation, /tab identity changed during recovery/u);
+    else {
+      const continued = await continuation;
+      assert.equal(continued.conversationFull, true);
+      assert.equal(continued.bindingRestored, true);
+      assert.equal(continued.tabReopened, false);
+      assert.equal(continued.tabNavigated, false);
+      assert.equal(continued.assistantText, f.text);
+    }
+    assert.equal(f.ui.newTabs, 1);
+    assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
+    assert.equal(f.ui.sendClicks, 1);
+  }
 });
 
 test("a stale completed predecessor reloads once, waits for its exact checkpoint and acquires ownership only after full verification", async () => {
@@ -2300,8 +3145,9 @@ test("a stale completed predecessor reloads once, waits for its exact checkpoint
   };
   f.ui.onAttachmentWait = ({ selector, timeoutMs }) => {
     order.push("attached");
-    assert.equal(selector, `[data-chatgpt-selection-message-id="${f.recovery.replyId}"]`);
-    assert.equal(timeoutMs, 10000);
+    assert.ok(selector.includes(`@data-chatgpt-selection-message-id='${f.recovery.replyId}'`));
+    assert.ok(selector.includes(`@data-turn-key='${f.recovery.generationTurnKey}'`));
+    assert.ok(timeoutMs > 0 && timeoutMs <= 10000);
     assert.equal(f.activeTurn(), undefined);
     f.ui.messageRoot = f.restored();
   };
@@ -2309,6 +3155,9 @@ test("a stale completed predecessor reloads once, waits for its exact checkpoint
   f.tab.markHandoff = async () => { order.push("handoff"); assert.equal(f.activeTurn()?.turnId, "next-turn"); await handoff(); };
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, true, "Refreshing the same tab must disclose the recovery navigation.");
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.tabId, f.recovery.tabId);
   assert.equal(continued.url, f.recovery.url);
@@ -2355,7 +3204,7 @@ test("recovery cannot refresh unknown replies, newer user activity, drafts, acti
 
 test("failed refresh never accepts changed checkpoint proof or repeats reload, and a late verified checkpoint can recover without another reload", async () => {
   for (const [scenario, afterReload, expected] of [
-    ["missing attachment", () => {}, /did not attach within 10 seconds/u],
+    ["missing attachment", () => {}, /did not become ready within 10 seconds/u],
     ["reload failure", f => { f.ui.reloadFailure = true; }, /reload failed/u],
     ["changed prefix", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(`Changed ${f.text}`); }; }, /reply-prefix-mismatch/u],
     ["changed generation identity", f => { f.ui.onAttachmentWait = () => { f.ui.messageRoot = f.restored(f.text, messageId(777)); }; }, /generation-turn-not-unique/u],
@@ -2379,6 +3228,9 @@ test("failed refresh never accepts changed checkpoint proof or repeats reload, a
     f.ui.messageRoot = f.restored();
     const continued = await f.run("continue", { turnId: "late-turn", recovery: f.recovery });
     assert.equal(continued.assistantText, f.text);
+    assert.equal(continued.bindingRestored, true);
+    assert.equal(continued.tabReopened, false);
+    assert.equal(continued.tabNavigated, true, "A late successful checkpoint cannot erase the earlier recovery reload.");
     assert.equal(f.ui.reloads, 1);
     assert.equal(f.getState().recoveryReloadCheckpoint, undefined);
   }
@@ -2391,8 +3243,88 @@ test("saved URL reacquires one existing tab when its retained old ID is absent",
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.tabId, "current-saved-tab");
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true, "A different existing tab cannot claim restoration of the original tab.");
+  assert.equal(continued.tabNavigated, false);
   assert.equal(f.ui.newTabs, 1);
   assert.equal(f.ui.navigations.length, 1);
+});
+
+test("navigated recovery waits for location, message content and completed generation events before the full checkpoint proof", async () => {
+  const f = await recoverableFixture({ text: "Checkpoint content that hydrates in several explicit stages." });
+  f.loseBinding(); f.ui.present = false;
+  const locationEntered = Promise.withResolvers(), locationReleased = Promise.withResolvers();
+  const checkpointEntered = Promise.withResolvers(), checkpointReleased = Promise.withResolvers();
+  const rendered = (text, complete) => domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, text)], { complete }));
+  f.ui.onGoto = () => { f.ui.url = "https://chatgpt.com/"; f.ui.messageRoot = rendered("", false); };
+  f.ui.onUrlWait = async ({ url }) => { assert.equal(url, f.recovery.url); locationEntered.resolve(); await locationReleased.promise; };
+  f.ui.onAttachmentWait = async () => { checkpointEntered.resolve(); await checkpointReleased.promise; };
+  f.ui.onWait = () => assert.fail("Recovery must not schedule a timer poll.");
+  const reads = f.ui.replyReads, sends = f.ui.sendClicks;
+  let finished = false;
+  const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery }).then(value => { finished = true; return value; });
+  await locationEntered.promise;
+  assert.equal(f.ui.attachmentWaits, 0); assert.equal(finished, false);
+  f.ui.url = f.recovery.url; locationReleased.resolve(); await checkpointEntered.promise;
+  assert.equal(f.ui.replyReads, reads); assert.equal(finished, false);
+  f.ui.messageRoot = rendered(f.text, false); await Promise.resolve();
+  assert.equal(f.ui.replyReads, reads); assert.equal(finished, false, "Text and identity alone do not establish a completed checkpoint.");
+  f.ui.messageRoot = rendered(f.text, true); checkpointReleased.resolve();
+  const continued = await recovering;
+  assert.equal(continued.assistantText, f.text); assert.equal(continued.tabNavigated, true);
+  assert.equal(f.ui.sendClicks, sends); assert.equal(f.ui.newTabs, 2); assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0);
+});
+
+test("unchanged paragraph, BR and CodeMirror checkpoints recover when normalized source is longer than DOM text", async () => {
+  for (const form of ["paragraphs", "BR", "CodeMirror"]) {
+    const content = () => {
+      if (form === "paragraphs") return domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("p", {}, domText("Before.")), domElement("p", {}, domText("After.")));
+      if (form === "BR") return domElement("div", { "data-markdown-text-style": "assistant-message" }, domText("Before."), domElement("br"), domText("After."));
+      return domElement("div", { "data-markdown-text-style": "assistant-message", "data-markdown-copy": "code-block" },
+        domElement("div", { class: "cm-content", "data-language": "python" },
+          domElement("div", { class: "cm-line" }, domText("a")),
+          ...Array.from({ length: 12 }, () => domElement("div", { class: "cm-line" }, domElement("br"))),
+          domElement("div", { class: "cm-line" }, domText("b"))));
+    };
+    const initial = content(), projected = readReplies([initial]).replies[0].text;
+    assert.ok(initial.textContent.length < projected.length, form);
+    const f = await recoverableFixture({ text: projected }); f.loseBinding(); f.ui.present = false;
+    f.ui.onGoto = () => {
+      const wrapper = domElement("div", { [browserDom.messageIdAttribute]: f.recovery.replyId }, content());
+      f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [wrapper]));
+    };
+    const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    assert.equal(continued.assistantText, projected, form);
+    assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("semantic checkpoint readiness owns its exact message renderer and preserves valid message fragments", async () => {
+  for (const form of ["missing renderer", "foreign renderer", "duplicate wrapper", "settled short body", "fragments"]) {
+    const f = await recoverableFixture({ text: "Before.\n\nAfter." }); f.loseBinding(); f.ui.present = false;
+    const markdown = text => domElement("div", { "data-markdown-text-style": "assistant-message" }, domText(text));
+    const wrap = (...children) => domElement("div", { [browserDom.messageIdAttribute]: f.recovery.replyId }, ...children);
+    f.ui.onGoto = () => {
+      const roots = form === "missing renderer" ? [wrap(domElement("div", {}, domText(f.text)))]
+        : form === "foreign renderer" ? [wrap(domElement("div", {}, domText(f.text))), domElement("div", { [browserDom.messageIdAttribute]: messageId(99) }, markdown(f.text))]
+          : form === "duplicate wrapper" ? [wrap(markdown(f.text)), wrap(markdown(f.text))]
+            : form === "settled short body" ? [wrap(markdown("short"))]
+              : [wrap(markdown("Before."), markdown("After."))];
+      f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", roots));
+    };
+    const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    if (form === "fragments") assert.equal((await recovering).assistantText, f.text);
+    else await assert.rejects(recovering, /missing-fresh-reply|expected-reply-mismatch|invalid-reply-identities|reply-prefix-too-short/);
+    if (["settled short body", "fragments"].includes(form)) assert.equal(f.ui.waitedMs, 0);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 2); assert.equal(f.ui.reloads, 0);
+  }
+});
+
+test("a rendered recovery checkpoint with a wrong stable digest fails immediately without polling or replay", async () => {
+  const f = await recoverableFixture({ text: "Original checkpoint content." }); f.loseBinding(); f.ui.present = false;
+  f.ui.onGoto = () => { f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, "Different checkpoint content.")])); };
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply-prefix-mismatch/);
+  assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.reloads, 0);
 });
 
 test("a missing original tab reopens only its exact saved URL and registers retention before navigation", async () => {
@@ -2408,9 +3340,41 @@ test("a missing original tab reopens only its exact saved URL and registers rete
   };
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.tabId, "reopened-tab");
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(continued.assistantText, f.text);
   assert.equal(f.ui.newTabs, 2);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("allocating a new recovery tab reports reopening even if the runtime reuses the original tab ID", async () => {
+  const f = await recoverableFixture();
+  f.loseBinding();
+  f.ui.present = false;
+  const newTab = f.browser.tabs.new;
+  f.browser.tabs.new = async () => { const tab = await newTab(); f.ui.tabId = f.recovery.tabId; return tab; };
+  f.ui.onGoto = () => { f.ui.texts = [f.text]; };
+  const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.equal(continued.tabId, f.recovery.tabId);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
+  assert.equal(f.ui.newTabs, 2);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
+test("binding recovery rejects a tab identity change during rendered proof before acquiring ownership", async () => {
+  const f = await recoverableFixture();
+  f.loseBinding();
+  f.ui.onReplyRead = () => { f.ui.tabId = "changed-tab"; };
+  const handoffs = f.ui.handoffs;
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /tab identity changed during recovery/u);
+  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.ui.handoffs, handoffs);
+  assert.equal(f.ui.newTabs, 1);
+  assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/"]);
   assert.equal(f.ui.sendClicks, 1);
 });
 
@@ -2425,6 +3389,9 @@ test("a manually closed saved tab recovers the same retained JavaScript binding 
   };
   const continued = await f.run("continue", { turnId: "next-turn", tabId: "owned-tab", recovery: f.recovery });
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, true);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(continued.tabId, "reopened-tab");
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.url, f.recovery.url);
@@ -2506,7 +3473,7 @@ test("reopening a virtualized saved chat captures its verified latest reply and 
   await f.run("retain");
   await f.run("continue", { turnId: "second-turn" });
   await f.run("send", { ...plugin, prompt: "Latest request", turnId: "second-turn" });
-  const latest = "Latest verified 🔧 assistant reply\n";
+  const latest = "Latest verified ðŸ”§ assistant reply\n";
   f.ui.texts.push(latest);
   const observed = await f.run("observe", { turnId: "second-turn" });
   await f.run("retain", { turnId: "second-turn" });
@@ -2543,6 +3510,9 @@ test("the known tab may navigate from verified empty normal home to its exact sa
   const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
   assert.equal(continued.tabId, "owned-tab");
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, true);
   assert.equal(f.ui.newTabs, 1);
   assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
 });
@@ -2745,7 +3715,7 @@ test("reopening deleted, inaccessible or redirected saved chats fails after one 
     f.ui.present = false;
     f.ui.onGoto = () => { if (redirect) f.ui.url = redirect; };
     await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /saved chat URL and reply did not become available/);
-    assert.equal(f.ui.waitedMs, 10000);
+    assert.ok(f.ui.waitedMs > 0 && f.ui.waitedMs <= 10000);
     assert.equal(f.ui.newTabs, 2);
     assert.deepEqual(f.ui.navigations, ["https://chatgpt.com/", f.recovery.url]);
     assert.equal(f.ui.sendClicks, 1);
@@ -2774,8 +3744,8 @@ test("recovery refuses a surviving active owner or ambiguous saved URL before cr
 });
 
 test("interrupted recovery retains the exact saved chat before reconciliation Stop and never repeats Send", async () => {
-  const f = await recoverableFixture({ completed: false });
-  f.loseBinding();
+  const nativeContext = {}, f = await recoverableFixture({ completed: false, nativeContext });
+  for (const key of Object.keys(nativeContext)) delete nativeContext[key];
   f.ui.onStopRequest = () => {
     assert.equal(f.activeTurn()?.turnId, "next-turn");
     assert.equal(f.ui.handoffs, 4, "Recovery and continuation renew retention before reconciliation Stop.");
@@ -2784,6 +3754,9 @@ test("interrupted recovery retains the exact saved chat before reconciliation St
   assert.equal(continued.assistantText, f.text);
   assert.equal(continued.interrupted, true);
   assert.equal(continued.recovered, true);
+  assert.equal(continued.bindingRestored, true);
+  assert.equal(continued.tabReopened, false);
+  assert.equal(continued.tabNavigated, false);
   assert.equal(f.ui.stopClicks, 1);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
@@ -2938,6 +3911,72 @@ test("interrupted continuation stops the preceding native owner and starts a new
   await f.run("send", { ...plugin, prompt: "Follow-up request", turnId: "next-turn" });
   assert.equal(f.ui.sendClicks, 2);
   assert.equal(f.ui.newTabs, 1);
+});
+
+test("every registered route and effort shares interrupted Stop allowance without late dispatch or deadline reset", async t => {
+  for (const model of WEB_MODEL_REGISTRY) for (const effort of Object.keys(model.efforts)) {
+    await t.test(`${model.slug} ${effort}`, async () => {
+      for (const consumed of [8000, 9800, 10001]) {
+        const f = fixture({ fastTimers: true }); await f.ready();
+        const selection = webModelSelection(model.slug, effort);
+        f.ui.familyText = selection.family;
+        await f.run("send", { ...plugin, prompt: "Interrupted request", modelFamily: selection.family, power: selection.power });
+        f.ui.stop = true;
+        const owner = f.activeTurn();
+        let delayed = false;
+        f.ui.onStopRead = () => { if (!delayed) { delayed = true; f.advance(consumed); } };
+        const continuation = f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+        if (consumed === 8000) {
+          await continuation;
+          assert.equal(f.ui.stopClickTimeoutMs, 1700, "Stop reserves confirmation from the consumed original deadline.");
+          assert.equal(f.ui.stopClicks, 1);
+        } else {
+          await assert.rejects(continuation, /confirmation deadline expired/);
+          assert.equal(f.ui.stopRequests, 0);
+          assert.equal(f.ui.stopClicks, 0);
+          assert.equal(f.getState().reconciliationStop, undefined, "No dispatch receipt is recorded for an unattempted Stop.");
+          assert.equal(f.activeTurn(), owner);
+        }
+        assert.equal(f.ui.sendClicks, 1);
+      }
+    });
+  }
+});
+
+test("interrupted continuation rearms an SDK-capped readiness wait without replaying the saved chat", async () => {
+  const f = fixture({ fastTimers: true }); await f.ready();
+  f.ui.texts.push("Earlier answer");
+  const sent = await f.run("send", { ...plugin, prompt: "Interrupted request" });
+  f.ui.texts.push("Partial answer");
+  f.ui.stop = true; f.ui.keepStopVisible = true; f.ui.hiddenMountedStop = true;
+  const state = f.getState(), tab = state.tab;
+  const messagesBefore = structuredClone(f.ui.userMessages), typedBefore = [...f.ui.typed];
+  const events = [];
+  f.ui.onStopWait = () => {
+    if (f.ui.stopWaits === 1) {
+      assert.equal(f.ui.stop, true); assert.equal(f.ui.complete, false);
+      events.push("sdk-timeout");
+      throw new Error("Playwright selector deadline exceeded\n\nlocator.waitFor(...) timed out");
+    }
+    assert(events.includes("active-read"), "A coherent active read must separate the capped wait from its rearm.");
+    events.push("owned-composer-idle");
+    f.ui.stop = false;
+  };
+  f.ui.onStopRead = () => {
+    if (f.ui.stopWaits === 1) {
+      assert.equal(f.ui.stop, true); assert.equal(f.ui.complete, false);
+      events.push("active-read");
+    }
+  };
+  const result = await f.run("continue", { turnId: "next-turn", interruptedTurnId: base.turnId });
+  assert.equal(result.interrupted, true); assert.equal(result.normal, true);
+  assert.equal(result.assistantText, "Partial answer"); assert.equal(result.tabId, sent.tabId); assert.equal(result.url, sent.url);
+  assert.equal(f.getState(), state); assert.equal(state.tab, tab); assert.equal(f.activeTurn()?.turnId, "next-turn");
+  assert.equal(f.ui.complete, false, "Continuation requires the witnessed composer transition, not invented completion.");
+  assert.equal(events[0], "sdk-timeout"); assert.equal(events.at(-1), "owned-composer-idle");
+  assert.equal(f.ui.stopWaits, 2); assert.equal(f.ui.stopRequests, 1); assert.equal(f.ui.stopClicks, 1);
+  assert.equal(f.ui.sendClicks, 1); assert.deepEqual(f.ui.userMessages, messagesBefore); assert.deepEqual(f.ui.typed, typedBefore);
+  assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.closeCount, 0); assert.equal(f.ui.waitedMs, 0);
 });
 
 test("interrupted continuation refuses a newer manual generation through final ownership transfer", async () => {
@@ -3321,7 +4360,7 @@ test("a visual observation returns the current generation without an artificial 
   assert.equal(f.ui.handoffs, 2);
 });
 
-test("active, completed and retention reads batch exact controls with the owned reply and document URL", async () => {
+test("active, completed and retention reads use coherent SDK profiles with no per-control RPCs", async () => {
   for (const operation of ["active", "completed", "retain"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
     await f.run("send", { ...plugin, prompt: "Request" });
@@ -3334,7 +4373,8 @@ test("active, completed and retention reads batch exact controls with the owned 
     assert.deepEqual({ tabs: f.ui.tabReads - before.tabs, urls: f.ui.urlReads - before.urls,
       replies: f.ui.replyReads - before.replies, controls: f.ui.controlReads - before.controls,
       observations: f.ui.observationReads - before.observations, waits: f.ui.waitedMs - before.waits },
-    { tabs: 1, urls: 1, replies: 1, controls: 0, observations: 1, waits: 0 });
+    { tabs: 1, urls: 1, replies: operation === "completed" ? 2 : 1, controls: 0,
+      observations: operation === "completed" ? 2 : 1, waits: 0 });
     assert.deepEqual([result.assistantText, result.completed, result.stopVisible, result.url],
       ["Owned answer", operation !== "active", operation === "active", f.getState().savedUrl]);
     assert.equal(f.ui.handoffs - before.handoffs, operation === "retain" ? 1 : 0);
@@ -3342,11 +4382,106 @@ test("active, completed and retention reads batch exact controls with the owned 
   }
 });
 
-test("batched exact-control reads reject duplicate controls and unrecognized accessible-name markup", async () => {
+test("indicator reads tolerate either Stop transition and return only the fresh owned answer frame", async () => {
+  for (const phase of ["full", "error"]) for (const initiallyActive of [true, false]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = initiallyActive; f.ui.complete = !initiallyActive;
+    let transitions = 0;
+    f.ui.onReplyRead = argument => {
+      if (argument.indicator !== phase) return;
+      transitions += 1;
+      f.ui.stop = !initiallyActive; f.ui.complete = initiallyActive;
+      f.ui.texts = [`Fresh answer after ${phase}`];
+    };
+    const observed = await f.run("observe");
+    assert.equal(transitions, 1);
+    assert.deepEqual([observed.stopVisible, observed.statusComplete, observed.completed], [!initiallyActive, initiallyActive, initiallyActive]);
+    assert.equal(observed.assistantText, `Fresh answer after ${phase}`, "No pre-indicator answer frame can escape after the transition.");
+    assert.equal(observed.generationTurnKey, sent.generationTurnKey);
+    assert.equal(observed.requestError, undefined, "Quoted error text cannot reject a request.");
+    assert.equal(observed.conversationFull, false);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("indicator reads reject URL, native owner and generation changes before publishing a frame", async () => {
+  for (const phase of ["full", "error"]) for (const change of [
+    f => { f.ui.url = "https://chatgpt.com/c/foreign"; },
+    f => { f.activeTurn().turnId = "different-owner"; },
+    f => { f.getState().generationTurnKey = messageId(900); },
+  ]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = argument => { if (argument.indicator === phase) change(f); };
+    await assert.rejects(f.run("observe"), /normal saved URL|different native turn owns|generation changed/);
+    assert.notEqual(f.getState().completed, true);
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("indicator reads cannot publish an earlier owned frame after a foreign rendered generation replaces it", async () => {
+  for (const phase of ["full", "error"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = argument => {
+      if (argument.indicator !== phase) return;
+      f.ui.messageRoot = domElement("main", {}, observedTurn(messageId(901), "Foreign request", [assistantMessage(20, "Foreign answer")]));
+      f.ui.stop = false; f.ui.complete = true;
+    };
+    const observed = await f.run("observe");
+    assert.equal(observed.replyUnavailableReason, "generation-turn-not-latest");
+    assert.equal(observed.completed, false);
+    assert.equal(observed.assistantText, "");
+    assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("all semantic projections share one shrinking short-read deadline inside native finish headroom", async () => {
+  assert.equal(Object.isFrozen(browserObservationBudget), true);
+  assert.equal(browserObservationBudget.shortReadMs, browserObservationBudget.finishGraceMs - browserObservationBudget.transportMarginMs);
+  for (const slice of [650, 1000]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Unknown error"]; f.ui.stop = true;
+    f.ui.onReplyRead = (argument, { timeoutMs }) => {
+      if (argument.observation || argument.indicator) f.advance(Math.min(slice, timeoutMs));
+    };
+    await assert.rejects(f.run("observe"), /observation read deadline expired/);
+    const requests = f.ui.projectionRequests;
+    assert.deepEqual(requests.map(request => request.timeoutMs), slice === 650 ? [1000, 1000, 1000, 1000, 400] : [1000, 1000, 1000]);
+    assert.equal(requests.every(request => request.at < browserObservationBudget.shortReadMs
+      && request.timeoutMs <= browserObservationBudget.shortReadMs - request.at), true);
+    assert.equal(f.ui.waitedMs, browserObservationBudget.shortReadMs);
+    assert.notEqual(f.getState().completed, true); assert.equal(f.getState().replyId, undefined);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("the short-read deadline counts owned-tab preflight and rejects a late positive page proof", async () => {
+  for (const stage of ["preflight", "projection"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts = ["Owned answer"]; f.ui.complete = true;
+    f.getState().observedStopVisible = false;
+    if (stage === "preflight") {
+      const list = f.browser.tabs.list;
+      f.browser.tabs.list = async () => { f.advance(browserObservationBudget.shortReadMs); return list(); };
+    } else f.ui.onReplyRead = () => f.advance(browserObservationBudget.shortReadMs + 1);
+    await assert.rejects(f.run("observe"), /observation read deadline expired/);
+    assert.equal(f.ui.projectionRequests?.length ?? 0, stage === "preflight" ? 0 : 1);
+    assert.notEqual(f.getState().completed, true); assert.equal(f.getState().replyId, undefined);
+  }
+});
+
+test("semantic observation rejects duplicate mounted controls", async () => {
   const stop = attributes => domElement("button", { "aria-label": "Stop", ...attributes });
   for (const controls of [
     { Stop: [stop(), stop()] },
-    { Stop: [stop({ "aria-labelledby": "alternative-accessible-name" })] },
     { "Turn off temporary chat": [domElement("button", { "aria-label": "Turn off temporary chat" }), domElement("button", { "aria-label": "Turn off temporary chat" })] },
     { "Temporary chat": [domElement("h2", {}, domText("Temporary chat")), domElement("h2", {}, domText("Temporary chat"))] },
   ]) {
@@ -3356,6 +4491,50 @@ test("batched exact-control reads reject duplicate controls and unrecognized acc
     f.ui.observationControls = controls;
     await assert.rejects(f.run("observe"), /controls are unrecognized or ambiguous/);
     assert.notEqual(f.getState().completed, true);
+    assert.equal(f.ui.sendClicks, 1);
+  }
+});
+
+test("observation uses SDK exact accessible names for direct, text and labelledby controls", async () => {
+  for (const attributes of [{ "aria-label": "Stop" }, {}, { "aria-labelledby": "label" },
+    { "aria-labelledby": "label", "aria-label": "Conflicting direct name" }]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    await f.run("send", { ...plugin, prompt: "Request" });
+    f.ui.texts.push("Owned answer"); f.ui.complete = true;
+    // Group membership is the public SDK fixture input, independent of markup.
+    f.ui.observationControls = { Stop: [domElement("button", attributes, domText("  Stop  "))] };
+    const active = await f.run("observe");
+    assert.deepEqual([active.stopVisible, active.completed], [true, false]);
+    f.ui.observationControls.Stop[0].getBoundingClientRect = () => ({ width: 0, height: 0 });
+    const inactive = await f.run("observe");
+    assert.deepEqual([inactive.stopVisible, inactive.completed], [false, true]);
+    assert.equal(f.ui.stopClicks, 0);
+  }
+  for (const attributes of [{ "aria-label": "Regenerate response" }, {}, { "aria-labelledby": "label" },
+    { "aria-labelledby": "label", "aria-label": "Conflicting direct name" }]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    const action = domElement("button", attributes, domText("Regenerate response"));
+    action.sdkAccessibleName = "Regenerate response";
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Request", [assistantMessage(20, "Owned answer")], { action }));
+    assert.equal((await f.run("observe")).completed, true);
+    action.sdkAccessibleName = "Other accessible name";
+    assert.equal((await f.run("observe")).completed, false, "A conflicting direct label cannot override the SDK's accessible name.");
+    action.sdkAccessibleName = "Regenerate response";
+    action.getBoundingClientRect = () => ({ width: 0, height: 0 });
+    assert.equal((await f.run("observe")).completed, false, "A hidden completion control cannot complete the answer.");
+  }
+});
+
+test("quoted Regenerate buttons do not supply or duplicate completion authority", async () => {
+  for (const legitimate of [false, true]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const sent = await f.run("send", { ...plugin, prompt: "Request" });
+    const quoted = domElement("button", { "aria-label": "Regenerate response" });
+    const answer = assistantMessage(20, domElement("div", { "data-markdown-text-style": "assistant-message" }, domText("Owned answer"), quoted));
+    const action = legitimate ? domElement("button", { "aria-label": "Regenerate response" }) : domElement("div");
+    f.ui.messageRoot = domElement("main", {}, observedTurn(sent.generationTurnKey, "Request", [answer], { action }));
+    assert.equal((await f.run("observe")).completed, legitimate);
     assert.equal(f.ui.sendClicks, 1);
   }
 });
@@ -3387,7 +4566,7 @@ test("a same-generation rejection after retention requires the exact restored vi
   composer.innerText = submitted;
   const reads = f.ui.observationReads;
   const rejected = await f.run("observe");
-  assert.equal(f.ui.observationReads, reads + 1, "The resumed operation must run the current browser reader.");
+  assert.equal(f.ui.observationReads, reads + 5, "An idle error read probes both quiet profiles, the known inactive profile, and both indicator unions.");
   assert.equal(rejected.generationTurnKey, completed.generationTurnKey);
   assert.equal(rejected.requestError, "unknown_error");
   assert.equal(JSON.stringify(rejected).includes(turnToken), false);
@@ -3441,7 +4620,7 @@ test("resident defaults and per-call UI overlays remain isolated from bootstrap 
   await f.run("send", { ...plugin, prompt: "Request" });
   f.ui.texts.push("Completed answer"); f.ui.complete = true;
   const helper = f.getState().residentBrowser, controls = [];
-  f.ui.onReplyRead = argument => { controls.push(argument.ui); };
+  f.ui.onReplyRead = argument => { if (controls.at(-1) !== argument.ui) controls.push(argument.ui); };
   await f.run("observe", { ui: { stopButtonExactName: "Stop generating", futureControl: "Per call" } });
   assert.equal(controls[0].stopButtonExactName, "Stop generating");
   assert.equal(controls[0].futureControl, "Per call");
@@ -3556,6 +4735,9 @@ test("a lost native kernel requests full continuation before importing recovery 
   assert.deepEqual([f.ui.tabReads, f.ui.replyReads, f.ui.controlReads, f.ui.handoffs, f.ui.actions.length], before);
   const result = await f.runFast("continue", { turnId: "next-turn", recovery: f.recovery, fullContinuation: true });
   assert.equal(result.recovered, true);
+  assert.equal(result.bindingRestored, true);
+  assert.equal(result.tabReopened, false);
+  assert.equal(result.tabNavigated, false);
   assert.equal(f.ui.sendClicks, 1);
   assert.equal(f.ui.newTabs, 1);
 });

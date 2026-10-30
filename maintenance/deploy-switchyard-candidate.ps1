@@ -15,10 +15,14 @@ param(
   [switch]$ForceServiceReplacement,
   [switch]$InProcess,
   [string]$AcceptancePath,
-  [string]$RepoDir = (Split-Path -Parent $PSScriptRoot)
+  [string]$RepoDir
 )
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell -File binds defaults before initializing PSScriptRoot.
+if (-not $PSBoundParameters.ContainsKey("RepoDir")) {
+  $RepoDir = Split-Path -Parent $PSScriptRoot
+}
 . (Join-Path $PSScriptRoot "deployment-json.ps1")
 . (Join-Path $PSScriptRoot "switchyard-recovery.ps1")
 $repoRoot = [IO.Path]::GetFullPath($RepoDir)

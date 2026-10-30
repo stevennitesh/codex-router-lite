@@ -65,6 +65,83 @@ function fakeBrowser() {
     temporaryControls: false, normalHome: true, full: false, rollovers: 0, chatNumber: 1, composer: "", url: "https://chatgpt.com/", tabId: "owned-saved-tab", savedReplies: new Map(), turns: [], savedTurns: new Map() };
   let completed = false;
   Object.defineProperty(ui, "complete", { get: () => completed, set(value) { completed = value; if (value) ui.stop = false; } });
+  // A locator union projects one rendered tree, as the SDK does. Semantic
+  // membership stays in the locator model; page readers see ordinary DOM nodes.
+  let currentRender;
+  const render = () => {
+    const control = (tag, name, visible = true, attributes = {}) => {
+      const element = domElement(tag, { "aria-label": name, ...attributes }, domText(name));
+      element.fixtureVisible = visible;
+      element.getBoundingClientRect = () => ({ width: visible ? 32 : 0, height: visible ? 32 : 0 });
+      return element;
+    };
+    let root = ui.observationRoot;
+    if (!root) {
+      const roots = ui.turns.map((turn, index) => domElement("section", { [browserDom.turnKeyAttribute]: turn.key },
+        domElement("div", { [browserDom.turnStateAttribute]: index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" },
+          domElement("div", {}, domText(turn.prompt)))));
+      const leadingUnowned = [], trailingUnowned = [];
+      let hasOwnedReply = false;
+      const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
+      const placed = new Set();
+      for (const [index, element] of elements.entries()) {
+        if (!element.getAttribute("data-markdown-text-style")) element.setAttribute("data-markdown-text-style", "assistant-message");
+        const wrapper = element.closest(browserDom.messageSelector), replyId = wrapper?.getAttribute(browserDom.messageIdAttribute);
+        if (!wrapper && ui.replyElements) {
+          // Preserve the existing detached-wrapper fault: the selected markdown
+          // root survives a renderer mutation before its wrapper is read.
+          const matches = element.matches.bind(element);
+          element.matches = selector => selector === browserDom.assistantFinalReplySelector || matches(selector);
+        }
+        let turn = roots[ui.turns.findLastIndex(value => !value.baselineIds.includes(replyId))];
+        const alternate = ui.replyTurnKeys?.[index];
+        if (alternate) {
+          turn = roots.find(value => value.getAttribute(browserDom.turnKeyAttribute) === alternate);
+          if (!turn) { turn = domElement("section", { [browserDom.turnKeyAttribute]: alternate }); roots.push(turn); }
+        }
+        const node = wrapper ?? element;
+        if (placed.has(node)) continue;
+        placed.add(node);
+        const content = element.commentary ? domElement("div", { "data-streaming-response-status": "active" }, node) : node;
+        if (turn) {
+          hasOwnedReply = true;
+          const target = turn.querySelector(browserDom.turnStateSelector) ?? turn;
+          target.childNodes.push(content); target.children.push(content); content.parentElement = target;
+        } else (hasOwnedReply ? trailingUnowned : leadingUnowned).push(content);
+      }
+      for (const turn of roots) {
+        const state = turn.querySelector(browserDom.turnStateSelector);
+        if (state?.getAttribute(browserDom.turnStateAttribute) !== "complete") continue;
+        const action = control("button", browserDom.regenerateButtonExactName);
+        state.childNodes.push(action); state.children.push(action); action.parentElement = state;
+      }
+      root = domElement("main", {}, ...(ui.orphanMarkdownBefore ?? []), ...leadingUnowned, ...roots, ...trailingUnowned, ...(ui.orphanMarkdownAfter ?? []));
+    }
+    const composer = control("div", browserDom.composerName, true, { role: "textbox", contenteditable: "true" });
+    composer.childNodes = [domText(ui.composer)]; composer.children = []; composer.innerText = ui.composer;
+    if (ui.chip) {
+      const chip = domElement("span", { "app-mention-display-name": "Current Codex Tools", "app-mention-path": "app://asdk_current_tools", contenteditable: "false" });
+      chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
+      composer.childNodes.push(chip); composer.children.push(chip); chip.parentElement = composer;
+    }
+    const controls = [
+      control("button", browserDom.modelButtonName),
+      control("button", browserDom.temporaryButtonName, ui.normalHome),
+      ...Array.from({ length: ui.stopCount ?? 1 }, () => control("button", "Stop", ui.stop && !ui.full)),
+      ...Array.from({ length: ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1) }, () => control("button", "Start Voice", ui.idleVisible ?? (!ui.stop || ui.full))),
+      ...(ui.temporaryControls ? [control("button", "Turn off temporary chat"), control("h2", "Temporary chat")] : []),
+      ...(ui.full ? [control("div", browserDom.conversationFullText), control("button", "Start new chat")] : []),
+      ...(!ui.observationRoot ? [composer] : []),
+    ];
+    const body = domElement("body", {}, root, ...controls);
+    body.ownerDocument = { body, URL: ui.url, querySelectorAll: selector => body.querySelectorAll(selector),
+      defaultView: { getComputedStyle: element => ({ visibility: element.fixtureVisible === false ? "hidden" : "visible" }) } };
+    const order = [];
+    const visit = element => { order.push(element); element.children.forEach(visit); };
+    visit(body);
+    for (const element of order) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+    return { body, order };
+  };
   const locator = (kind, name, visibleOnly = false, filters = [], offset, scope) => {
     const bodyQuery = kind === "selector" && (name === "body" || name.startsWith("xpath=//body["));
     const generationRoots = () => {
@@ -86,10 +163,25 @@ function fakeBrowser() {
         const owned = roots.filter(root => root.getAttribute(browserDom.turnKeyAttribute) === key);
         if (owned.length !== 1 || roots.at(-1)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
         if (name.includes(browserDom.turnStateAttribute) && owned[0]?.querySelectorAll(browserDom.turnStateSelector)[0]?.getAttribute() !== "complete") count = 0;
+        const replyId = /@data-chatgpt-selection-message-id='([^']+)'/u.exec(name)?.[1];
+        if (replyId) {
+          const { body } = currentRender ?? render(), messages = body.querySelectorAll(`[data-chatgpt-selection-message-id="${replyId}"]`);
+          if (messages.length !== 1 || messages[0].closest(browserDom.turnSelector)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
+        }
       } else if (name === "Stop") count = ui.stopCount ?? 1;
+      else if (kind === "selector" && [browserDom.assistantFinalReplySelector, browserDom.assistantSelector].includes(name)) {
+        const { body } = currentRender ?? render();
+        count = (scope?.selector ? body.querySelectorAll(scope.selector) : [body]).flatMap(root => root.querySelectorAll(name)).length;
+      }
       else if (name === "Start Voice") count = ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1);
+      else if (name === "Turn off temporary chat" || name === "Temporary chat" && kind === "heading") count = Number(ui.temporaryControls);
+      else if (kind === "text") {
+        const { order } = currentRender ?? render();
+        count = order.filter(element => element.textContent === name && !element.children.some(child => child.textContent === name)).length;
+      }
       else if (kind === "menuitemradio") count = 0;
       if (visibleOnly && (name === "Stop" && (!ui.stop || ui.full) || name === "Start Voice" && !(ui.idleVisible ?? (!ui.stop || ui.full)))) count = 0;
+      if (visibleOnly && kind === "button" && name === browserDom.temporaryButtonName && !ui.normalHome) count = 0;
       if (filters.some(({ has, hasNot }) => has && !has.fixtureCount() || hasNot && hasNot.fixtureCount())) count = 0;
       return offset === undefined ? count : offset < count ? 1 : 0;
     };
@@ -97,21 +189,27 @@ function fakeBrowser() {
     kind, name,
     fixtureCount: matched,
     or(other) {
-      if (!bodyQuery) return this;
       const first = this;
       const selections = [first, other];
       return {
         or(next) { selections.push(next); return this; },
         async evaluateAll(callback, args) {
-          if (!args?.mutation) return first.fixtureCount() ? first.evaluateAll(callback, args) : other.evaluateAll(callback, args);
-          const elements = [];
-          for (const selection of selections) elements.push(...await selection.evaluateAll(values => values, args));
-          return callback([...new Set(elements)], args);
+          const previous = currentRender;
+          currentRender = render();
+          try {
+            const elements = [];
+            for (const selection of selections) elements.push(...await selection.evaluateAll(values => values, args));
+            const selected = new Set(elements);
+            return callback(currentRender.order.filter(element => selected.has(element)), args);
+          } finally { currentRender = previous; }
         },
       };
     },
     nth: index => locator(kind, name, visibleOnly, filters, index, scope),
-    getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined, bodyQuery ? { fixtureCount: matched } : undefined), locator: selector => locator("selector", selector),
+    getByRole: (childKind, options) => locator(childKind, options.name, false, [], undefined,
+      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope),
+    locator: selector => locator("selector", selector, false, [], undefined,
+      kind === "selector" ? { fixtureCount: matched, selector: bodyQuery ? undefined : name } : scope),
     filter({ hasText, visible, has, hasNot }) {
       if (visible !== undefined || has || hasNot) return locator(kind, name, visible ?? visibleOnly, [...filters, { has, hasNot }], offset, scope);
       assert.equal(kind, "selector");
@@ -152,6 +250,7 @@ function fakeBrowser() {
         ui.url = `https://chatgpt.com/c/${ui.chatNumber === 1 ? "owned-conversation" : `successor-${ui.chatNumber}`}`;
         ui.savedReplies.set(ui.url, ui.texts);
         ui.savedTurns.set(ui.url, ui.turns);
+        ui.afterSend?.();
       }
     },
     async getAttribute(attribute) { return { "aria-checked": "true", "aria-valuenow": String(ui.power), "aria-valuemin": "0", "aria-valuemax": "4" }[attribute] ?? null; },
@@ -160,7 +259,10 @@ function fakeBrowser() {
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
     async waitFor({ state }) {
-      if (state === "attached") {
+      if (bodyQuery) {
+        assert.equal(state, "visible");
+        if (matched() !== 1) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+      } else if (state === "attached") {
         assert.equal(kind, "selector"); assert.equal(name, browserDom.turnSelector);
         const candidates = ui.turns.filter(turn => filters.every(filter => (filter.hasText === undefined || turn.prompt.includes(filter.hasText))
           && (!filter.hasNot || !filter.hasNot.name.includes(`='${turn.key}'`))));
@@ -168,94 +270,30 @@ function fakeBrowser() {
         assert.match(candidates[0].key, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu);
       } else assert.equal(await this.isVisible(), state === "visible");
     },
-    async evaluateAll(callback, ownedChipSelector) {
-      if (bodyQuery) {
-        const body = domElement("body"), document = { body, URL: ui.url, querySelectorAll: selector => selector === browserDom.turnSelector ? generationRoots() : [],
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        body.ownerDocument = document;
-        const value = callback(matched() ? [body] : [], ownedChipSelector);
-        ui.afterStopRead?.();
-        return value;
+    async evaluateAll(callback, options) {
+      const { body, order } = currentRender ?? render();
+      let selected;
+      if (bodyQuery) selected = matched() ? [body] : [];
+      else if (kind === "selector") {
+        selected = body.querySelectorAll(name);
+        if (name.includes(browserDom.assistantFinalReplySelector)) selected.push(...(ui.replyElements ?? [])
+          .filter(element => !element.closest(browserDom.messageSelector)));
       }
-      if (ownedChipSelector?.mutation && ["Stop", "Turn off temporary chat", "Temporary chat"].includes(name)) {
-        const present = name === "Stop" ? ui.stop && !ui.full : ui.temporaryControls;
-        return callback(present ? [domElement(kind === "heading" ? "h2" : "button", { "aria-label": name })] : [], ownedChipSelector);
+      else if (kind === "text") selected = order.filter(element => element.textContent === name
+        && !element.children.some(child => child.textContent === name));
+      else {
+        selected = order.filter(element => element.getAttribute("aria-label") === name
+          && (kind === "textbox" ? element.matches(browserDom.composerSelector)
+            : kind === "heading" ? /^(?:H[1-6])$/u.test(element.tagName) || element.getAttribute("role") === "heading"
+              : element.matches(browserDom.buttonSelector)));
+        if (scope?.selector) selected = selected.filter(element => element.closest(scope.selector));
+        if (scope && !scope.fixtureCount()) selected = [];
       }
-      if (kind === "text" || name === "Start new chat") return callback(ui.full && visibleOnly ? [{ closest: () => null, querySelector: () => null }] : [], ownedChipSelector);
-      if (name === "Ask ChatGPT") {
-        const content = [domText(ui.composer)];
-        if (ui.chip) content.push(domElement("span", { "app-mention-display-name": "Current Codex Tools",
-          "app-mention-path": "app://asdk_current_tools", contenteditable: "false" }));
-        const composer = domElement("div", { contenteditable: "true" }, ...content);
-        composer.innerText = ui.composer;
-        return callback([composer], ownedChipSelector);
-      }
-      if (ownedChipSelector?.mutation && name.startsWith("span[app-mention")) {
-        const chip = domElement("span", { "app-mention-display-name": "Current Codex Tools", "app-mention-path": "app://asdk_current_tools", contenteditable: "false" });
-        chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
-        return callback(ui.chip ? [chip] : [], ownedChipSelector);
-      }
-      if (ownedChipSelector?.observation && ui.observationRoot) {
-        const body = domElement("body", {}, ui.observationRoot);
-        body.ownerDocument = { body, URL: ui.url,
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        const selected = ui.observationRoot.querySelectorAll(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector},[aria-label]`);
-        for (const element of selected) element.getBoundingClientRect = () => ({ width: 32, height: 32 });
-        return callback([body, ...selected], ownedChipSelector);
-      }
-      assert.ok([browserDom.turnSelector, '[data-turn-key],[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"]'].includes(name));
-      const roots = ui.turns.map((turn, index) => {
-        const action = { getAttribute: () => "Regenerate response", closest: () => null };
-        const root = { nodeType: 1, tagName: "DIV", textContent: turn.prompt, fixtureMarkdown: [],
-          getAttribute: key => key === "data-turn-key" ? turn.key : null,
-          matches: selector => selector === '[data-turn-key]', querySelector: () => null,
-          querySelectorAll: selector => selector === '[data-talvt-turn-state]' ? [{ getAttribute: () => index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" }]
-            : selector === '[aria-label]' ? [action]
-              : selector === '[data-chatgpt-selection-message-id] [data-markdown-text-style="assistant-message"],[data-streaming-response-status],[aria-label]'
-                ? [...root.fixtureMarkdown, action] : [] };
-        return root;
-      });
-      const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
-      for (const [index, element] of elements.entries()) {
-        const wrapper = element.fixtureWrapper ?? element.closest('[data-chatgpt-selection-message-id]');
-        element.fixtureWrapper = wrapper;
-        const replyId = wrapper?.getAttribute('data-chatgpt-selection-message-id');
-        const ownerIndex = ui.turns.findLastIndex(turn => !turn.baselineIds.includes(replyId));
-        let turn = roots[ownerIndex];
-        if (ui.replyTurnKeys?.[index]) {
-          const key = ui.replyTurnKeys[index];
-          turn = roots.find(root => root.getAttribute('data-turn-key') === key);
-          if (!turn) {
-            turn = { getAttribute: () => key, textContent: "Another generation", matches: selector => selector === '[data-turn-key]', querySelector: () => null, querySelectorAll: () => [] };
-            roots.push(turn);
-          }
-        }
-        if (wrapper) wrapper.closest = selector => selector === '[data-turn-key]' ? turn
-          : selector === '[data-chatgpt-selection-message-id]' ? wrapper : null;
-        turn?.fixtureMarkdown?.push(element);
-        element.matches = selector => selector !== '[data-turn-key]';
-        element.closest = selector => selector === '[data-chatgpt-selection-message-id]' ? wrapper : element.commentary ? {} : null;
-      }
-      let selected = [...roots, ...(ui.orphanMarkdownBefore ?? []), ...elements, ...(ui.orphanMarkdownAfter ?? [])];
-      if (name === browserDom.turnSelector) selected = roots;
-      if (ownedChipSelector?.mutation) selected = selected.filter(element => element.matches(browserDom.turnSelector)
-        || element.matches(ownedChipSelector.assistantSelector));
-      if (ownedChipSelector?.observation) {
-        selected = selected.filter(element => element.matches("[data-turn-key]") || element.matches(ownedChipSelector.assistantSelector));
-        const body = domElement("body"), document = { body, URL: ui.url,
-          defaultView: { getComputedStyle: () => ({ visibility: "visible" }) } };
-        body.ownerDocument = document;
-        const control = (tag, label) => {
-          const element = domElement(tag, { "aria-label": label }, domText(label));
-          element.getBoundingClientRect = () => ({ width: 32, height: 32 });
-          return element;
-        };
-        selected.push(body, control("button", "Regenerate response"));
-        if (ui.stop && !ui.full) selected.push(control("button", "Stop"));
-        if (ui.temporaryControls) selected.push(control("button", "Turn off temporary chat"), control("h2", "Temporary chat"));
-        if (ui.full) selected.push(control("div", browserDom.conversationFullText), control("button", "Start new chat"));
-      }
-      return callback(selected, ownedChipSelector);
+      if (visibleOnly) selected = selected.filter(element => element.getBoundingClientRect().width > 0);
+      if (offset !== undefined) selected = selected.slice(offset, offset + 1);
+      const result = callback(selected, options);
+      if (bodyQuery) ui.afterStopRead?.();
+      return result;
     },
   };
   };
@@ -264,10 +302,14 @@ function fakeBrowser() {
     ui.texts = ui.savedReplies.get(url) ?? []; ui.composer = "";
     ui.turns = ui.savedTurns.get(url) ?? [];
     ui.stop = ui.turns.length > 0 && !ui.complete && !ui.full;
-  }, url: async () => ui.url,
-    playwright: { getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
+  }, url: async () => ui.sdkUrl ?? ui.url,
+    playwright: { waitForURL: async (expected, { timeoutMs }) => {
+      assert.ok(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      if (ui.url !== expected) throw new Error("Expected browser URL is unavailable.");
+    }, getByRole: (kind, options) => locator(kind, options.name), getByText: text => locator("text", text), locator: selector => locator("selector", selector) },
     markHandoff: async () => { ui.marks += 1; }, close: async () => { ui.closes += 1; ui.present = false; } };
   const browser = { browserId: "same-session-iab",
+    documentation: async () => "Synthetic browser guidance",
     tabs: { list: async () => ui.present ? [{ id: tab.id, url: await tab.url() }] : [],
       get: async tabId => { ui.reacquired.push(tabId); assert.equal(tabId, tab.id); return tab; },
       new: async () => {
@@ -380,6 +422,193 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     newTurn: (turn, userText, overrides = {}) => { currentTurn = turn; payload = { ...payload, ...overrides, input: [...payload.input, { role: "user", content: userText }] }; },
   };
 }
+
+test("dispatched input stays private until its eventual anchor and substantive acceptance", async t => {
+  for (const delayed of ["generation", "saved URL"]) await t.test(delayed, async t => {
+    const h = harness(t, { instructions: "Delayed current instructions." });
+    let pendingTurns;
+    h.browser.ui.afterSend = () => {
+      if (delayed === "generation") pendingTurns = h.browser.ui.turns.splice(0);
+      else h.browser.ui.url = "https://chatgpt.com/";
+    };
+    const { call } = await h.toObserve();
+    const uncertain = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(uncertain.uncertainSend, true); assert.equal(uncertain.lastTurn.sendState, "uncertain");
+    assert.equal(uncertain.checkpoint, undefined); assert.equal(uncertain.generationTurnKey, undefined);
+    assert.equal(uncertain.deliveredInstructionsSha256, undefined); assert.equal(uncertain.chatUrl, undefined);
+    h.browser.ui.afterSend = undefined;
+    if (pendingTurns) h.browser.ui.turns = pendingTurns;
+    h.browser.ui.url = "https://chatgpt.com/c/owned-conversation";
+    const observe = (await h.answerBrowser(call)).output[0];
+    const anchored = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(anchored.uncertainSend, true); assert.equal(anchored.checkpoint, undefined);
+    assert.equal(h.browserOwner().state.sendConfirmed, true, "The anchor grants browser ownership only.");
+    await h.completeAnswer(observe, "Accepted after the actual state event.");
+    const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(accepted.uncertainSend, false); assert.equal(accepted.generationTurnKey, h.browser.ui.turns.at(-1).key);
+    assert.equal(accepted.deliveredInstructionsGenerationTurnKey, accepted.generationTurnKey);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("runtime pending receipts accept home URL variants before coherent saved-chat acquisition", async t => {
+  for (const home of ["https://chatgpt.com", "https://chatgpt.com/?model=synthetic"]) await t.test(home.includes("?") ? "model query" : "no slash", async t => {
+    const h = harness(t);
+    h.browser.ui.afterSend = () => { h.browser.ui.url = home; };
+    const { call } = await h.toObserve();
+    const uncertain = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(uncertain.uncertainSend, true); assert.equal(uncertain.chatUrl, undefined); assert.equal(uncertain.checkpoint, undefined);
+    h.browser.ui.url = "https://chatgpt.com/c/owned-conversation"; h.browser.ui.sdkUrl = home;
+    const anchored = (await h.answerBrowser(call)).output[0];
+    assert.equal(h.browserOwner().state.sendConfirmed, true);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+    h.browser.ui.sdkUrl = undefined;
+    await h.completeAnswer(anchored, "Accepted only after current generation evidence.");
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, false);
+    assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("first-Send route settlement retains no unknown URL or acknowledgement before coherent saved-chat proof", async t => {
+  const h = harness(t);
+  h.browser.ui.afterSend = () => { h.browser.ui.url = "https://chatgpt.com/PRIVATE_TRANSITION_CANARY"; };
+  const { call } = await h.toObserve();
+  const unconfirmed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(unconfirmed.uncertainSend, true); assert.equal(unconfirmed.chatUrl, undefined);
+  assert.equal(unconfirmed.checkpoint, undefined); assert.equal(unconfirmed.generationTurnKey, undefined);
+  assert.equal(h.browserOwner().state.savedUrl, undefined);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  assert.equal(JSON.stringify(h.input()).includes("PRIVATE_TRANSITION_CANARY"), false);
+  assert.equal(readFileSync(h.stateFile, "utf8").includes("PRIVATE_TRANSITION_CANARY"), false);
+  h.browser.ui.url = "https://chatgpt.com/c/settled-conversation";
+  await h.completeAnswer(call, "Accepted only after saved URL and marker settlement.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false); assert.equal(accepted.chatUrl, h.browser.ui.url);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("unconfirmed URL receipts cannot replace an established saved conversation", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  await h.completeAnswer(call, "First confirmed answer.");
+  const prior = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  h.newTurn(followupId, "Next request.");
+  const continuation = (await h.request()).output[0], send = (await h.answerBrowser(continuation)).output[0];
+  h.append(send, outputFor(send, browserReceipt(send, { operation: "send", sent: false, dispatched: true,
+    generationPending: true, tabId: prior.tabId, url: null, normal: false, urlPending: true,
+    conversationFull: false, baselineReplyIds: prior.sendBaselineReplyIds })));
+  await assert.rejects(h.request(), /did not establish the connected saved chat URL/u);
+  const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(saved.uncertainSend, true); assert.equal(saved.chatUrl, prior.chatUrl);
+  assert.deepEqual(saved.checkpoint, prior.checkpoint); assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("runtime rejects non-home first-open receipts even with a normal flag", async t => {
+  for (const url of ["https://chatgpt.com/c/unowned", "https://chatgpt.com/?temporary-chat=true", "https://foreign.invalid/", "https://private-user@chatgpt.com/", "https://chatgpt.com/#private"]) await t.test(url, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    h.append(open, outputFor(open, browserReceipt(open, { operation: "open", normal: true, tabId: "owned-saved-tab", url })));
+    await assert.rejects(h.request(), /owned saved ChatGPT conversation was not established/);
+    assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
+
+test("current-token native calls queued before an anchor wait for that anchor and keep their exact request", async t => {
+  const h = harness(t);
+  let pendingTurns;
+  h.browser.ui.afterSend = () => { pendingTurns = h.browser.ui.turns.splice(0); };
+  const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+  const send = (await h.answerBrowser(open)).output[0], dispatched = await h.executeBrowser(send);
+  const read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
+  const invoked = h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "queued-before-anchor.txt" } });
+  const outcome = invoked.catch(error => error);
+  h.append(send, outputFor(send, dispatched));
+  const call = (await h.request()).output[0];
+  const wait = readBrowserProgram(JSON.parse(call.arguments).code).observationWait;
+  assert.ok(Number(new URL(wait.url).searchParams.get("revision")) < h.broker.revision(h.token()),
+    "Activity predating the first observation must still wake its held queue.");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+  assert.equal(h.input().some(item => item.namespace === "mcp__work"), false);
+  h.browser.ui.turns = pendingTurns; h.browser.ui.afterSend = undefined;
+  const emitted = (await h.answerBrowser(call)).output[0];
+  assert.equal(emitted.namespace, "mcp__work"); assert.deepEqual(JSON.parse(emitted.arguments), { path: "queued-before-anchor.txt" });
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(accepted.uncertainSend, false); assert.equal(accepted.generationTurnKey, pendingTurns[0].key);
+  assert.equal(accepted.deliveredInstructionsGenerationTurnKey, pendingTurns[0].key);
+  h.append(emitted, outputFor(emitted, "ACTUAL_QUEUED_RESULT")); await h.request();
+  assert.ok(await outcome); assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("cancellation before an anchor preserves the prior durable delivery despite current-token activity", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  await h.completeAnswer(call, "Prior confirmed answer.");
+  const prior = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  h.newTurn(followupId, "Pending revised input.", { instructions: "New instructions await proof." });
+  h.browser.ui.afterSend = () => { h.browser.ui.turns.pop(); };
+  await h.toObserve();
+  const releaseActivity = h.broker.beginActivity(h.token()); releaseActivity();
+  h.observations.watchers.at(-1).onCancel();
+  await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  await h.runtime.close();
+  const cancelled = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(cancelled.uncertainSend, true); assert.equal(cancelled.lastTurn.sendState, "uncertain");
+  for (const key of ["checkpoint", "generationTurnKey", "deliveredInstructionsSha256", "deliveredInstructionsGenerationTurnKey", "chatUrl"]) assert.deepEqual(cancelled[key], prior[key]);
+  assert.deepEqual(cancelled.unresolvedCoding, []); assert.equal(h.browser.ui.stopMarks.length, 0);
+  assert.equal(h.browser.ui.sends.length, 2);
+});
+
+test("Send failure receipts require their exact nonce, producer shape and fixed error code", async t => {
+  for (const branch of ["recognized", "recognized diagnostic", "private diagnostic", "wrong nonce", "private extra", "unknown reason", "wrong operation"]) await t.test(branch, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    const send = (await h.answerBrowser(open)).output[0];
+    const receipt = { operation: branch === "wrong operation" ? "observe" : "send", sendFailure: branch === "unknown reason" ? "private error" : branch.includes("diagnostic") ? "saved-url" : "anchor-conflict",
+      ...(branch.includes("diagnostic") ? { sendDiagnostic: branch === "recognized diagnostic" ? "normal-controls-unavailable" : "PRIVATE_ERROR_CANARY" } : {}),
+      ...(branch === "private extra" ? { privateText: "PRIVATE_ERROR_CANARY" } : {}) };
+    h.append(send, outputFor(send, browserReceipt(send, receipt, branch === "wrong nonce" ? "f".repeat(48) : undefined)));
+    await assert.rejects(h.request(), { code: branch.startsWith("recognized") ? "web_send_uncertain" : branch === "wrong operation" ? "web_runtime_unavailable" : "web_browser_output_shape" });
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.uncertainSend, true); assert.equal(saved.checkpoint, undefined);
+    assert.equal(readFileSync(h.stateFile, "utf8").includes("PRIVATE_ERROR_CANARY"), false);
+    assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
+
+test("Send URL diagnostics cross the runtime boundary only with the exact content-free schema", async t => {
+  const parsed = { input: "parsed", protocolValid: true, originValid: true, pathClass: "other",
+    temporaryChatPresent: false, hashPresent: false, credentialsPresent: false };
+  const unknown = { protocolValid: null, originValid: null, pathClass: null,
+    temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+  const cases = [
+    ["parsed", parsed, true],
+    ["non-string", { input: "non-string", ...unknown }, true],
+    ["unparseable", { input: "unparseable", ...unknown }, true],
+    ["extra URL", { ...parsed, url: "PRIVATE_URL_CANARY" }, false],
+    ["private input", { ...parsed, input: "PRIVATE_URL_CANARY" }, false],
+    ["private path", { ...parsed, pathClass: "PRIVATE_PATH_CANARY" }, false],
+    ["nonboolean", { ...parsed, originValid: "PRIVATE_ORIGIN_CANARY" }, false],
+    ["missing field", Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "hashPresent")), false],
+    ["unparsed flags", { ...parsed, input: "unparseable" }, false],
+    ["wrong reason", parsed, false],
+    ["wrong failure", parsed, false],
+  ];
+  for (const [name, diagnostic, valid] of cases) await t.test(name, async t => {
+    const h = harness(t);
+    const bootstrap = (await h.request()).output[0], open = (await h.answerBrowser(bootstrap)).output[0];
+    const send = (await h.answerBrowser(open)).output[0];
+    const receipt = { operation: "send", sendFailure: name === "wrong failure" ? "anchor-conflict" : "saved-url",
+      sendDiagnostic: name === "wrong reason" ? "normal-controls-unavailable" : "url-class-mismatch", sendUrlDiagnostic: diagnostic };
+    h.append(send, outputFor(send, browserReceipt(send, receipt)));
+    await assert.rejects(h.request(), error => {
+      assert.equal(error.code, valid ? "web_send_uncertain" : "web_browser_output_shape");
+      assert.doesNotMatch(error.message, /PRIVATE_/u);
+      if (valid) assert.ok(error.message.endsWith(JSON.stringify(diagnostic)));
+      return true;
+    });
+    const state = readFileSync(h.stateFile, "utf8"), saved = JSON.parse(state);
+    assert.equal(saved.uncertainSend, true); assert.equal(saved.checkpoint, undefined);
+    assert.equal(state.includes("PRIVATE_"), false); assert.equal(h.browser.ui.sends.length, 0);
+  });
+});
 
 async function reportObservation(h, call, fields) {
   const output = await h.executeBrowser(call);
@@ -922,6 +1151,27 @@ test("unsupported saved mappings fail before browser effects and preserve the or
     assert.equal(h.browser.ui.sends.length, sends);
     assert.equal(h.browser.ui.navigations, navigations);
     assert.deepEqual(h.browser.ui.reacquired, []);
+  });
+});
+
+test("historical unsent V1 history remains non-resumable after maintenance risk validation", async t => {
+  const { validWebConversationRisk } = await import("../src/web-runtime.mjs");
+  for (const emptyCheckpoint of [false, true]) await t.test(`empty checkpoint: ${emptyCheckpoint}`, async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Original completed historical answer");
+    await h.restartRuntime(); h.loseKernel();
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    saved.lastTurn = { turnId, sendState: "unsent", completed: false };
+    saved.uncertainSend = false; saved.unresolvedCoding = [];
+    if (emptyCheckpoint) saved.checkpoint = [];
+    for (const field of ["sendBaselineReplyIds", "generationTurnKey", "generationReplyIds", "generationCompleted"]) delete saved[field];
+    assert.equal(validWebConversationRisk(saved, threadId), true, "maintenance can preserve known risk without accepting old execution fields");
+    const original = JSON.stringify(saved); writeFileSync(h.stateFile, original, "utf8");
+    const sends = h.browser.ui.sends.length, navigations = h.browser.ui.navigations;
+    h.newTurn(followupId, "Continue only if current saved history is valid.");
+    await assert.rejects(h.request(), { code: "web_conversation_state" });
+    assert.equal(readFileSync(h.stateFile, "utf8"), original);
+    assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.browser.ui.navigations, navigations);
   });
 });
 
