@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-10-29",
+  "scope": "Source integration review of Dependabot PRs 37, 38 and 39. GitHub PR records own hosted checks and final merge state; this record does not establish deployed runtime acceptance.",
+  "baseline": "70b38a87d2978a665d2b355c49cccb57a6f7bdef",
+  "decisions": [
+    {
+      "pr": 37,
+      "package": "@modelcontextprotocol/sdk",
+      "before": "1.32.1",
+      "after": "1.32.2",
+      "originalHead": "7ce108ba64688101cb79bed19f9988a10f1c31cc",
+      "reviewedHead": "30e1eb5b23590dbd60f8fb50e7e145bba819f394",
+      "decision": "Integrate the small maintenance update. Published low-level Server, HTTP/stdio transport, schemas and validator implementations used by Router are unchanged; fixes concern optional TypeScript declarations and high-level McpServer initialization.",
+      "review": "No actionable findings.",
+      "source": "https://github.com/modelcontextprotocol/typescript-sdk/compare/1.32.1...1.32.2",
+      "localTestsPassed": 663
+    },
+    {
+      "pr": 39,
+      "package": "litellm",
+      "before": "1.103.8",
+      "after": "1.103.10",
+      "originalHead": "6bb728f5e8d4d6bd84327b1d778621e7dbfddd81",
+      "reviewedHead": "809cd911f72cb0239930b1c64a6f56a875bdff54",
+      "decision": "Integrate stable-line logging and credential hardening after repairing the bot's platform lock. Keep both Router schema and stream-close hooks; upstream still requires them.",
+      "review": "Original platform-lock finding repaired; no actionable findings in the successor.",
+      "source": "https://github.com/BerriAI/litellm/compare/v1.103.8...v1.103.10",
+      "localTestsPassed": 64
+    },
+    {
+      "pr": 38,
+      "package": "fastapi",
+      "before": "0.150.0",
+      "after": "0.162.0",
+      "originalHead": "fce9dd194112bd42a55b211191544e66fd872894",
+      "reviewedHead": "9c9cddde44f9065c5de1c6008d8ef144638baa31",
+      "decision": "Integrate after repairing the bot's platform lock. Upstream form and parameter-model changes do not change the retained manually parsed JSON Responses and APIKeyHeader authentication path. The combined LiteLLM wheel has no removed parameter keyword uses.",
+      "review": "Original platform-lock finding repaired; no actionable findings in the combined successor.",
+      "source": "https://fastapi.tiangolo.com/release-notes/"
+    }
+  ],
+  "platformLockRepair": {
+    "originalFinding": "Both Python PRs added unconditional uvloop and pyroscope-io, which do not support the required Windows installation, and removed Windows dependencies despite retaining a Windows compile header.",
+    "method": "Regenerated from the retained Windows lock using the maintained Windows/Python 3.11 uv compile command, changing one direct dependency at each step.",
+    "packageCount": 117,
+    "unchangedPackagesPerPythonUpdate": 116,
+    "preserved": ["filelock==4.2.4", "dnspython==2.9.0", "pywin32", "colorama", "tzdata"],
+    "excluded": ["uvloop", "pyroscope-io"],
+    "artifactHashes": "Repaired LiteLLM and FastAPI hashes independently matched their published PyPI artifacts."
+  },
+  "combinedValidation": {
+    "candidate": "9c9cddde44f9065c5de1c6008d8ef144638baa31",
+    "testedTree": "c1e6145bd6664a4c071d7744a68830fec6988fc0",
+    "environment": "Isolated Windows worktree; Node 24.13.0, CPython 3.11.14, SDK 1.32.2, LiteLLM 1.103.10 and FastAPI 0.162.0.",
+    "command": "npm run verify:codex",
+    "tests": 2423,
+    "passed": 2420,
+    "failed": 0,
+    "skipped": 3,
+    "skipReasons": ["One bundled .venv exit case: isolated worktree has no bundled .venv", "Two Windows file-symlink privilege cases"],
+    "gateway": "Actual gateway and stream-cleanup tests executed with the explicitly selected fresh interpreter; both GLM routes, schemas, history, authentication, credential boundaries and cancellation passed.",
+    "currentCatalog": "Installed CLI 0.166.0-alpha.5.1 parsed 18 current-schema models; retained GLM, DeepSeek, Pareto and Switchyard compatibility passed.",
+    "pythonHashInstallation": "passed",
+    "pythonDependencyConsistency": "117 compatible installed packages",
+    "pythonAudit": "pip-audit 2.10.1: no known vulnerabilities in the full hashed production closure",
+    "nodeAudit": "Zero production vulnerabilities or advisories",
+    "testMaintenance": "No tests added or modified for these version-only updates; existing meaningful regression coverage was reused."
+  },
+  "integration": "Original bot commits remain ancestors of the prepared candidates. The final FastAPI candidate includes the prepared SDK and LiteLLM updates, allowing combined validation before merging the individual PRs in that order.",
+  "runtimeLimit": "Validation used isolated dependencies. The running Router, shared .venv, installed adapter and retained rollback files were not replaced; deployment requires the maintained transaction and fresh installed acceptance."
+}
