@@ -22,12 +22,13 @@ function fixture(t, { threadIds = null } = {}) {
   const stateDir = path.join(root, "state"), codexHome = path.join(root, "codex-home"), sourceDir = path.join(root, "src");
   for (const directory of [stateDir, codexHome, sourceDir]) mkdirSync(directory);
   for (const [name, contents] of Object.entries({
-    "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs";\n',
+    "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs"; import "./web-process-snapshot.mjs";\n',
+    "web-process-snapshot.mjs": "export const processSnapshot = true;\n",
     "web-browser.mjs": 'import "./web-browser-state.mjs"; export const browser = true;\n',
     "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; export const hook = true;\n',
     "web-browser-state.mjs": "export const state = true;\n",
     "web-stop-contract.mjs": "export const contract = true;\n",
-    "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n',
+    "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@", Events = @"@@EVENTS@@", OfficialRepl = @"@@OFFICIAL_REPL@@", OfficialReplSha256 = "@@OFFICIAL_REPL_SHA256@@", NodeSha256 = "@@NODE_SHA256@@", CuaEntry = @"@@CUA_ENTRY@@", CuaEntrySha256 = "@@CUA_ENTRY_SHA256@@", CuaGuard = @"@@CUA_GUARD@@", CuaGuardSha256 = "@@CUA_GUARD_SHA256@@"; }\n',
   })) write(path.join(sourceDir, name), contents);
   const runtime = name => {
     const directory = path.join(root, name), manifest = { version: 1, threadIds };

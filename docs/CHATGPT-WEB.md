@@ -23,6 +23,21 @@ It distinguishes observed local readiness from browser sign-in, app-loaded state
 and hook trust that still need verification in Codex. Follow a reported next action
 rather than reinstalling or restarting automatically.
 
+To identify the native tool processes associated with saved chats, run:
+
+```powershell
+.\model-router.ps1 codex web processes
+```
+
+This read-only report joins the adapter's bounded chat and activity observations
+to a fresh Windows process census. It distinguishes outstanding work, retained
+Web Stop authority, observed idle sessions and unknown ownership. A completed
+reply or an old activity timestamp does not make a tool session disposable.
+Live sessions retain their JavaScript state and remain protected. Close the
+owning native session normally, or fully quit Codex when that owner is unknown,
+then rerun the report to verify process exit. Archiving a saved chat alone is not
+proof that its tool session closed. The command never terminates processes.
+
 ## Configure the browser integration
 
 Use a signed-in ChatGPT account in the current Codex in-app browser. Register the

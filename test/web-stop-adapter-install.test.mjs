@@ -24,12 +24,13 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
   for (const directory of [sourceDir, stateDir, codexHome]) mkdirSync(directory);
   const hooksPath = path.join(codexHome, "hooks.json"), receiptPath = path.join(stateDir, "web-stop-adapter", "ownership.json");
   if (hooks !== undefined) writeFileSync(hooksPath, typeof hooks === "string" ? hooks : encode(hooks));
-  const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs";\n',
+  const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs"; import "./web-process-snapshot.mjs";\n',
+    "web-process-snapshot.mjs": "export const processSnapshotFixture = true;\n",
     "web-browser.mjs": 'import "./web-browser-state.mjs"; export const browserFixture = true;\n',
     "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; export const hookFixture = true;\n',
     "web-browser-state.mjs": "export const stateFixture = true;\n",
     "web-stop-contract.mjs": "export const contractFixture = true;\n",
-    "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@"; }\n' };
+    "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@", Events = @"@@EVENTS@@", OfficialRepl = @"@@OFFICIAL_REPL@@", OfficialReplSha256 = "@@OFFICIAL_REPL_SHA256@@", NodeSha256 = "@@NODE_SHA256@@", CuaEntry = @"@@CUA_ENTRY@@", CuaEntrySha256 = "@@CUA_ENTRY_SHA256@@", CuaGuard = @"@@CUA_GUARD@@", CuaGuardSha256 = "@@CUA_GUARD_SHA256@@"; }\n' };
   for (const [name, contents] of Object.entries(sources)) writeFileSync(path.join(sourceDir, name), contents);
   const manifest = { version: 1 };
   for (const [key, basename] of [["node", "node.exe"], ["officialCli", "codex.exe"], ["officialNodeRepl", "node_repl.exe"]]) {
@@ -121,7 +122,7 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(config, { version: 1, server: f.manifest.officialNodeRepl.path, serverSha256: f.manifest.officialNodeRepl.sha256,
     stateDir: f.stateDir, runtimeModule: f.manifest.runtimeModule, sdkPackageJson: f.manifest.sdkPackageJson,
     threadIds: [trialThread], receiptPath: path.join(f.stateDir, "web-stop-adapter", "events.jsonl") });
-  for (const name of ["web-stop-adapter.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
+  for (const name of ["web-stop-adapter.mjs", "web-process-snapshot.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
   const launcher = readFileSync(path.join(result.managedDirectory, "entry.cs"), "utf8");
   assert.equal(launcher.includes("@@"), false); assert.ok(launcher.includes(result.configPath)); assert.ok(launcher.includes(f.manifest.node.path));
   assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
@@ -140,6 +141,28 @@ test("the exact legacy hook remains readable and removable before migration", t 
   assert.equal(readFileSync(f.hooksPath, "utf8"), hooks); assert.equal(readFileSync(f.receiptPath, "utf8"), receipt);
   assert.equal(f.effects.length, effects);
   assert.equal(rollbackWebStopAdapter(f.options).state, "removed"); assert.equal(existsSync(f.hooksPath), false);
+});
+
+test("optional CUA bootstrap identity comes only from the paired Node and browser cohorts and changes the staged generation", t => {
+  const f = fixture(t), first = installWebStopAdapter(f.options);
+  const original = JSON.parse(readFileSync(path.join(first.managedDirectory, "manifest.json"), "utf8"));
+  assert.equal(original.plan.cuaBootstrap, null);
+  const entry = path.join(path.dirname(f.manifest.node.path), "node_modules", "@oai", "cua-repl", "bin", "cua-repl.mjs");
+  mkdirSync(path.dirname(entry), { recursive: true }); writeFileSync(entry, "// selected CUA entry\n");
+  const version = "26.fixture", runtime = path.join(f.root, "plugins", "browser", version, "scripts", "browser-client.mjs");
+  mkdirSync(path.dirname(runtime), { recursive: true }); writeFileSync(runtime, "export const browser = true;\n");
+  const guard = path.join(f.root, "plugins", "unified-computer-use", version, "require-browser-access.mjs");
+  mkdirSync(path.dirname(guard), { recursive: true }); writeFileSync(guard, "// matching plugin guard\n");
+  f.manifest.runtimeModule = runtime; f.saveManifest();
+  const second = installWebStopAdapter(f.options), staged = JSON.parse(readFileSync(path.join(second.managedDirectory, "manifest.json"), "utf8"));
+  assert.notEqual(second.generation, first.generation);
+  assert.deepEqual(staged.plan.cuaBootstrap, { entry: { path: entry, sha256: hash(readFileSync(entry)) }, guard: { path: guard, sha256: hash(readFileSync(guard)) } });
+  writeFileSync(entry, "// updated selected CUA entry\n");
+  assert.equal(webStopAdapterStatus(f.options).runtimeStatus, "invalid");
+  const third = installWebStopAdapter(f.options);
+  assert.notEqual(third.generation, second.generation);
+  rmSync(entry); rmSync(guard);
+  assert.equal(rollbackWebStopAdapter(f.options).state, "removed", "retained ownership remains enough to roll back after optional source removal");
 });
 
 test("legacy hook migration replaces only the owned definition and preserves neighbors and rollback baseline", t => {
@@ -406,19 +429,22 @@ test("ownership conflicts skip external runtime inspection", async t => {
   });
 });
 
-test("a verified installed snapshot upgrades when the candidate adds a local dependency and retains its original rollback", t => {
+test("a verified older snapshot remains readable and upgrades new dependencies and launcher policy without changing rollback", t => {
   const f = fixture(t), first = installWebStopAdapter(f.options);
   // Reconstruct the installed snapshot before the shared browser-state owner. Its private manifest owns
   // these exact bytes; current candidate source lists are deliberately different.
-  const oldSource = f.sources["web-stop-adapter.mjs"];
+  const oldSource = f.sources["web-stop-adapter.mjs"].replace(' import "./web-process-snapshot.mjs";', '');
   const oldBrowser = "export const browserFixture = true;\n", oldHook = "export const hookFixture = true;\n";
   writeFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), oldSource);
   writeFileSync(path.join(first.managedDirectory, "web-browser.mjs"), oldBrowser);
   writeFileSync(path.join(first.managedDirectory, "web-stop-hook.mjs"), oldHook);
   rmSync(path.join(first.managedDirectory, "web-browser-state.mjs"));
+  rmSync(path.join(first.managedDirectory, "web-process-snapshot.mjs"));
   const manifestPath = path.join(first.managedDirectory, "manifest.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   delete manifest.files["web-browser-state.mjs"];
+  delete manifest.files["web-process-snapshot.mjs"];
+  delete manifest.plan.cuaBootstrap;
   manifest.files["web-stop-adapter.mjs"] = hash(oldSource);
   manifest.files["web-browser.mjs"] = hash(oldBrowser);
   manifest.files["web-stop-hook.mjs"] = hash(oldHook);
@@ -433,6 +459,7 @@ test("a verified installed snapshot upgrades when the candidate adds a local dep
   assert.notEqual(next.managedDirectory, first.managedDirectory);
   assert.equal(readFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), "utf8"), oldSource);
   assert.equal(existsSync(path.join(next.managedDirectory, "web-browser-state.mjs")), true);
+  assert.equal(existsSync(path.join(next.managedDirectory, "web-process-snapshot.mjs")), true);
   assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
   assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
   assert.equal(existsSync(f.hooksPath), false);

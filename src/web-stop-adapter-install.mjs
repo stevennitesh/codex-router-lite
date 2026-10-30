@@ -13,7 +13,7 @@ import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapt
 const OWNER = "codex-router-web-stop-adapter-v1";
 const HOOK_ID = ADAPTER_HOOK_STATUS;
 const ENV_NAMES = ["CODEX_CLI_PATH", "CODEX_NODE_REPL_PATH"];
-const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]);
+const SOURCE_NAMES = Object.freeze(["web-stop-adapter.mjs", "web-process-snapshot.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]);
 const SHA = /^[a-f0-9]{64}$/iu;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
@@ -76,7 +76,7 @@ function compileEntry(source, output) {
   if (process.platform !== "win32") throw new Error("Adapter launcher compilation requires Windows.");
   const compiler = path.join(absolute(process.env.SystemRoot ?? "C:\\Windows"), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
   regular(compiler);
-  execFileSync(compiler, ["/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/debug-", `/out:${output}`, source], {
+  execFileSync(compiler, ["/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/debug-", "/reference:System.Management.dll", `/out:${output}`, source], {
     timeout: 30_000, maxBuffer: 128 * 1024, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -128,7 +128,26 @@ function inspectManifest(ctx, input) {
   if (path.basename(sdkPackageJson) !== "package.json" || sdk.name !== "@modelcontextprotocol/sdk" || typeof sdk.version !== "string") throw new Error("Invalid MCP SDK package anchor.");
   const threadIds = manifest.threadIds ?? null;
   if (!validAdapterThreadIds(threadIds)) throw new Error("Invalid adapter thread scope.");
-  return { ...identities, runtimeModule, runtimeHash, sdkPackageJson, sdkPackageHash: hash(sdkBytes), threadIds: threadIds === null ? null : [...threadIds].sort() };
+  return { ...identities, runtimeModule, runtimeHash, sdkPackageJson, sdkPackageHash: hash(sdkBytes), threadIds: threadIds === null ? null : [...threadIds].sort(),
+    cuaBootstrap: inspectCuaBootstrap(identities.node.path, runtimeModule) };
+}
+
+function inspectCuaBootstrap(node, runtimeModule) {
+  // Only the selected official Node cohort supplies this optional entry. No
+  // cache search, timestamp selection, app-owned plugin edit or extra override.
+  const entryPath = path.join(path.dirname(node), "node_modules", "@oai", "cua-repl", "bin", "cua-repl.mjs");
+  let entry;
+  try { entry = { path: entryPath, sha256: hash(bytes(entryPath)) }; }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+  const browserVersion = path.dirname(path.dirname(runtimeModule)), browserPlugin = path.dirname(browserVersion);
+  const guardPath = path.join(path.dirname(browserPlugin), "unified-computer-use", path.basename(browserVersion), "require-browser-access.mjs");
+  let guard = null;
+  // A differently arranged browser runtime remains usable through the bridge.
+  if (path.basename(browserPlugin) === "browser" && path.basename(path.dirname(runtimeModule)) === "scripts") {
+    try { guard = { path: guardPath, sha256: hash(bytes(guardPath)) }; }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  return { entry, guard };
 }
 
 function verifySignatures(ctx, identities) {
@@ -236,6 +255,7 @@ function verifyManaged(ctx, receipt, { external = true } = {}) {
   if (external) {
     verifySignatures(ctx, [plan.node, plan.officialCli, plan.officialNodeRepl]);
     bytes(plan.runtimeModule, plan.runtimeHash); bytes(plan.sdkPackageJson, plan.sdkPackageHash);
+    for (const identity of [plan.cuaBootstrap?.entry, plan.cuaBootstrap?.guard].filter(Boolean)) bytes(identity.path, identity.sha256);
   }
   return manifest;
 }
@@ -248,6 +268,7 @@ function observeExternalRuntime(ctx, plan) {
     ...["node", "officialCli", "officialNodeRepl"].map(name => ({ label: name, ...plan[name], signed: true })),
     { label: "Browser runtime module", path: plan.runtimeModule, sha256: plan.runtimeHash },
     { label: "MCP SDK package", path: plan.sdkPackageJson, sha256: plan.sdkPackageHash },
+    ...[plan.cuaBootstrap?.entry, plan.cuaBootstrap?.guard].filter(Boolean).map(identity => ({ label: "CUA bootstrap", ...identity })),
   ];
   for (const file of files) {
     const observed = ctx.probeRuntimeFile(file.path);
@@ -303,7 +324,10 @@ function stage(ctx, plan, previous) {
     for (const [name, value] of Object.entries(sources)) ctx.write(path.join(managedDirectory, name), value);
     ctx.write(configPath, json(config));
     let rendered = template;
-    for (const [token, value] of [["@@NODE@@", plan.node.path], ["@@ADAPTER@@", path.join(managedDirectory, "web-stop-adapter.mjs")], ["@@CONFIG@@", configPath]]) {
+    for (const [token, value] of [["@@NODE@@", plan.node.path], ["@@ADAPTER@@", path.join(managedDirectory, "web-stop-adapter.mjs")], ["@@CONFIG@@", configPath],
+      ["@@EVENTS@@", ctx.eventsPath], ["@@OFFICIAL_REPL@@", plan.officialNodeRepl.path], ["@@OFFICIAL_REPL_SHA256@@", plan.officialNodeRepl.sha256],
+      ["@@NODE_SHA256@@", plan.node.sha256], ["@@CUA_ENTRY@@", plan.cuaBootstrap?.entry.path ?? ""], ["@@CUA_ENTRY_SHA256@@", plan.cuaBootstrap?.entry.sha256 ?? ""],
+      ["@@CUA_GUARD@@", plan.cuaBootstrap?.guard?.path ?? ""], ["@@CUA_GUARD_SHA256@@", plan.cuaBootstrap?.guard?.sha256 ?? ""]]) {
       if (rendered.split(token).length !== 2) throw new Error("Invalid adapter launcher template.");
       rendered = rendered.replace(token, value.replaceAll('"', '""'));
     }

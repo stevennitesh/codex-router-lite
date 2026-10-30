@@ -2375,6 +2375,36 @@ test('actual child closure releases passive cleanup ownership without interpreti
   assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement' || entry.code === 'stop_confirmed'), false);
 });
 
+test('generic primary and subagent calls record canonical chat affinity without Stop authority and cancellation remains inflight until terminal', async () => {
+  for (const subagent of [false, true]) {
+    const received = [], sent = [], receipts = [];
+    const child = { pid: 1234, send: async message => received.push(clone(message)) };
+    const bridge = new AdapterBridge({ outer: { send: async message => sent.push(clone(message)) }, child,
+      stopConfig: { ...STOP_CONFIG, server: 'E:\\official-runtime\\node_repl.exe' }, receipt: event => receipts.push(event) });
+    const params = subagent ? asSubagent(ordinary()) : ordinary();
+    params.arguments.code = 'private ordinary code that is not a Router program';
+    const request = { jsonrpc: '2.0', id: 7, method: 'tools/call', params };
+    await bridge.fromOuter(request);
+    assert.deepEqual(received, [request]); assert.equal(bridge.cache, null); assert.equal(bridge.currentAuthority, undefined);
+    let state = receipts.filter(event => event.process).at(-1).process;
+    assert.deepEqual(state.associations, [{ threadId: APPROVED_THREAD, sessionId: SESSION, subagent }]);
+    assert.equal(state.officialChildPid, 1234); assert.equal(state.childInflight, 1); assert.equal(state.outerInflight, 1);
+    const cancel = { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7 } };
+    await bridge.fromOuter(cancel);
+    assert.equal(bridge.pending.size, 0, 'The pre-existing policy map can retire before execution ends.');
+    state = receipts.filter(event => event.process).at(-1).process;
+    assert.equal(state.childInflight, 1); assert.equal(state.outerInflight, 1);
+    assert.equal(state.childCancelledAwaitingTerminal, 1); assert.equal(state.outerCancelledAwaitingTerminal, 1);
+    const terminal = { jsonrpc: '2.0', id: 7, result: { privateResult: 'private terminal bytes' } };
+    await bridge.fromChild(terminal);
+    assert.deepEqual(received, [request, cancel]); assert.deepEqual(sent, [terminal]);
+    state = receipts.filter(event => event.process).at(-1).process;
+    assert.equal(state.childInflight, 0); assert.equal(state.outerInflight, 0);
+    for (const privateValue of [params.arguments.code, 'private terminal bytes', 'private opaque value', 'private launcher value'])
+      assert.equal(JSON.stringify(receipts).includes(privateValue), false);
+  }
+});
+
 test('native identities reject coercible non-string tokens', () => {
   for (const field of ['turn_id', 'session_id']) {
     const source = ordinary(); source._meta['x-codex-turn-metadata'][field] = [TURN];

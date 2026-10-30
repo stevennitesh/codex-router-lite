@@ -801,6 +801,28 @@ and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
 compatibility; the adapter does not pin the whole app to that CLI build. Updating
 an older owned installation releases its CLI pin back to the original selection.
 Foreign changes are preserved, and unrelated hooks are untouched.
+
+The launcher retains a separate Windows kill-on-close job for each official
+JavaScript endpoint. Primary native `node_repl` endpoints use the Web Stop bridge.
+A positively recognized nested official Computer Use bootstrap may launch the
+same verified official REPL directly inside that job, avoiding an unnecessary
+Node bridge. This recognition checks the paired runtime, actual parent bootstrap
+and scoped CUA initialization settings. Missing or changed evidence retains the
+full bridge. It does not broaden Stop authority, change the primary Web route,
+patch the official plugin or share a kernel between endpoints.
+
+`model-router.ps1 codex web processes` joins bounded private process receipts
+with one fresh Windows process census. The launcher's native creation times and
+lifetime UUID bind observations to actual process generations; PID alone is not
+ownership. Canonically observed native metadata supplies chat associations
+without retaining prompts, code, tokens, URLs or sandbox payloads. Cancellation
+does not establish idleness until the actual child call reaches a terminal state.
+Missing associations, incomplete receipts, reused PIDs and unknown native
+identities remain protected. These observations diagnose a session; they never
+authorize process termination. A live idle kernel still owns retained JavaScript
+state and closes through its native owner's EOF/transport shutdown. The report
+does not add an idle timer or an external endpoint-release service.
+
 If the saved browser runtime or tunnel configuration changed, also use the
 [guarded Router restart](../INSTALL.md#replacement-and-drain) to reload that
 configuration before live verification. A Codex restart only reloads the adapter;
