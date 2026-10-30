@@ -18,7 +18,7 @@
     "test:stress": "node --test test/router-stress.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "undici": "8.12.3"
   }
 }
