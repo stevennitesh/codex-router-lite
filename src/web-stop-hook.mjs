@@ -187,6 +187,9 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       stopName: config.stopButtonExactName, idleName: config.idleButtonExactName }, waitForState);
     const { stop, ready } = browserState;
     const readAllowanceMs = 200;
+    // Dispatch and readiness waits leave transport/check headroom beyond the
+    // minimum read allowance; terminal replies can outlast their nominal tick.
+    const readReserveMs = readAllowanceMs + 100;
     let receipt = !absent && state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
     // Prior receipts prevent repeated input and survive for continuation.
     // This hook's public result claims only its own witnessed transition.
@@ -225,9 +228,6 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       return { visible: view.stopVisible, idleAbsent: view.idleAbsent, inactive: diagnostic.generationInactive };
     };
     const waitForReadiness = async (locator, readyObservation) => {
-      // Leave transport/check headroom beyond the minimum read allowance. A
-      // timeout's actual terminal reply need not arrive on its nominal tick.
-      const readReserveMs = readAllowanceMs + 100;
       return await browserState.waitForReadiness(locator, {
         nextTimeout: () => {
           assertCurrent();
@@ -241,7 +241,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       });
     };
     stage = "generation_proof";
-    await inspectGeneration(200);
+    await inspectGeneration(readAllowanceMs);
     stage = "handoff";
     assertCurrent(100);
     await tab.markHandoff();
@@ -254,7 +254,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // Retention is independent of action acknowledgement. Recheck the exact
     // generation after handoff before considering the one semantic Stop click.
     stage = "mutation_url";
-    let observation = await inspectGeneration(200);
+    let observation = await inspectGeneration(readAllowanceMs);
     if (!observation.inactive && !observation.visible && !receipt) {
       stage = "stop_visibility";
       observation = await waitForReadiness(ready(false).or(stop), view => view.inactive || view.visible);
@@ -262,7 +262,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     if (!observation.inactive) {
       if (observation.visible && !receipt) {
         stage = "stop_click";
-        assertCurrent(1000);
+        assertCurrent(readReserveMs);
         // Share the same generation-bound dispatch receipt with ordinary
         // continuation. An uncertain action must not be clicked again there
         // or by another hook; a fresh controller never acquires a binding.
@@ -270,7 +270,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         if (!absent) state.reconciliationStop = receipt;
         diagnostic.clickAttempted = true;
         try {
-          await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - 200) });
+          await stop.click({ timeoutMs: Math.floor(deadline - Date.now() - readAllowanceMs) });
           diagnostic.stopClicked = true;
         } catch {
           // The public locator may reject after input took effect or natural

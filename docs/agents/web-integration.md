@@ -456,7 +456,10 @@ it does not infer newer host policy from the hook. A separately trusted user
 Interrupt hook calls the adapter's own callback with the host's maximum
 three-second timeout. The shared contract reserves transport and terminal-receipt
 headroom within that deadline and waits on the same inactivity predicate after
-one Stop click. Fast transitions return immediately; a slow provider or browser
+one Stop click. After generation proof, click admission reserves the same minimum
+read and transport headroom as readiness. The click preserves a read allowance,
+and its confirmation must arrive within the original deadline.
+Fast transitions return immediately; a slow provider or browser
 readback remains unconfirmed. A larger configured timeout cannot extend the
 [host limit](https://learn.chatgpt.com/docs/hooks#config-shape).
 Elapsed time never supplies confirmation.
