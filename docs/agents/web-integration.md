@@ -435,11 +435,13 @@ The optional Router MCP adapter retains the actual originating browser operation
 metadata for fixed cleanup in the same official Node REPL child. It preserves
 opaque sandbox and launcher values and refuses conflicting observed authority;
 it does not infer newer host policy from the hook. A separately trusted user
-Interrupt hook calls the adapter's own callback with a ten-second timeout.
-The shared contract reserves transport headroom within that deadline and waits
-on the same inactivity predicate after one Stop click. Fast transitions return
-immediately; the longer failure bound allows Pro's controls to settle after
-cancellation. Elapsed time never supplies confirmation.
+Interrupt hook calls the adapter's own callback with the host's maximum
+three-second timeout. The shared contract reserves transport and terminal-receipt
+headroom within that deadline and waits on the same inactivity predicate after
+one Stop click. Fast transitions return immediately; a slow provider or browser
+readback remains unconfirmed. A larger configured timeout cannot extend the
+[host limit](https://learn.chatgpt.com/docs/hooks#config-shape).
+Elapsed time never supplies confirmation.
 Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
 keep their original messages and cancellation scope; their arrival or forwarding
 does not expire the originating authority before the trusted callback arrives.
@@ -810,7 +812,7 @@ restart, even when an older qualifier accepts the new observation options.
 Changes to observation, shared reply or ownership helpers, or Stop cleanup need
 the supported adapter installer from the matching Router source and a full Codex
 restart. An unchanged managed hook retains its trust. The exact owned older
-three-second hook is updated to the current ten-second definition; review and
+ten-second hook is updated to the current three-second definition; review and
 trust that changed definition in Codex before verifying Stop. Preserve a compatible
 Router source, adapter generation and private configuration for rollback;
 rolling back launch selections alone restores the original installation baseline.

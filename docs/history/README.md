@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Windows app 26.1027 compatibility, coordinated Web runtime refresh and complete Router upstream review, 2026-10-29](2026-10-29-app-compatibility-review.json)
+
 - [Windows app compatibility and selected upstream permission and publication repairs, 2026-10-27](2026-10-27-app-compatibility-review.json)
 
 - [Web model qualification, visible tool authority and Pro cancellation confirmation, 2026-10-25](2026-10-25-web-model-qualification.json)

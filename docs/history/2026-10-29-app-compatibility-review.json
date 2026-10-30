@@ -1,0 +1,606 @@
+{
+  "version": 1,
+  "reviewedAt": "2026-10-29",
+  "sourceBase": "b4375681d6e0c4d4503e9ff7ce55011b0b382379",
+  "branch": "codex/web-generation-lifecycle-repair",
+  "repository": {
+    "originMain": "be98a6105cc867221c9f17f79306068dc219f2d7",
+    "headAheadOfOriginMain": 17,
+    "headBehindOriginMain": 0,
+    "initialWorktree": "clean"
+  },
+  "native": {
+    "appVersion": "26.1027.3384.0",
+    "cliVersion": "0.166.0-alpha.5.1",
+    "cliSignature": "Valid OpenAI signature",
+    "appToolsVersion": "26.1027.30824",
+    "catalogModelsParsed": 18,
+    "catalogCompatibility": "passed",
+    "routerHealthBeforeRefresh": "All Doctor checks ok",
+    "officialReleaseNotes": {
+      "url": "https://learn.chatgpt.com/docs/changelog",
+      "reviewedRelease": "Codex CLI 0.166.0 (2026-10-29)",
+      "relevantChanges": "GPT-6.1 Terra catalog addition; model catalog size limit removal; tool/MCP exposure and namespace handling; app-server runtime lifecycle and reasoning accounting.",
+      "disposition": "Current installed catalog parses with all retained route projections. Native models and unfamiliar metadata remain native authority. No required serving change identified.",
+      "limitation": "Stable 0.166.0 release notes do not identify the exact installed 0.166.0-alpha.5.1 app build."
+    },
+    "officialToolPlanning": {
+      "url": "https://github.com/openai/codex/blob/main/codex-rs/core/src/tools/spec_plan.rs",
+      "blobSha": "80ffe7b138915910d3953bf2ffdc9c3dd0db8826",
+      "observed": "Current upstream source still gates deferred MCP discovery and tool_search exposure with model_info.supports_search_tool.",
+      "disposition": "Preserve separate Router supportsToolSearch and hosted web-search policies and request-local namespace authority.",
+      "limitation": "Current public source corroborates the contract; it is not proof of the exact installed private Desktop tool registry."
+    }
+  },
+  "webRuntime": {
+    "before": "refresh-required",
+    "action": "model-router.ps1 codex web refresh-runtime --apply",
+    "applied": true,
+    "forcedInterruption": false,
+    "routerReloaded": true,
+    "browserRuntimeBefore": "26.1023.51421",
+    "browserRuntimeAfter": "26.1027.30824",
+    "previousAdapterGeneration": "09989e68dd882837781fd163a0fc177f8930ce7a4403c5c607b6e0ba851d86e5",
+    "adapterGeneration": "6c34eb3647720e6c9d19aaff2f3e363853ee665085770de3d9914bff6cb56209",
+    "preserved": [
+      "hook definition and existing trust",
+      "tunnel configuration",
+      "ordinary Web thread scope"
+    ],
+    "after": {
+      "browserRuntimeStatus": "current",
+      "runtimeIssues": [],
+      "routerHealth": "ready",
+      "routerHttpStatus": 200,
+      "degraded": [],
+      "adapterOwnershipVerified": true,
+      "adapterConflicts": 0
+    },
+    "pendingAppReload": {
+      "codexRestartRequired": true,
+      "observed": "The open app's saved MCP command still names the previous adapter; the protected installed receipt and User CODEX_NODE_REPL_PATH both name the new adapter.",
+      "statusWarning": "The planner reports manifest-required while that cached command remains selected. A complete normal Codex quit/reopen is the next activation step; no explicit-manifest replacement or config edit was attempted.",
+      "acceptance": "Runtime selection and Router reload succeeded; loading by the restarted app is not yet observed."
+    },
+    "liveVerification": "Browser session, native tools, Stop and same-chat continuation are unverified for this installed candidate. The current chat exposes no supported browser JavaScript tool, so rendered SDK fixtures were not run.",
+    "recovery": "Prior owned adapter retained by the normal coordinated installer; no live rollback qualification claimed."
+  },
+  "switchyardUpstream": {
+    "retainedPin": "fbabf51c62793ed0f6af042b60e92ce1cfba083b",
+    "fetchedHead": "a64bacc9501d85b58b5436ed6d0a05298dca9787",
+    "commitsSincePin": 160,
+    "previousReviewedHead": "b57c5927f6d9e186df23697247a38a7b7fc7eb14",
+    "newCommitsSincePreviousReview": 29,
+    "orderedPatchCheck": "Required PR762 contribution conflicts with current upstream in Cargo.lock and libsy/runner/config/tests/docs. Router compatibility-patch applicability was not tested because its required input layer did not apply.",
+    "disposition": "Retain source.lock, contribution and compatibility patches and the installed binary. No retained native-GPT/Jev contract defect warrants a rebase or pin update.",
+    "inspectedRelevantChanges": [
+      {
+        "commit": "970b3dd2",
+        "change": "Target-specific reasoning replay policy",
+        "decision": "No cross-provider/local-model replay need for current native-GPT targets; preserve raw same-format native body."
+      },
+      {
+        "commit": "4430a512",
+        "change": "Connect-timeout fallback eligibility",
+        "decision": "No demonstrated retained-backend failure warrants changing candidate fallback policy."
+      },
+      {
+        "commit": "657870f3",
+        "change": "Chat cache-write output field",
+        "decision": "Native Responses answers already have locked-source usage regression coverage; Chat output rename is outside that path."
+      },
+      {
+        "commit": "fd37aa76",
+        "change": "Session ID in generic decision context",
+        "decision": "Not required by the patched TypeSafe/Jev bounded task-only projection."
+      },
+      {
+        "commit": "9ed588b4",
+        "change": "Lone user text encoded as Responses item array",
+        "decision": "Incoming same-format native requests retain their body; no retained translation defect."
+      },
+      {
+        "commit": "396b40c8",
+        "change": "Omit absent request-log IDs",
+        "decision": "Optional diagnostics; no compatibility repair."
+      },
+      {
+        "commit": "dfba1ea0",
+        "change": "Configured algorithm factory",
+        "decision": "No required retained-route behavior."
+      }
+    ],
+    "excludedNewCommitFamilies": {
+      "desktopUiAndHarnessManagement": 11,
+      "pythonAndRelease": 3,
+      "goFfiAndWasiBindings": 5,
+      "vgrWorkflows": 4
+    },
+    "remainingNewCommits": "Six remaining commits are accounted for by the relevant dispositions above; 9ed588b4 is included in VGR workflows."
+  },
+  "verification": {
+    "refresh": {
+      "sourceCheck": "passed",
+      "catalogAndNamespaceTests": {
+        "passed": 56,
+        "failed": 0
+      },
+      "upstreamFetch": "completed",
+      "modelQuotaUsed": false
+    },
+    "webRegressionFixtures": {
+      "command": "node --test --test-concurrency=4 test/web-runtime-refresh.test.mjs test/web-stop-adapter.test.mjs test/web-browser.test.mjs test/web-runtime.test.mjs test/web-runtime-refresh-cli.test.mjs test/web-stop-adapter-install.test.mjs",
+      "passed": 926,
+      "failed": 0,
+      "skipped": 0,
+      "execution": "Normal Windows user context; real protected-file/process fixtures where applicable."
+    },
+    "totalScopedTestsPassed": 982,
+    "renderedBrowserSdkFixtures": "not run: supported browser JavaScript tool unavailable in this chat",
+    "exactRouteProviderExecution": "not requalified; no serving, endpoint, classifier, patch or exact-route contract changed",
+    "testMaintenance": "No tests added or modified.",
+    "gitEffects": "Upstream refs fetched. Review evidence and baseline changes remain local; no commit or push."
+  },
+  "routerUpstream": {
+    "repository": "https://github.com/duolahypercho/codex-router.git",
+    "baseline": "9945d74354ab07942f171be329cf81c9478fc5e2",
+    "fetchedHead": "2e3fd008a130d5adf3e2a4b690780abcdb3e4602",
+    "summary": {
+      "commitCount": 112,
+      "nonMergeCount": 70,
+      "mergeCount": 42,
+      "counts": {
+        "topologyOnly": 32,
+        "excluded": 46,
+        "mergeReviewed": 10,
+        "deferred": 5,
+        "alreadyCovered": 19
+      },
+      "immediateServingIntegrations": 0,
+      "conclusion": "No current app-compatibility defect requiring an original-Router source port was established. Relevant safety/runtime fixes are already retained; behavior expansions and conditional followups are explicitly excluded or deferred.",
+      "allCommitsDispositioned": true
+    },
+    "methods": [
+      "Read applicable AGENTS.md, compatibility-maintenance.md, architecture.md, request-preparation.md and current baseline.",
+      "Enumerated all 112 commits and 42 parent sets in baseline..upstream/main.",
+      "Inspected targeted upstream patches and mapped retained concerns to current Lite source/tests.",
+      "Inspected combined-diff filenames for every merge and dense combined patches for retained owners.",
+      "Parallel focused reviews covered private writers and runtime/catalog owners."
+    ],
+    "groups": [
+      {
+        "id": "private-publication-covered",
+        "category": "alreadyCovered",
+        "reason": "Retained writers already use shared exclusive empty-before-ACL private creation and same-directory protected publication; absent siblings are not added.",
+        "evidence": [
+          "src/file-security.mjs:264-366",
+          "src/catalog.mjs:252-254",
+          "src/service-windows.mjs:148-167",
+          "src/file-security.mjs:99-101",
+          "src/caller-key-rotation.mjs:125-152",
+          "src/config-manager.mjs:452",
+          "src/codex-agent-catalog.mjs:73",
+          "src/native-catalog-source.mjs:119",
+          "src/litellm-config.mjs:66-70",
+          "src/provider-selection.mjs:91",
+          "src/provider-credentials.mjs:83",
+          "src/secret.mjs:64",
+          "src/model-picker-state.mjs:61-70"
+        ],
+        "commits": [
+          "c8f1dbd6af4271c6be17a87c9578ba98681155bb",
+          "9c232fedc0002863e74eec2711ca52246a76988a",
+          "80de4bc2bb0e15a140c5141a2c4d5d499c8ef3d5",
+          "b235ed65ed6159cc5874818aba32a1ebdc02e68a",
+          "9161a34fad09c1cdf010a11ca4a3882d8b41dde4",
+          "c5549f0b9becaf6fefcdedf2c07274234f492ea7",
+          "18adb21e8e8f7dca7baebe30781ab45e452ecf70",
+          "3e6b1652b5e25b458ec11acf663acf0c6db12454",
+          "150c03b8bbe09f635b04dcf620afe279ba7cd1f9",
+          "dbeb8885c3a1d20be7185867ec220563c6f251ed",
+          "cb4b66bafad935db4d9a56a392611b129ecbcdaa",
+          "4792ba29af5a52c6f64cd2b44e7731a626d09616"
+        ]
+      },
+      {
+        "id": "private-publication-excluded-owners",
+        "category": "excluded",
+        "reason": "Kimi durable OAuth, pooled credential metadata, legacy migration and generic harness-document/DSH owners are absent from Lite. Shared fsync option is only needed by the absent Kimi owner.",
+        "evidence": [
+          "src/routed-models.mjs",
+          "maintenance/windows-package.json",
+          "src/file-security.mjs:264-366"
+        ],
+        "commits": [
+          "6c5d7fc581a077d7b9baf6f932468bce9b73c75e",
+          "3fc2996fa61ea1a98b14f0cd438b929e15bf895a",
+          "1fcb6630001b8404b2cc92446d20ce49aa4faa02",
+          "58508b98d72c687252d32a41b488e7d649a7e705"
+        ]
+      },
+      {
+        "id": "runtime-catalog-covered",
+        "category": "alreadyCovered",
+        "reason": "Lite already captures child error/close immediately, refreshes changed native client_version metadata, sends Responses-native models directly to the API forwarder, and publishes skill entries with COPYFILE_EXCL.",
+        "evidence": [
+          "src/start.mjs:164-182",
+          "src/native-account-catalog.mjs:234",
+          "test/native-account-catalog.test.mjs:72",
+          "src/router.mjs:2070",
+          "src/router.mjs:2341",
+          "src/routed-models.mjs:23-26",
+          "src/skills-install.mjs:827-868",
+          "test/managed-startup.test.mjs:118",
+          "test/managed-startup.test.mjs:216",
+          "test/skills-install.test.mjs:241",
+          "test/skills-install.test.mjs:263"
+        ],
+        "commits": [
+          "e454b39f7e778db022880857da7f67f450bd0be4",
+          "955645840771efbb0e689d395d753e9168143d19",
+          "dee06b17441c4fc6ef2a69d3ded94d58459eb532",
+          "6d1292e0dd26325a624c120de468e05d0c520f02"
+        ]
+      },
+      {
+        "id": "redirect-boundaries-covered",
+        "category": "alreadyCovered",
+        "reason": "Fixed routed, compaction, external forwarder and WebSocket HTTP-adapter POSTs already set redirect:error; native no-replay behavior and same/cross-origin regressions are present. Upstream failover/vision/provider-pool extensions are outside Lite.",
+        "evidence": [
+          "src/api-forwarder.mjs:135",
+          "src/router.mjs:2075-2077",
+          "src/router.mjs:2613-2615",
+          "src/router.mjs:3472-3474",
+          "test/native-request-forwarding.test.mjs:130",
+          "test/router-stress.test.mjs:268",
+          "test/responses-websocket.test.mjs:852",
+          "test/routing.test.mjs:135"
+        ],
+        "commits": [
+          "72a2c3e010812ff210eacf923cbf77b805c47176",
+          "8896df23556fa704bcfab6f580ce5d19824b2e76",
+          "a2450e2e4d44042bde6cd58c253689f9bf1cb4bf"
+        ]
+      },
+      {
+        "id": "bounded-teardown-deferred",
+        "category": "deferred",
+        "reason": "A bounded final supervisor teardown is potentially useful, but upstream process.exit timeout is incompatible with Lite retaining native process-generation cleanup custody after child close. No retained lost-close reproduction was observed. Do not treat a timeout as successful cleanup or release the service lock while witnesses are pending.",
+        "evidence": [
+          "src/start.mjs:399-406",
+          "test/managed-startup.test.mjs:351"
+        ],
+        "followUp": "Investigate only with a retained shutdown hang; bound liveness without weakening positive process-absence proof or cleanup custody.",
+        "commits": [
+          "e56da02b59cced1ec232125cb9794ab88838d9a0"
+        ]
+      },
+      {
+        "id": "empty-arguments-deferred",
+        "category": "deferred",
+        "reason": "Upstream rejects completed blank calls using tool inventory and drops exact history call/output pairs carrying a Codex EOF parse error. Lite deliberately preserves ordinary raw argument strings and emits content-free diagnostics. Importing this gate changes streamed execution and history semantics; retain existing malformed-JSON-gate deferral until an exact retained-provider reproduction justifies it. Upstream no-input detection must also be reconciled with current request-local inputSchema/parameters authority.",
+        "evidence": [
+          "src/namespace-relay.mjs:3004-3028",
+          "test/namespace-relay.test.mjs:19-44",
+          "docs/agents/request-preparation.md:57-63",
+          "maintenance/upstream-router.json:deferredCandidates"
+        ],
+        "followUp": "If reproduced, isolate output rejection from retry and history rewriting, and validate current/discovered schemas without inventing arguments.",
+        "commits": [
+          "2385edfa33a749a33aea053eef0a4c0bf1373799"
+        ]
+      },
+      {
+        "id": "native-relay-followups-deferred",
+        "category": "deferred",
+        "reason": "Native encrypted-relay successful terminal, strict UTF-8/SSE, unambiguous JSON, single payload, identities and closed/final payload consistency are already enforced in Lite. Upstream's additional affinity-header filtering, delta/done prefix checks, expanded failure classification and compaction-instruction rewrite are not copied: Lite deliberately accepts only authoritative completed snapshots and does not reconstruct plaintext from deltas. Grok argument-stream changes are excluded.",
+        "evidence": [
+          "src/router.mjs:1322-1472",
+          "src/router.mjs:1475-1490",
+          "src/router.mjs:1561-1647",
+          "test/routing.test.mjs:983"
+        ],
+        "followUp": "Revisit header projection or snapshot diagnostics only if the installed Codex representation or a retained encrypted-handoff observation exposes a mismatch; preserve Responses Lite context and exact plaintext.",
+        "commits": [
+          "9a86be408bcd405986f571538dba45b9655f7d9f",
+          "f9b26c8917a27a9518c596c5893958d50f70c7e2"
+        ]
+      },
+      {
+        "id": "shared-workspace-accounts-deferred",
+        "category": "deferred",
+        "reason": "Most of the upstream fix owns multi-account pools and profile login switching absent from Lite. Its catalog race check also requires byte-identical bearer tokens. Lite deliberately scopes catalog identity to native account plus residency/FedRAMP and allows token renewal for the same account; do not replace that with upstream pool semantics absent a retained identity-switch reproduction.",
+        "evidence": [
+          "src/native-account-catalog.mjs:49-72",
+          "test/native-account-catalog.test.mjs:229",
+          "test/native-account-catalog.test.mjs:292"
+        ],
+        "followUp": "If same-workspace distinct-user use is requested or reproduced, design identity from current native session authority while retaining ordinary bearer-renewal semantics.",
+        "commits": [
+          "a8238b4ca20d13354e950e858694be8a05e9c14f"
+        ]
+      },
+      {
+        "id": "generic-service-planner-excluded",
+        "category": "excluded",
+        "reason": "Generic per-model service planning adds no necessary capability for the fixed retained OpenRouter set with the GLM gateway; selected Switchyard startup and native frontend survival already have Lite-specific supervision.",
+        "evidence": [
+          "docs/INSTALL.md:40-56",
+          "src/start.mjs",
+          "src/gateway-supervisor.mjs"
+        ],
+        "commits": [
+          "625d95415ef175e73c6092eed7b7001982c05c11",
+          "08367d8811b03c1b611670261670773e77e43ecf"
+        ]
+      },
+      {
+        "id": "tool-archive-policy-excluded",
+        "category": "excluded",
+        "reason": "Tool-result aging, retained archives, signed search scopes, optional notices and readback proof owners are absent. Adding those systems would change preserved history and exceed the personal workflow scope.",
+        "evidence": [
+          "docs/agents/architecture.md:Product and source authority",
+          "maintenance/windows-package.json"
+        ],
+        "commits": [
+          "ddf34c8be73438e9e21ab1200da7f8851a8c0f56",
+          "149bd4d93c90291464bbb85e2167e6b142e980cd",
+          "ad3493a689e9bc8e986e2965672b326286428408",
+          "8ea5f215ab6d6ed3d93bb24d9b0a3d12e66b0376",
+          "2029173a65ab9a7dcc05cc028ee7086640ae82a8",
+          "90a52eeb01410dac63ec86ed279e16a1bc6fcaab"
+        ]
+      },
+      {
+        "id": "grok-opencode-excluded",
+        "category": "excluded",
+        "reason": "Grok OAuth/API editing codecs, patch feedback, model-visible guidance, benchmark timing, native usage tiers and OpenCode Go Gemini/free models are not retained providers. The namespace diff in 5eb18617 exclusively adds codec providerName/history-v1 identities for that excluded Grok patch bridge.",
+        "evidence": [
+          "src/routed-models.mjs",
+          "docs/agents/architecture.md:Product and source authority"
+        ],
+        "commits": [
+          "7d63ba2e7efd9c6f9f119f76e89c52b6a2fb229e",
+          "0900e4e0eb6413536c7c9c35ab84aaa9c5fc6754",
+          "a4494dd614ddeb97a4a48835070fe9b2a1ba8743",
+          "5e0ce96bfe68713cd238edf65b7baa854eed7630",
+          "a46f349a25092d29afece7291c7cacb41070ff93",
+          "6b16f6be68fc54e60a7c4f45af4d6b2f12b2b143",
+          "f2ff4c0db8f5c4a6bd81a7fb9b264c2c232547e0",
+          "545801bae4a579c3728846568349b239a9e0ac38",
+          "1a28d5e8be14700571ff50b76fe5cc635aa9fe7c",
+          "5eb186172c195f010ed8198e851b0519b56099be",
+          "6a9e150bd75f9d74b2c0b0c92a38b3fcad0f14b8",
+          "6cf6d683c030b5ff2fb9bb31a20f8df43380f071",
+          "9e7267bc364d65d5e27d484844bad0dfb9cdd86e",
+          "838d5cd51622aded84dc20ed8d3c584d1c5355a6",
+          "92abb50c6819d16ccb098cce296e7b4765f36ef0",
+          "aa28a00c0d5a800604aec8f73e1d14749aec896a",
+          "93e3ec42c1c2c7f2ffd621ac5eb4bc8ffcad388e",
+          "55af5a3e3f16c236470527a5bbdbe683cc8b8c28",
+          "2e6bde4382628941b9250c6f10fbca33b4aa7fc4",
+          "5ebd1f189dc6add072b80f787d17b7750d176ba0",
+          "8787f2e29b3a75a5fbae29e2b9a19f75a88029a0",
+          "151d3257e4811bef1d04a0a432fb31c23d4ab916"
+        ]
+      },
+      {
+        "id": "upstream-fixtures-docs-platforms-excluded",
+        "category": "excluded",
+        "reason": "Upstream-only generic fixture owners, absent process-tree capture, service-launch fixture wiring already covered locally, README/localization/release docs, CI rerun, Homebrew action and Control Center Vite updates do not alter Lite's retained runtime.",
+        "evidence": [
+          "maintenance/windows-package.json",
+          "test/managed-startup.test.mjs",
+          "test/service-lifecycle.test.mjs:248"
+        ],
+        "commits": [
+          "ee8cf2c09091a6c750ab404ab5fe30f9595412f6",
+          "5b8ebdbdb2a7bcb36886b0d030135db81f8219d7",
+          "89692ddbc6bc42c74d7fe01a1c782ada931b6275",
+          "73400f536c862e1d69127a873c149888f292de75",
+          "2220a2db27482a265b418db391eb3cc0f911b586",
+          "1b03308f792b44214f57f638d94cbf0e53828efa",
+          "5a825ae07a179c9a34facb0af97624ca1fb0ea11",
+          "aa3ea31c610a8953ec2050ed8a160a751d3bad00",
+          "0bdb27861f344190bd2666f3d1d05b6a077f2848",
+          "b9e54fc6b201e68ab5212b279162434561dc8ee7",
+          "4a2800e482ebf1ebd0f1122125493e8c6b46f4cc",
+          "f4df6e86cc43680ff8be429c8ad09abae39d249f"
+        ]
+      },
+      {
+        "id": "merges-resolution-reviewed",
+        "category": "mergeReviewed",
+        "reason": "Combined-diff filenames and dense combined patches reviewed; conflict resolutions preserve already dispositioned changes and require no wholesale merge.",
+        "commits": [
+          "8d354462517ee02c955c5243cccf0b7f34ce7d69",
+          "460f66ad68bfb24bd25c44090195c93cd87ea93f",
+          "311fc52afa492f36fb057e4355f375c339f40bd8",
+          "51e3b9453634a87ffb9abfad5d211c32a6032a76",
+          "0e86814230b080da65d6992b5c2b66cbbadaeae3",
+          "54b54c464cada7b0aa9bc975188719d6e99d4cd4",
+          "7595bda93f8fb7dc26ba08caa7cd8b21e960a211",
+          "68fb5380749bed99ce9e4d346c1e37d8b97aec00",
+          "186da4897d89a3957e5d22b31e0181678f414957",
+          "b24639fd3a3a6d3fc94622c1fbb4cdfbb977ef60"
+        ]
+      },
+      {
+        "id": "merges-topology-only",
+        "category": "topologyOnly",
+        "reason": "No combined-diff filenames; these merges introduce reviewed branch histories without a separate conflict-resolution change. Parent changes have their own dispositions.",
+        "commits": [
+          "2e3fd008a130d5adf3e2a4b690780abcdb3e4602",
+          "ae5fbc91fb5b27fdd1c55065727835b0c28a684d",
+          "3f0daeff0d492805cf79b71d47bf579d8d09eb8c",
+          "1ff13a30b4af7fcbe65a26ab5a1d467d4dd697b7",
+          "47504108d4a1dfa21b46457c5ef012e7868c7bbf",
+          "559be71523c1dbf4f5430efb9204b73eec72eab1",
+          "511b0adc3d1e34d7819efe4038419c464b24a7c2",
+          "2c20d12abbbfa0e3c857d4860d6b30f98fbfce42",
+          "4f2774cac5b7107b0131335361f67214c86455c0",
+          "80c0b5a1ec30a097da756a51139ffb0c4b62e876",
+          "ff4af8b1d1bd27794ce63a435762338795770a9b",
+          "1c5bc28898e6d3926e18d57917f026ed5adaa7a1",
+          "9eb347b35aeb1829603aa1800bb0467b91f53343",
+          "e31f423071fe2284ee285440ad2a6f94a19d1919",
+          "e1a2e2db47e2e550f0218553cc6a2818be8a419b",
+          "a6e120637879ed5d5f81738d7e66d0642ec4c536",
+          "36e9a0a09b096121825ff4c2922f5f04dc2ef8cc",
+          "cfea324eedb4b7dc1274fd7ff3532e9c154c253d",
+          "7432b02d670dd7889696fc91971257a427016d34",
+          "3ecc2d9b7681b88cde40778ad15ec5639f404444",
+          "44cc7b0bf2cac42c16e302f0c5a28bdb40e8c6c9",
+          "f4671e6e98c10af34e14c7d7a2eab7845e1499d5",
+          "e9e671ed80f44683bd2a058e2b04c7fe2ea795c4",
+          "9d014b1ec429a2b55a2d0c7cb9c09d9cae7c7c13",
+          "04d35769dfaf1e733000f9cecf5eb6efd9cbb065",
+          "d224835e7d1fa110d27aefff5af2aa52e83bde9d",
+          "2fc35abd5363c43412c03279c9508f8b2560b01f",
+          "fabe3da9e18289a77d25bfc5758ee102bd80d6bd",
+          "cec81c7b4632002fbc2e058b0592e124299a5a68",
+          "1808d4173c4eb9076a65d866b1fecbe8b3adcbba",
+          "c826e459c9287809fd726bd678894bcafe2a4000",
+          "85ef669043ac4b65780ed51982d810385b9e1d20"
+        ]
+      }
+    ],
+    "recommendations": [
+      {
+        "group": "bounded-teardown-deferred",
+        "commits": [
+          "e56da02b59cced1ec232125cb9794ab88838d9a0"
+        ],
+        "reason": "A bounded final supervisor teardown is potentially useful, but upstream process.exit timeout is incompatible with Lite retaining native process-generation cleanup custody after child close. No retained lost-close reproduction was observed. Do not treat a timeout as successful cleanup or release the service lock while witnesses are pending.",
+        "followUp": "Investigate only with a retained shutdown hang; bound liveness without weakening positive process-absence proof or cleanup custody.",
+        "evidence": [
+          "src/start.mjs:399-406",
+          "test/managed-startup.test.mjs:351"
+        ]
+      },
+      {
+        "group": "empty-arguments-deferred",
+        "commits": [
+          "2385edfa33a749a33aea053eef0a4c0bf1373799"
+        ],
+        "reason": "Upstream rejects completed blank calls using tool inventory and drops exact history call/output pairs carrying a Codex EOF parse error. Lite deliberately preserves ordinary raw argument strings and emits content-free diagnostics. Importing this gate changes streamed execution and history semantics; retain existing malformed-JSON-gate deferral until an exact retained-provider reproduction justifies it. Upstream no-input detection must also be reconciled with current request-local inputSchema/parameters authority.",
+        "followUp": "If reproduced, isolate output rejection from retry and history rewriting, and validate current/discovered schemas without inventing arguments.",
+        "evidence": [
+          "src/namespace-relay.mjs:3004-3028",
+          "test/namespace-relay.test.mjs:19-44",
+          "docs/agents/request-preparation.md:57-63",
+          "maintenance/upstream-router.json:deferredCandidates"
+        ]
+      },
+      {
+        "group": "native-relay-followups-deferred",
+        "commits": [
+          "9a86be408bcd405986f571538dba45b9655f7d9f",
+          "f9b26c8917a27a9518c596c5893958d50f70c7e2"
+        ],
+        "reason": "Native encrypted-relay successful terminal, strict UTF-8/SSE, unambiguous JSON, single payload, identities and closed/final payload consistency are already enforced in Lite. Upstream's additional affinity-header filtering, delta/done prefix checks, expanded failure classification and compaction-instruction rewrite are not copied: Lite deliberately accepts only authoritative completed snapshots and does not reconstruct plaintext from deltas. Grok argument-stream changes are excluded.",
+        "followUp": "Revisit header projection or snapshot diagnostics only if the installed Codex representation or a retained encrypted-handoff observation exposes a mismatch; preserve Responses Lite context and exact plaintext.",
+        "evidence": [
+          "src/router.mjs:1322-1472",
+          "src/router.mjs:1475-1490",
+          "src/router.mjs:1561-1647",
+          "test/routing.test.mjs:983"
+        ]
+      },
+      {
+        "group": "shared-workspace-accounts-deferred",
+        "commits": [
+          "a8238b4ca20d13354e950e858694be8a05e9c14f"
+        ],
+        "reason": "Most of the upstream fix owns multi-account pools and profile login switching absent from Lite. Its catalog race check also requires byte-identical bearer tokens. Lite deliberately scopes catalog identity to native account plus residency/FedRAMP and allows token renewal for the same account; do not replace that with upstream pool semantics absent a retained identity-switch reproduction.",
+        "followUp": "If same-workspace distinct-user use is requested or reproduced, design identity from current native session authority while retaining ordinary bearer-renewal semantics.",
+        "evidence": [
+          "src/native-account-catalog.mjs:49-72",
+          "test/native-account-catalog.test.mjs:229",
+          "test/native-account-catalog.test.mjs:292"
+        ]
+      }
+    ]
+  },
+  "postRestartVerification": {
+    "observedAt": "2026-10-30T02:48:44.222Z",
+    "appAndAdapter": "App26.1027.3384.0 / CLI0.166.0-alpha.5.1 / adapter6c34eb3647720e6c9d19aaff2f3e363853ee665085770de3d9914bff6cb56209",
+    "runtimeStatus": "current; ready; no restart required; adapter installed and owned without conflicts; Router HTTP200 and no degraded providers",
+    "renderedBrowser": {
+      "groups": {
+        "stop": {
+          "passed": 10,
+          "failed": 0
+        },
+        "observation": {
+          "passed": 9,
+          "failed": 0
+        },
+        "send": {
+          "passed": 11,
+          "failed": 0
+        },
+        "lifecycle": {
+          "passed": 10,
+          "failed": 0
+        }
+      },
+      "totalPassed": 40,
+      "initialNavigationFailure": "Initial Send route-settlement case timed out at Page.enable. Direct normal and transitional same-origin probes later completed in29ms and24ms, actual navigation events were observed, and the unchanged original Send and lifecycle suites passed. The original transient cause remains unestablished; no timeout or browser implementation workaround was applied."
+    },
+    "recovery": {
+      "initialFailure": "The same-session browser was unavailable while the disposable chat was not mounted after restart; no Send occurred.",
+      "afterOpeningChat": "Exact prior marker recalled without supplying it; saved conversation URL unchanged; clean completed baseline, no uncertain Send or unresolved native actions."
+    },
+    "liveRoute": {
+      "model": "chatgpt-web/gpt-6-sol-instant",
+      "effort": "low",
+      "family": "GPT-6",
+      "power": 0,
+      "nativeTool": "passed exactly one default-permission exec_command; exact marker and completed delivery",
+      "recall": "passed without tool execution or supplying marker; same native binding and saved chat",
+      "stop": "failed native_stop_unconfirmed; actual native interrupted event and child terminal observed; positive adapter Stop acknowledgement absent",
+      "continuation": "not run because positive Stop acceptance was absent"
+    },
+    "stopDiagnosis": {
+      "configuredHookSeconds": 10,
+      "officialMaximumSeconds": 3,
+      "cleanupOwnerCancellationMs": 3008,
+      "lateTerminalCallbackMs": 3029,
+      "nativeFailure": "execution_cancelled; kernel reset reported",
+      "officialDocumentation": "https://learn.chatgpt.com/docs/hooks#config-shape",
+      "officialSource": "https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/hooks/src/engine/discovery.rs#L946-L968",
+      "scope": "Public0.165.0 and0.166.0 both clamp Interrupt command/MCP hooks to3s. Earlier passing alpha probes do not establish10s authority. The local budget must fit the real host deadline; this is not evidence of a newly introduced0.166 cap."
+    },
+    "acceptance": "Live native tools and recall pass. Native Stop and post-Stop continuation remain unqualified until the deadline repair is installed and independently verified."
+  },
+  "interruptDeadlineCandidate": {
+    "status": "source verified; not committed or deployed; live Stop acceptance pending",
+    "baseline": "b4375681d6e0c4d4503e9ff7ce55011b0b382379",
+    "sourceDiffSha256": "0f32483589edcdb33d44fd74f9303ab345e41788b2de12e866d8bed76c636c45",
+    "sourceDiffBytes": 20637,
+    "hookTimeoutMs": 3000,
+    "observationDrainAndCallbackAllowanceMs": 2850,
+    "nativeCleanupAllowanceMs": 2500,
+    "browserScriptAllowanceMs": 2400,
+    "hookMigration": "Exact owned10s definition migrates to3s; old3s definitions remain current. Historical prepared3-to10 and new10-to3 endpoints remain recoverable; arbitrary hooks are refused.",
+    "eventDrivenDesign": "Retain actual native terminal callbacks and conditional SDK state waits. The measured observation drained in57ms and cleanup dispatched in58ms; the remaining bottleneck is after native cleanup dispatch. A deadline is a failure bound, never success evidence. No supported public generation-cancel acknowledgement or lifecycle registration extends the trusted Interrupt lifetime.",
+    "liveNextStep": "Install the reviewed candidate, review changed hook trust and reload the app, then perform one native Stop sequence using the actual terminal stage and positive inactivity proof. If no stage survives a native reset, collect bounded protected in-owner stage evidence before changing sequencing.",
+    "independentReview": {
+      "outcome": "No actionable findings",
+      "coverage": "Exact3s/10s ownership, both prepared migration directions, rollback, deadline propagation, positive terminal custody, duplicate callbacks and no-repeat input",
+      "limits": "Source and fixture review; repaired installed behavior remains unverified"
+    },
+    "verification": {
+      "command": "npm run verify:codex",
+      "tests": 2423,
+      "passed": 2421,
+      "failed": 0,
+      "skipped": 2,
+      "catalogModelsParsed": 18,
+      "catalogCompatibility": "passed",
+      "sourceChecks": "passed",
+      "testMaintenance": "All changed tests retain continuing deadline, ownership, rollback or historical receipt regression purpose."
+    }
+  }
+}

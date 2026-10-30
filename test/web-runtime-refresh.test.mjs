@@ -92,7 +92,7 @@ function fixture(t, { threadIds = null } = {}) {
 
 function retainLegacyHook(f) {
   const receipt = JSON.parse(readFileSync(f.receiptPath, "utf8")), hooks = JSON.parse(readFileSync(f.hooksPath, "utf8"));
-  const hook = { ...createAdapterHook(), timeout: 3 };
+  const hook = { ...createAdapterHook(), timeout: 10 };
   receipt.hook = hook; hooks.hooks.Interrupt[0].hooks[0] = hook;
   f.write(f.receiptPath, json(receipt)); f.write(f.hooksPath, json(hooks));
 }

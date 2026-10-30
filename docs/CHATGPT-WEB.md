@@ -132,9 +132,11 @@ After installing the adapter, review and trust **Stopping ChatGPT Web generation
 through Router adapter** in Codex Settings → Hooks, then fully quit and reopen Codex.
 Use the normal Codex app; no external Web launcher or special startup script is
 needed. Configuration alone does not establish live Stop readiness.
-The hook allows up to ten seconds for cancellation confirmation; an observed idle
-transition returns immediately. Updating an older three-second hook changes its
-definition, so review and trust the changed hook again before the normal restart.
+Codex caps Interrupt hooks at three seconds. Cleanup and its terminal receipt
+must fit that deadline; an observed idle transition returns immediately. A slow
+or cancelled readback remains unconfirmed. Updating the previously owned
+ten-second hook changes its definition, so review and trust the changed hook
+again before the normal restart.
 
 For the adapter manifest, installation commands, source-version matching and
 rollback, see [integration maintenance](agents/web-integration.md#adapter-installation-and-rollback).

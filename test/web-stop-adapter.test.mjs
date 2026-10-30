@@ -262,6 +262,7 @@ test('Stop generation rejects invalid and injected identities at the adapter bou
 test('the trusted hook, adapter, script and proof share one bounded cancellation allowance', () => {
   const bridge = new AdapterBridge({ outer: {}, child: {}, stopConfig: STOP_CONFIG });
   assert.equal(createAdapterHook().timeout * 1000, STOP_BUDGET.hookTimeoutMs);
+  assert.equal(createAdapterHook().timeout, 3, 'Codex clamps Interrupt hooks, including MCP callbacks, to three seconds.');
   assert.equal(bridge.graceMs, STOP_BUDGET.graceMs);
   assert.equal(bridge.cleanupMs, STOP_BUDGET.cleanupMs);
   assert.ok(STOP_BUDGET.scriptMs < bridge.cleanupMs && bridge.cleanupMs < bridge.graceMs
@@ -2223,13 +2224,13 @@ test('Stop accepts an actual terminal after its execution allowance within the o
   assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement'), false);
 });
 
-test('the extended Stop window waits for its actual child terminal and coalesces duplicate callbacks without another action', async t => {
+test('the host-bounded Stop window waits for its actual child terminal and coalesces duplicate callbacks without another action', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const terminal = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
       await terminal.promise;
-      return success({ elapsedMs: 3200, inactivityEvidence: 'composer_restored' });
+      return success({ elapsedMs: 2000, inactivityEvidence: 'composer_restored' });
     }
     return ordinaryResult;
   });
@@ -2237,16 +2238,16 @@ test('the extended Stop window waits for its actual child terminal and coalesces
   await f.client.callTool(ordinary());
   const owned = f.client.callTool(hook());
   await f.waitForCall(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
-  t.mock.timers.tick(3200); await f.client.ping();
+  t.mock.timers.tick(2000); await f.client.ping();
   assert.equal(f.receipts.some(entry => ['stop_confirmed', 'stop_unconfirmed'].includes(entry.code)), false,
-    'Passing the old callback deadline does not invent a native terminal.');
+    'An unsettled child does not become a successful native terminal.');
   const duplicate = f.client.callTool(hook()); await f.waitForReceipt('cleanup_duplicate_queued');
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
   terminal.resolve();
   for (const result of await Promise.all([owned, duplicate])) assert.equal(result.isError, undefined);
   const confirmed = f.receipts.find(entry => entry.code === 'stop_confirmed');
   assert.equal(confirmed.childTerminalObserved, true); assert.equal(confirmed.inactivityEvidence, 'composer_restored');
-  assert.equal(confirmed.elapsedMs, 3200);
+  assert.equal(confirmed.elapsedMs, 2000);
   assert.equal((await f.client.callTool(hook())).isError, true, 'A retired native turn cannot regain cancellation authority.');
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
 });

@@ -184,8 +184,8 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
     assert.equal(specifier, pathToFileURL(runtimeModule).href);
     return { setupBrowserRuntime: async () => { touch("setup", model.owner); return agent; } };
   };
-  // Existing boundary cases keep a short modeled allowance. Cases covering the
-  // production window pass the shared contract budget explicitly.
+  // Boundary cases default to the production script allowance; deadline tests
+  // can inject a smaller budget or name the shared contract explicitly.
   const run = async ({ thread = model.owner, turn = model.turn, budgetMs = 2400, delivery } = {}) => {
     const identity = { threadId: thread, turnId: turn, sessionId: id(99) };
     const source = stopCode(stopConfig, identity, budgetMs, delivery)
@@ -585,14 +585,15 @@ test("one readiness wait confirms delayed Stop completion in the same tab within
   assert.equal(f.calls.filter(call => call.name === "readiness_wait").length, 1);
 });
 
-test("delayed site cancellation stays unknown in the old window and confirms only after the owned state barrier in the new window", { timeout: 10_000 }, async () => {
-  for (const budgetMs of [2400, STOP_BUDGET.scriptMs]) {
+test("site cancellation is confirmed only when its owned state transition falls within the host budget", async () => {
+  for (const transitionAt of [1800, 3200]) {
+    const budgetMs = STOP_BUDGET.scriptMs;
     const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
     const entered = Promise.withResolvers(), transition = Promise.withResolvers();
     f.first.pauseReadiness = transition.promise;
-    f.first.readinessDelayMs = 3200;
+    f.first.readinessDelayMs = transitionAt;
     f.first.onReadinessSettled = () => {
-      if (f.model.now >= 3200) { f.first.visible = false; f.first.idleVisible = true; }
+      if (f.model.now >= transitionAt) { f.first.visible = false; f.first.idleVisible = true; }
     };
     f.model.onCall = name => { if (name === "readiness_wait") entered.resolve(); };
     const pending = f.run({ budgetMs });
@@ -601,7 +602,7 @@ test("delayed site cancellation stays unknown in the old window and confirms onl
     assert.equal(clicked(f).length, 1);
     transition.resolve();
     const result = await pending;
-    if (budgetMs === 2400) {
+    if (transitionAt > budgetMs) {
       assert.equal(result.code, "stop_confirmation_failed");
       assert.equal(result.readbackStopVisible, true); assert.equal(result.generationInactive, false);
     } else {
@@ -613,7 +614,7 @@ test("delayed site cancellation stays unknown in the old window and confirms onl
     const repeated = await f.run({ budgetMs });
     assert.equal(repeated.clickAttempted, false);
     assert.equal(f.first.state.reconciliationStop, receipt);
-    assert.equal(clicked(f).length, 1, "A larger allowance never authorizes a second click.");
+    assert.equal(clicked(f).length, 1, "Another callback never authorizes a second click.");
   }
 });
 
@@ -658,13 +659,13 @@ test("a caller can preserve an unknown attached-wait error before any decisive r
   }
 });
 
-test("the hook keeps its deadline when the public SDK caps each readiness wait at three seconds", async () => {
-  const reasons = ["Playwright selector deadline exceeded", "Timed out after 3000ms waiting for selector owned-inactive-body: no match"];
+test("the hook keeps its host deadline when the public SDK caps an earlier readiness wait", async () => {
+  const reasons = ["Playwright selector deadline exceeded", "Timed out after 1000ms waiting for selector owned-inactive-body: no match"];
   for (const reason of reasons) for (const prefix of ["", "Error: "]) {
     const timeoutError = new Error(`${prefix}${reason}\nlocator.waitFor(visible) timed out`);
     const f = fixture(); f.first.keepVisible = true; f.first.keepGenerating = true;
-    f.first.readinessMaxWaitMs = 3000; f.first.readinessTimeoutError = timeoutError;
-    const transitionAt = 3200, tab = f.first.state.tab;
+    f.first.readinessMaxWaitMs = 1000; f.first.readinessTimeoutError = timeoutError;
+    const transitionAt = 1200, tab = f.first.state.tab;
     f.model.onCall = name => {
       if (name === "readiness_wait") f.first.readinessDelayMs = Math.max(0, transitionAt - f.model.now);
     };
@@ -681,7 +682,7 @@ test("the hook keeps its deadline when the public SDK caps each readiness wait a
 });
 
 test("capped readiness waits cannot confirm a generation that remains active for the whole hook deadline", async () => {
-  const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 3000;
+  const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 600;
   const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
   assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
   assert.equal(result.generationInactive, false); assert.equal(result.readbackStopVisible, true);
@@ -701,7 +702,7 @@ test("an early non-timeout wait rejection gets one decisive read without being r
     "Error: Error: Timed out after 3000ms waiting for selector private selector",
   ]) {
     const f = fixture(); f.first.keepVisible = true;
-    f.first.readinessError = new Error(`${reason}\nlocator.waitFor({ state: "visible" }) timed out after 9100ms`);
+    f.first.readinessError = new Error(`${reason}\nlocator.waitFor({ state: "visible" }) timed out after 2100ms`);
     f.model.onCall = name => { if (name === "readiness_wait") f.model.now += 1000; };
     const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
     assert.equal(result.outcome, "blocked"); assert.equal(result.code, "stop_confirmation_failed");
@@ -713,7 +714,7 @@ test("an early non-timeout wait rejection gets one decisive read without being r
 
 test("a second capped condition wait still fences native authority, binding, ledger and saved URL changes", async () => {
   for (const change of ["metadata", "owner", "ledger", "url"]) {
-    const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 3000;
+    const f = fixture(); f.first.keepVisible = true; f.first.readinessMaxWaitMs = 1000;
     let waits = 0, changedAt;
     f.model.onCall = name => {
       if (name !== "readiness_wait" || ++waits !== 2) return;

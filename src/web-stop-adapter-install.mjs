@@ -18,11 +18,13 @@ const SHA = /^[a-f0-9]{64}$/iu;
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 // The only supported hook-definition transition is the previously shipped
-// three-second definition to the current contract. Never adopt other edits.
+// ten-second definition to the host-bounded contract. Never adopt other edits.
 const PREVIOUS_ADAPTER_HOOK = { type: "mcp_tool", server: "node_repl", tool: "router_web_interrupt", input: {
   hook_event_name: "${hook_event_name}", session_id: "${session_id}", turn_id: "${turn_id}" },
-  timeout: 3, statusMessage: HOOK_ID };
+  timeout: 10, statusMessage: HOOK_ID };
 const supportedHook = hook => same(hook, createAdapterHook()) || same(hook, PREVIOUS_ADAPTER_HOOK);
+// Either shipped definition may be the prior endpoint of an interrupted
+// migration. Reading that recovery record never adopts another hook shape.
 const receiptOwnsHook = (receipt, hook) => same(hook, receipt.hook)
   || receipt.state === "prepared" && receipt.priorHook !== undefined && same(hook, receipt.priorHook);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -177,8 +179,8 @@ function loadReceipt(ctx) {
       || receipt.configPath !== path.join(receipt.managedDirectory, "config.json") || !SHA.test(receipt.managedManifestSha256 ?? "")
       || receipt.hooksPath !== ctx.hooksPath || !(receipt.previousHooksText === null || typeof receipt.previousHooksText === "string")
       || !supportedHook(receipt.hook)
-      || receipt.priorHook !== undefined && !(receipt.state === "prepared" && same(receipt.hook, createAdapterHook())
-        && same(receipt.priorHook, PREVIOUS_ADAPTER_HOOK))
+      || receipt.priorHook !== undefined && !(receipt.state === "prepared" && supportedHook(receipt.priorHook)
+        && !same(receipt.hook, receipt.priorHook))
       || !object(receipt.created)
       || typeof receipt.created.hooks !== "boolean" || typeof receipt.created.interrupt !== "boolean") throw new Error("Invalid or foreign adapter ownership receipt.");
   receipt.environment = pair(receipt.environment); receipt.previousEnvironment = pair(receipt.previousEnvironment);
