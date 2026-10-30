@@ -337,3 +337,51 @@ test("snapshot reader rejects a merged Router catalog as native authority", () =
       fingerprint: undefined,
     });
   }));
+
+test("rejected catalog bodies cannot hold publication while cancellation acknowledgement stalls", { timeout: 5000 }, async t => {
+  for (const kind of ["status", "declared-size", "stream-size"]) await t.test(kind, () => withCache(async cachePath => {
+    const original = JSON.stringify(fixture([{ slug: "gpt-stable" }]));
+    writeFileSync(cachePath, original);
+    let cancellations = 0;
+    const body = new ReadableStream({
+      start(controller) {
+        if (kind === "stream-size") controller.enqueue(new Uint8Array(32 * 1024 * 1024 + 1));
+      },
+      cancel() { cancellations++; return new Promise(() => {}); },
+    });
+    const result = await refreshNativeAccountCatalogUnlocked({
+      cachePath, force: true, version: "0.153.4", headersProvider: async () => headers(), writeCache,
+      fetchImpl: async () => new Response(body, {
+        status: kind === "status" ? 401 : 200,
+        headers: kind === "declared-size" ? { "content-length": String(32 * 1024 * 1024 + 1) } : {},
+      }),
+    });
+    assert.equal(result.status, "failed");
+    assert.equal(cancellations, 1);
+    assert.equal(body.locked, false);
+    assert.equal(readFileSync(cachePath, "utf8"), original);
+  }));
+});
+
+test("catalog deadline releases a pending body read without replacing the last cache", { timeout: 5000 }, async t => withCache(async cachePath => {
+  const original = JSON.stringify(fixture([{ slug: "gpt-stable" }]));
+  writeFileSync(cachePath, original);
+  const controller = new AbortController();
+  t.mock.method(AbortSignal, "timeout", () => controller.signal);
+  let reading, cancellations = 0;
+  const started = new Promise(resolve => { reading = resolve; });
+  const body = new ReadableStream({
+    pull() { reading(); return new Promise(() => {}); },
+    cancel() { cancellations++; return new Promise(() => {}); },
+  });
+  const pending = refreshNativeAccountCatalogUnlocked({
+    cachePath, force: true, version: "0.153.4", headersProvider: async () => headers(), writeCache,
+    fetchImpl: async () => new Response(body),
+  });
+  await started;
+  controller.abort(new Error("catalog deadline"));
+  assert.equal((await pending).status, "failed");
+  assert.equal(cancellations, 1);
+  assert.equal(body.locked, false);
+  assert.equal(readFileSync(cachePath, "utf8"), original);
+}));

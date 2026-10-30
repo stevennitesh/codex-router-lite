@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { createStopBrowserState } from "../src/web-browser-state.mjs";
+import { browserDom, createBrowserAllowance, waitForBrowserReadiness, waitForHomeBrowserReadiness, createBrowserNavigationObserver, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
+import { readBrowserReplies, isNormalChatHomeUrl } from "../src/web-browser.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-stop-browser.html", import.meta.url);
 const fixtureRoute = "/web-stop-browser.html";
@@ -21,6 +22,7 @@ const scenarios = Object.freeze({
   "click-idle-transition": "Click restores idle",
   "absent-unconfirmed": "Absent unconfirmed",
   "explicit-complete": "Explicit complete",
+  "sdk-capped-readiness": "Click restores idle",
 });
 
 function requireContract(value, code) {
@@ -95,7 +97,8 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
       // These exact names come from this fixture's public scenario controls.
       await tab.playwright.getByRole("button", { name: scenarios[name], exact: true }).click({ timeoutMs });
       const selected = await status();
-      requireContract(selected.scenario === name && selected.stopClicks === 0, "scenario_not_selected");
+      requireContract(selected.scenario === (name === "sdk-capped-readiness" ? "click-idle-transition" : name)
+        && selected.stopClicks === 0, "scenario_not_selected");
       const state = createStopBrowserState(tab, { ui, generationTurnKey, stopName: "Stop", idleName: "Start Voice" });
       const before = await state.inspect({ timeoutMs });
       requireContract(before.url === fixtureUrl && before.matchingCount === 1
@@ -113,6 +116,33 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         requireContract(after.inactive === true && after.stopVisible === false
           && retained.mounted === 1 && retained.hidden === 1, "hidden_stop_blocked_idle_readiness");
         results.push({ case: name, passed: true, hiddenStopMounted: true, readinessResolved: true });
+      } else if (name === "sdk-capped-readiness") {
+        requireContract(before.stopVisible === true && before.inactive === false, "initial_state_not_active");
+        const deadline = Date.now() + 10000;
+        let waits = 0, activeRead = false;
+        // The real SDK's first bounded wait must expire while the fixture is
+        // active. Only a rearmed wait dispatches the fixture's one real click.
+        const after = await state.waitForReadiness({ waitFor: async options => {
+          waits += 1;
+          if (waits === 2) {
+            requireContract(activeRead, "rearm_without_active_read");
+            await state.stop.click({ timeoutMs });
+          }
+          await state.ready(true).waitFor({ ...options, timeoutMs: Math.min(3000, options.timeoutMs) });
+        } }, {
+          state: "attached",
+          nextTimeout: () => deadline - Date.now() - 1500,
+          inspect: async () => {
+            const view = await state.inspect({ allowComposerRestored: true, timeoutMs });
+            if (waits === 1 && view.stopVisible === true && view.inactive === false) activeRead = true;
+            return view;
+          },
+          ready: view => view.inactive,
+        });
+        const clicked = await status();
+        requireContract(waits === 2 && after.inactive === true && after.stopVisible === false
+          && clicked.stopClicks === 1, "capped_wait_did_not_rearm");
+        results.push({ case: name, passed: true, readinessState: "attached", conditionWaits: waits, activeRead, stopClicks: clicked.stopClicks });
       } else if (["labelledby-transition", "normalized-transition", "click-idle-transition"].includes(name)) {
         requireContract(before.stopVisible === true && before.inactive === false && before.idleAbsent === true,
           "preclick_state_not_active_without_idle");
@@ -161,6 +191,365 @@ export async function runWebStopBrowserContract({ tab, fixtureUrl, timeoutMs = 2
         code: typeof error?.contractCode === "string" ? error.contractCode : "browser_contract_operation_failed" });
     }
   }
+  return results;
+}
+
+/** Exercise the production semantic observation projection through the installed SDK. */
+export async function runWebObservationBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid observation contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The observation contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const results = [];
+  const readObservation = (state, stopVisible, quiet = true) => state.profile(stopVisible, quiet)
+    .or(tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`))
+    .or(state.regenerate).evaluateAll(readBrowserReplies, {
+      ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+      generationTurnKey, observation: true, stopVisible,
+    }, { timeoutMs });
+  const cases = [
+    ["labelledby-transition", "Labelledby transition", true, true],
+    ["normalized-transition", "Normalized names transition", true, true],
+    ["hidden-stop-idle", "Hidden Stop with idle", false, true],
+    ["duplicate-stop", "Duplicate Stop", false, false],
+    ["observation-labelledby", "Observation labelledby completion", false, true],
+    ["observation-text", "Observation text completion", false, true],
+    ["observation-temporary", "Observation labelledby temporary mode", false, false],
+    ["observation-quoted-control", "Observation quoted control", false, true],
+    ["observation-indicator-transition", "Observation indicator transition", true, true],
+  ];
+  for (const [name, button, stopVisible, recognized] of cases) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const state = createObservationBrowserState(tab, { ui: browserDom, generationTurnKey });
+      if (!recognized) {
+        requireContract(await state.profile(true).count() === 0 && await state.profile(false).count() === 0, "ambiguous_or_temporary_profile_accepted");
+        results.push({ case: name, passed: true, profileRejected: true });
+        continue;
+      }
+      const transition = name === "observation-indicator-transition";
+      const view = await readObservation(state, stopVisible, !transition);
+      requireContract(view?.observation?.url === fixtureUrl && view.observation.stopVisible === stopVisible
+        && view.observation.temporaryInactive === true && view.turns.length === 1, "semantic_projection_invalid");
+      if (transition) {
+        await tab.playwright.getByRole("button", { name: "Finish fixture generation", exact: true }).click({ timeoutMs });
+        const options = { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector, generationTurnKey };
+        const full = await state.indicatorBody.or(state.fullBanner).or(state.fullButton)
+          .evaluateAll(readBrowserReplies, { ...options, indicator: "full" }, { timeoutMs });
+        const error = await state.indicatorBody.or(tab.playwright.locator(browserDom.turnSelector))
+          .or(state.requestError).or(state.retry).or(state.composer)
+          .evaluateAll(readBrowserReplies, { ...options, indicator: "error" }, { timeoutMs });
+        const current = await readObservation(state, false, false);
+        requireContract(full?.url === fixtureUrl && full.conversationFull === false && error?.url === fixtureUrl
+          && error.requestError === undefined && current?.observation?.stopVisible === false
+          && current.turns[0].complete === true && current.replies[0]?.completionActionAfter === true,
+        "indicator_transition_not_reobserved");
+        results.push({ case: name, passed: true, transitionReobserved: true, quotedErrorRejected: true, projectionReads: 4 });
+        continue;
+      }
+      if (name.startsWith("observation-")) {
+        requireContract(view.replies.length === 1 && view.replies[0].answer === true
+          && view.replies[0].completionActionAfter === true && view.observation.regenerateVisible === true
+          && view.observation.regenerateCount === 1, "semantic_completion_not_proven");
+      }
+      results.push({ case: name, passed: true, stopVisible, projectionReads: 1 });
+    } catch (error) {
+      results.push({ case: name, passed: false, code: typeof error?.contractCode === "string" ? error.contractCode : "observation_contract_operation_failed" });
+    }
+  }
+  return results;
+}
+
+/** Exercise the actual Send locator and projection using explicit render events. */
+export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid Send contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The Send contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const generationMarker = "Router generation: 11111111-2222-4333-8444-555555555555";
+  const generationKey = "11112222-3333-4444-8555-666677778888";
+  const historyKey = "00000000-1111-4222-8333-444455556666";
+  const results = [];
+  for (const [name, button] of [["send-disabled", "Disabled Send readiness"], ["send-aria-disabled", "Aria-disabled Send readiness"]]) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const ready = createSendReadyLocator(tab, browserDom);
+      requireContract(await ready.count() === 0, "disabled_send_reported_ready");
+      await tab.playwright.getByRole("button", { name: "Enable fixture Send", exact: true }).click({ timeoutMs });
+      await ready.waitFor({ state: "visible", timeoutMs });
+      requireContract(await ready.count() === 1
+        && await tab.playwright.getByRole("button", { name: browserDom.sendButtonExactName, exact: true }).isEnabled(), "enabled_send_not_ready");
+      results.push({ case: name, passed: true, enabledByEvent: true });
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
+    }
+  }
+  const cases = [
+    ["send-pending", "Pending Send anchor"],
+    ["send-history", "Send with quoted history marker"],
+    ["send-duplicate-marker", "Duplicate Send marker"],
+    ["send-duplicate-key", "Duplicate Send identity"],
+    ["send-foreign-latest", "Superseded Send anchor"],
+  ];
+  for (const [name, button] of cases) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const baselineTurnKeys = name === "send-history" ? [historyKey] : [];
+      const state = createSendBrowserState(tab, { ui: browserDom, generationMarker, baselineTurnKeys });
+      const read = async () => {
+        const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+          .or(tab.playwright.locator(browserDom.turnSelector))
+          .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+            projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys }, { timeoutMs });
+        requireContract(view?.dispatch?.url === fixtureUrl && view.dispatch.temporaryInactive === true, "coherent_dispatch_not_proven");
+        return state.classify(view);
+      };
+      const before = await read();
+      requireContract(before.anchor === null && await state.ready.count() === 0, "unproved_anchor_ready");
+      if (name === "send-pending" || name === "send-history") {
+        requireContract(before.blocked === false, "history_or_missing_turn_blocked");
+        await tab.playwright.getByRole("button", { name: "Publish pending Send marker", exact: true }).click({ timeoutMs });
+        const placeholder = await read();
+        requireContract(placeholder.anchor === null && placeholder.blocked === false
+          && placeholder.diagnostic.validMarkerCount === 0 && await state.ready.count() === 0, "placeholder_identity_adopted");
+        await tab.playwright.getByRole("button", { name: "Publish verified Send identity", exact: true }).click({ timeoutMs });
+        await state.ready.waitFor({ state: "attached", timeoutMs });
+        const confirmed = await read();
+        requireContract(confirmed.anchor === generationKey && confirmed.blocked === false
+          && confirmed.diagnostic.keyCount === 1 && confirmed.diagnostic.latestMatches === true, "released_anchor_not_owned");
+        results.push({ case: name, passed: true, placeholderRejected: true, releasedIdentityVerified: true });
+      } else {
+        requireContract(before.blocked === true, "ambiguous_or_superseded_anchor_accepted");
+        results.push({ case: name, passed: true, ambiguousOrSupersededRejected: true });
+      }
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
+    }
+  }
+  for (const [name, button, rejected] of [["send-temporary", "Temporary Send mode", true],
+    ["send-duplicate-mode", "Duplicate Send mode controls", true], ["send-hidden-mode", "Hidden inactive Send mode", false]]) {
+    try {
+      await tab.playwright.getByRole("button", { name: button, exact: true }).click({ timeoutMs });
+      const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+        .or(tab.playwright.locator(browserDom.turnSelector))
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+          projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys: [] }, { timeoutMs });
+      requireContract(rejected ? view === null : view?.dispatch?.url === fixtureUrl
+        && createSendBrowserState(tab, { ui: browserDom, generationMarker }).classify(view).anchor === generationKey,
+      "send_mode_projection_invalid");
+      results.push({ case: name, passed: true, modeRejected: rejected, projectionReads: 1 });
+    } catch (error) {
+      results.push({ case: name, passed: false,
+        code: typeof error?.contractCode === "string" ? error.contractCode : "send_contract_operation_failed" });
+    }
+  }
+  let navigationWait;
+  const navigationDiagnostic = { stage: "case-setup", errorCategory: null };
+  const navigationErrorCategory = error => /timed out|deadline expired|deadline exceeded/iu.test(error?.message ?? "") ? "timeout"
+    : error?.name === "BrowserUseSecurityError" ? "security" : "sdk-error";
+  const navigationBatch = batch => ({ cursor: Number.isSafeInteger(batch?.cursor) && batch.cursor >= 0 ? batch.cursor : null,
+    truncated: batch?.truncated === true, truncatedFlagValid: typeof batch?.truncated === "boolean",
+    eventsValid: Array.isArray(batch?.events), eventCount: Array.isArray(batch?.events) ? Math.min(batch.events.length, 100) : null });
+  const navigationCall = async (stage, run) => {
+    navigationDiagnostic.stage = stage;
+    try { return await run(); }
+    catch (error) { navigationDiagnostic.errorCategory = navigationErrorCategory(error); throw error; }
+  };
+  try {
+    await tab.playwright.getByRole("button", { name: "Unsettled Send route", exact: true }).click({ timeoutMs });
+    const state = createSendBrowserState(tab, { ui: browserDom, generationMarker, baselineTurnKeys: [] });
+    const read = async () => {
+      const view = await createObservationBrowserState(tab, { ui: browserDom, generationTurnKey: "pending" }).indicatorBody
+        .or(tab.playwright.locator(browserDom.turnSelector))
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+          projection: "anchor", dispatch: true, generationMarker, baselineTurnKeys: [] }, { timeoutMs });
+      requireContract(Boolean(view), "unsettled_send_normal_controls_missing");
+      return { ...state.classify(view), url: view.dispatch.url };
+    };
+    const before = await read();
+    requireContract(before.anchor === generationKey && await state.ready.count() === 1
+      && new URL(before.url).pathname === "/fixture-send-unsettled", "unsettled_send_case_not_reproduced");
+    const originalTabId = tab.id;
+    const navigationTab = { capabilities: { get: async id => {
+      const capability = await navigationCall("capability-get", () => tab.capabilities.get(id));
+      return { documentation: () => navigationCall("capability-documentation", () => capability.documentation()),
+        send: (...args) => navigationCall("page-enable", () => capability.send(...args)),
+        readEvents: async options => {
+          const capturing = options.afterSequence === undefined;
+          const batch = await navigationCall(capturing ? "cursor-capture" : "navigation-wait", () => capability.readEvents(options));
+          navigationDiagnostic[capturing ? "capture" : "wait"] = navigationBatch(batch);
+          return batch;
+        } };
+    } } };
+    const navigation = await createBrowserNavigationObserver(navigationTab, {
+      allowance: createBrowserAllowance(Date.now() + timeoutMs, () => new Error("Fixture Send navigation deadline expired.")),
+      assertCurrent: () => requireContract(tab.id === originalTabId, "fixture_tab_changed") });
+    requireContract(Boolean(navigation), "send_navigation_observer_unavailable");
+    const captured = await read();
+    requireContract(captured.anchor === generationKey && captured.url === before.url, "unsettled_send_changed_before_wait");
+    navigationWait = navigation.next();
+    await tab.playwright.getByRole("button", { name: "Settle fixture Send route", exact: true }).click({ timeoutMs });
+    requireContract(await navigationWait === true, "send_navigation_event_missing");
+    const after = await read();
+    requireContract(after.anchor === generationKey && !after.blocked
+      && new URL(after.url).pathname === `/c/${generationKey}`, "send_navigation_coherent_proof_failed");
+    results.push({ case: "send-route-settlement", passed: true, markerReadyBeforeNavigation: true,
+      navigationEventObserved: true, coherentSavedPathAndMarker: true });
+  } catch (error) {
+    navigationDiagnostic.errorCategory ??= typeof error?.contractCode === "string" ? "contract-rejection" : navigationErrorCategory(error);
+    results.push({ case: "send-route-settlement", passed: false,
+      code: typeof error?.contractCode === "string" ? error.contractCode : "send_navigation_contract_operation_failed",
+      diagnostic: navigationDiagnostic });
+  } finally {
+    if (navigationWait) await Promise.allSettled([navigationWait]);
+    await tab.goto(fixtureUrl);
+  }
+  return results;
+}
+
+/** Startup and recovery waits use the installed SDK, with explicit fixture events. */
+export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutMs = 2000 } = {}) {
+  fixtureUrl = fixtureUrlOnly(fixtureUrl);
+  if (!tab?.playwright || !Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 10000) throw new Error("Invalid lifecycle contract options.");
+  const initialUrl = await tab.url();
+  if (initialUrl !== fixtureUrl && initialUrl !== "about:blank") throw new Error("The lifecycle contract requires its own disposable fixture tab.");
+  if (initialUrl !== fixtureUrl) await tab.goto(fixtureUrl);
+  const results = [], click = name => tab.playwright.getByRole("button", { name, exact: true }).click({ timeoutMs });
+  const record = async (name, run) => {
+    try { results.push({ case: name, passed: true, ...await run() }); }
+    catch (error) { results.push({ case: name, passed: false,
+      code: typeof error?.contractCode === "string" ? error.contractCode : "lifecycle_contract_operation_failed",
+      ...(error?.contractDiagnostic ? { diagnostic: error.contractDiagnostic } : {}) }); }
+  };
+  await record("home-hydration", async () => {
+    await click("Home hydration");
+    const state = createHomeBrowserState(tab, { ui: browserDom, homeUrl: isNormalChatHomeUrl });
+    requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "unhydrated_home_ready");
+    await click("Hydrate fixture home");
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    requireContract(await state.ready.count() === 1, "hydrated_home_not_ready");
+    // A semantic wake never bypasses the authoritative ChatGPT-origin proof.
+    requireContract(await state.inspect(timeoutMs) === false, "foreign_origin_home_accepted");
+    return { hydrationEventObserved: true, foreignOriginRejected: true };
+  });
+  for (const [name, button] of [["home-duplicate", "Duplicate home model"], ["home-temporary", "Temporary home mode"]]) {
+    await record(name, async () => {
+      await click(button);
+      const state = createHomeBrowserState(tab, { ui: browserDom, homeUrl: isNormalChatHomeUrl });
+      requireContract(await state.ready.count() === 0 && await state.inspect(timeoutMs) === null, "ambiguous_home_ready");
+      return { readinessRejected: true };
+    });
+  }
+  const proof = { generationTurnKey, replyId: "00112233-4455-4677-8899-aabbccddeeff",
+    assistantPrefix: { length: "Recovered saved answer".length }, completed: true };
+  await record("recovery-render-events", async () => {
+    await click("Recovery checkpoint render");
+    const state = createRecoveryBrowserState(tab, { ui: browserDom, proof });
+    const progressing = createRecoveryBrowserState(tab, { ui: browserDom, proof: { ...proof, completed: false } });
+    requireContract(await state.ready.count() === 0, "missing_checkpoint_ready");
+    await click("Publish recovery checkpoint");
+    requireContract(await state.ready.count() === 0 && await progressing.ready.count() === 0, "unrendered_checkpoint_ready");
+    await click("Reveal recovery text");
+    await progressing.ready.waitFor({ state: "attached", timeoutMs });
+    requireContract(await state.ready.count() === 0, "incomplete_checkpoint_ready");
+    await click("Complete recovery checkpoint");
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    const view = await tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)
+      .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector }, { timeoutMs });
+    requireContract(view.turns.length === 1 && view.turns[0].complete === true
+      && view.replies.length === 1 && view.replies[0].messageId === proof.replyId
+      && view.replies[0].text === "Recovered saved answer", "checkpoint_projection_invalid");
+    return { checkpointEventsObserved: true, projectionReads: 1 };
+  });
+  await record("recovery-formatted", async () => {
+    await click("Formatted recovery checkpoint");
+    const expected = "Before.\n\nAfter.\n\nfirst\n\nlast";
+    const state = createRecoveryBrowserState(tab, { ui: browserDom,
+      proof: { ...proof, assistantPrefix: { length: expected.length } } });
+    await state.ready.waitFor({ state: "attached", timeoutMs });
+    const rawLength = await tab.playwright.locator(`[${browserDom.messageIdAttribute}="${proof.replyId}"]`)
+      .evaluate(element => element.textContent.length, undefined, { timeoutMs });
+    const view = await tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)
+      .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector }, { timeoutMs });
+    requireContract(rawLength < expected.length && view.replies.length === 1 && view.replies[0].text === expected,
+      "formatted_checkpoint_not_preserved");
+    return { logicalLinesPreserved: true, rawTextShorterThanCheckpoint: true };
+  });
+  for (const [name, button] of [["recovery-duplicate-message", "Duplicate recovery message"],
+    ["recovery-duplicate-turn", "Duplicate recovery generation"], ["recovery-foreign-latest", "Foreign recovery generation"]]) {
+    await record(name, async () => {
+      await click(button);
+      const state = createRecoveryBrowserState(tab, { ui: browserDom, proof });
+      requireContract(await state.ready.count() === 0, "foreign_or_duplicate_checkpoint_ready");
+      return { readinessRejected: true };
+    });
+  }
+  await record("home-navigation-event-queue", async () => {
+    await click("Home hydration"); await click("Hydrate fixture home");
+    const expected = `${fixtureUrl}#checkpoint`, originalTabId = tab.id;
+    const home = createHomeBrowserState(tab, { ui: browserDom, homeUrl: url => url === expected });
+    const capability = await tab.capabilities.get("cdp"), subscribed = Promise.withResolvers();
+    let captureTimeout, heldReads = 0, phase = "semantic-readiness", outcome = "pending", firstProof, capture;
+    const observedHome = { ready: home.ready, inspect: async (...args) => {
+      phase = "home-projection";
+      const proof = await home.inspect(...args);
+      firstProof ??= { mounted: proof !== null, empty: proof?.empty === true, normal: proof?.normal === true,
+        urlClass: proof?.url === expected ? "target" : proof?.url === fixtureUrl ? "fixture" : proof?.url ? "other" : "unavailable" };
+      return proof;
+    } };
+    const navigationTab = { capabilities: { get: async id => {
+      phase = "capability";
+      requireContract(id === "cdp", "unexpected_navigation_capability");
+      return { documentation: async () => { phase = "capability-documentation"; return capability.documentation(); },
+        send: async (...args) => { phase = "page-enable"; return capability.send(...args); }, readEvents: options => {
+        phase = options.afterSequence === undefined ? "cursor-capture" : "navigation-wait";
+        const result = capability.readEvents(options);
+        if (options.afterSequence === undefined) {
+          captureTimeout = options.timeoutMs;
+          return result.then(batch => { capture = { validCursor: Number.isSafeInteger(batch?.cursor),
+            eventCount: Math.min(batch?.events?.length ?? 0, 100), truncated: batch?.truncated === true }; return batch; });
+        }
+        heldReads += 1; subscribed.resolve();
+        return result;
+      } };
+    } } };
+    const waiting = waitForHomeBrowserReadiness(navigationTab, { home: observedHome, browserReadiness: waitForBrowserReadiness,
+      allowance: createBrowserAllowance(Date.now() + timeoutMs, () => new Error("Fixture home navigation deadline expired.")),
+      assertCurrent: () => requireContract(tab.id === originalTabId, "fixture_tab_changed"), transitional: url => url === fixtureUrl })
+      .then(proof => { outcome = proof?.normal === true ? "normal-proof" : "unavailable"; return proof; }, error => {
+        outcome = error?.message === "Fixture home navigation deadline expired." ? "deadline" : "error"; throw error;
+      });
+    try {
+      requireContract(await Promise.race([subscribed.promise.then(() => true), waiting.then(() => false, () => false)]), "navigation_queue_not_armed");
+      await tab.playwright.getByRole("link", { name: "Navigate to fixture checkpoint", exact: true }).click({ timeoutMs });
+      const proof = await waiting;
+      requireContract(proof?.normal === true && proof.url === expected && captureTimeout === 0 && heldReads === 1, "home_navigation_queue_proof_failed");
+    } catch (error) {
+      error.contractDiagnostic = { phase, outcome, heldReads, captureTimeoutZero: captureTimeout === 0,
+        ...(firstProof ? { firstProof } : {}), ...(capture ? { capture } : {}) };
+      throw error;
+    } finally {
+      // A failed fixture click still drains the queue's finite SDK wait.
+      await Promise.allSettled([waiting]);
+      await tab.goto(fixtureUrl);
+    }
+    return { heldNavigationEventObserved: true, captureTimeoutZero: true, coherentHomeVerified: true };
+  });
+  await record("exact-url-event", async () => {
+    const expected = `${fixtureUrl}#checkpoint`;
+    const navigation = tab.playwright.waitForURL(expected, { timeoutMs });
+    await tab.playwright.getByRole("link", { name: "Navigate to fixture checkpoint", exact: true }).click({ timeoutMs });
+    await navigation;
+    requireContract(await tab.url() === expected, "url_event_not_observed");
+    // The same API must also observe an event that preceded subscription.
+    await tab.playwright.waitForURL(expected, { timeoutMs });
+    await tab.goto(fixtureUrl);
+    return { exactUrlVerified: true, priorNavigationVerified: true };
+  });
   return results;
 }
 

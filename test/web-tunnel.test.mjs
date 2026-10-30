@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import nativeFs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { createServer } from "node:http";
 import path from "node:path";
 import test, { after } from "node:test";
@@ -30,8 +32,14 @@ const secret = "synthetic_runtime_key_not_for_public_output";
 const serverUrl = `http://127.0.0.1:17845/${"a".repeat(64)}/mcp`;
 const scalar = (config, name) => JSON.parse(new RegExp(`^\\s+${name}: (".*")$`, "mu").exec(config)[1]);
 const pollingHealth = (details = {}, fields = {}) => ({
-  schema_version: 1, component: "control-plane", status: "ok", state: "polling", limited: false,
+  status: "ok", state: "polling", limited: false,
   details: { last_success: "2026-10-19T20:00:00Z", consecutive_failures: 0, ...details }, ...fields,
+});
+const healthSnapshot = (poll = pollingHealth(), fields = {}) => ({
+  schema_version: 1, live: true, ready: true, snapshot_at: "2026-10-19T20:00:01Z",
+  runtime: { instance_id: "a".repeat(32), version: "0.0.16", flavor: "full",
+    started_at: "2026-10-19T19:00:00Z", uptime_seconds: 3601, lifecycle: "running" },
+  components: { "control-plane": poll }, ...fields,
 });
 const waitFor = async predicate => {
   const deadline = performance.now() + 10_000;
@@ -65,16 +73,18 @@ async function fixture(t) {
   const keyPath = path.join(root, "runtime-key.secret");
   writeFileSync(keyPath, `${secret}\n`, { mode: 0o600 });
   const requests = [], observed = {};
-  let healthStatus = 200, readyStatus = 200, pollHealth = pollingHealth(), pollStatus = 200, tunnel, expectedCloseCode;
+  let healthStatus = 200, readyStatus = 200, pollHealth = pollingHealth(), pollStatus = 200, snapshotFields = {}, tunnel, expectedCloseCode;
+  let holdResponse, bodyOverride;
   const server = createServer((request, response) => {
     requests.push(request.url);
-    if (request.url === "/health/control-plane") {
+    if (holdResponse) { holdResponse(response); holdResponse = undefined; return; }
+    if (request.url === "/health?details=true") {
       response.writeHead(pollStatus, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(pollHealth));
+      response.end(bodyOverride ?? JSON.stringify(healthSnapshot(pollHealth, { live: healthStatus === 200, ready: readyStatus === 200, ...snapshotFields })));
       return;
     }
-    response.writeHead(request.url === "/healthz" ? healthStatus : readyStatus);
-    response.end("health body is never retained");
+    response.writeHead(404);
+    response.end("unsupported health route");
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const child = new Child();
@@ -98,10 +108,13 @@ async function fixture(t) {
     return child;
   };
   const options = { executable: process.execPath, tunnelId: "tunnel_native_codex", keyPath, serverUrl, stateDir, spawnImpl };
-  return { root, stateDir, keyPath, requests, observed, child, options,
+  return { root, stateDir, keyPath, requests, observed, child, options, healthUrl: `http://127.0.0.1:${server.address().port}/`,
     expectCloseFailure: code => { expectedCloseCode = code; },
     setHealth: (health, readiness) => { healthStatus = health; readyStatus = readiness; },
     setPolling: (value, status = 200) => { pollHealth = value; pollStatus = status; },
+    setSnapshot: fields => { snapshotFields = fields; },
+    setBody: value => { bodyOverride = value; },
+    holdNextResponse: () => new Promise(resolve => { holdResponse = resolve; }),
     async start(extra = {}) { tunnel = await startWebTunnel({ ...options, ...extra }); return tunnel; },
   };
 }
@@ -123,7 +136,7 @@ test("official client receives protected YAML references and observed successful
   assert.equal(JSON.stringify(f.observed.args).includes(secret), false);
   assert.equal(JSON.stringify(tunnel.status()).includes(serverUrl), false);
   if (process.platform === "win32") assert.equal(privateFileIsProtected(f.observed.configFile), true);
-  assert.deepEqual(f.requests.slice(0, 3), ["/healthz", "/readyz", "/health/control-plane"]);
+  assert.deepEqual(f.requests, ["/health?details=true"], "One aggregate request replaces the three startup probes.");
   assert.deepEqual(tunnel.status(), { state: "ready", running: true, healthy: true, ready: true, pid: f.child.pid });
   const firstClose = tunnel.close();
   assert.equal(tunnel.close(), firstClose);
@@ -136,6 +149,93 @@ test("official client receives protected YAML references and observed successful
   assert.deepEqual(readdirSync(f.stateDir), []);
   assert.equal(readFileSync(f.keyPath, "utf8"), `${secret}\n`);
   assert.deepEqual(tunnel.status(), { state: "stopped", running: false, healthy: false, ready: false, pid: f.child.pid });
+});
+
+test("health URL publication wakes startup before a cadence tick and retires its one-shot watcher", { timeout: 10_000 }, async t => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const f = await fixture(t);
+  let notify, watchedDirectory, watcherClosed = 0;
+  const watcher = new EventEmitter();
+  watcher.close = () => { watcherClosed += 1; queueMicrotask(() => watcher.emit("close")); };
+  const mock = t.mock.method(nativeFs, "watch", (directory, listener) => {
+    watchedDirectory = directory; notify = listener; return watcher;
+  });
+  syncBuiltinESMExports();
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); });
+  const tunnel = await f.start({ spawnImpl: (...args) => {
+    const child = f.options.spawnImpl(...args);
+    assert.equal(watchedDirectory, path.dirname(f.observed.healthFile), "subscribe before daemon launch");
+    writeFileSync(f.observed.healthFile, "");
+    return child;
+  } });
+  assert.deepEqual(f.requests, [], "spawn observes the still-empty publication file");
+  writeFileSync(f.observed.healthFile, "http://unrelated.invalid/");
+  notify("change", "unrelated-file");
+  assert.deepEqual(f.requests, [], "another directory entry cannot wake startup");
+  // A partial publication cannot establish readiness or retire the watcher.
+  notify("change", "health.url");
+  assert.equal(watcherClosed, 0);
+  writeFileSync(f.observed.healthFile, f.healthUrl);
+  notify("rename", "health.url");
+  notify("change", "health.url");
+  await tunnel.ready;
+  assert.deepEqual(f.requests, ["/health?details=true"], "publication burst produces one aggregate request without ticking the interval");
+  assert.equal(watcherClosed, 1);
+  await tunnel.close();
+  assert.equal(watcherClosed, 1);
+});
+
+test("unavailable and missed startup file notifications retain paced aggregate health sampling", { timeout: 15_000 }, async t => {
+  for (const kind of ["unsupported watch", "watch error", "missed publication"]) await t.test(kind, async t => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const f = await fixture(t);
+    const watcher = new EventEmitter();
+    let closed = 0;
+    watcher.close = () => { closed += 1; queueMicrotask(() => watcher.emit("close")); };
+    const mock = t.mock.method(nativeFs, "watch", () => {
+      if (kind === "unsupported watch") throw new Error("Synthetic watcher unavailable.");
+      return watcher;
+    });
+    syncBuiltinESMExports();
+    t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); });
+    const tunnel = await f.start({ spawnImpl: (...args) => {
+      const child = f.options.spawnImpl(...args);
+      writeFileSync(f.observed.healthFile, "");
+      return child;
+    } });
+    assert.deepEqual(f.requests, []);
+    if (kind === "watch error") watcher.emit("error", new Error("Synthetic watcher loss."));
+    writeFileSync(f.observed.healthFile, f.healthUrl);
+    t.mock.timers.tick(1000);
+    await tunnel.ready;
+    assert.deepEqual(f.requests, ["/health?details=true"]);
+    assert.equal(closed, kind === "unsupported watch" ? 0 : 1);
+    await tunnel.close();
+  });
+});
+
+test("shutdown before health URL publication closes its watcher before removing owned files", { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const watcher = new EventEmitter();
+  let release;
+  watcher.close = () => { release = () => watcher.emit("close"); };
+  const mock = t.mock.method(nativeFs, "watch", () => watcher);
+  syncBuiltinESMExports();
+  t.after(() => { mock.mock.restore(); syncBuiltinESMExports(); release?.(); });
+  const tunnel = await f.start({ spawnImpl: (...args) => {
+    const child = f.options.spawnImpl(...args);
+    writeFileSync(f.observed.healthFile, "");
+    return child;
+  } });
+  const rejected = assert.rejects(tunnel.ready, { code: "web_tunnel_cancelled" });
+  const closing = tunnel.close();
+  assert.equal(existsSync(f.observed.healthFile), true);
+  assert.deepEqual(f.child.kills, [], "file watcher closure is drained before stopping its daemon");
+  release();
+  await closing;
+  await rejected;
+  assert.equal(existsSync(f.observed.healthFile), false);
+  assert.deepEqual(f.requests, []);
 });
 
 test("isolated tunnel environment excludes native credentials and inherited tunnel overrides", { timeout: 25_000 }, async t => {
@@ -167,8 +267,8 @@ test("the owner waits for an actual child process to close before removing its p
     // Even unsafe vendor diagnostics must remain outside Router output.
     console.error(scalar("url"));
     console.error(fs.readFileSync(scalar("api_key").slice(5), "utf8"));
-    const server = http.createServer((request, response) => response.end(request.url === "/health/control-plane"
-      ? JSON.stringify(${JSON.stringify(pollingHealth())}) : "ready"));
+    const server = http.createServer((request, response) => response.end(request.url === "/health?details=true"
+      ? JSON.stringify(${JSON.stringify(healthSnapshot())}) : "unsupported"));
     server.listen(0, "127.0.0.1", () => fs.writeFileSync(scalar("url_file"), "http://127.0.0.1:" + server.address().port));
   `;
   const tunnel = await f.start({ spawnImpl: (executable, args, options) => {
@@ -242,9 +342,7 @@ test("liveness alone cannot resolve readiness and shutdown cancels the outstandi
   const tunnel = await f.start();
   let resolved = false;
   void tunnel.ready.then(() => { resolved = true; }, () => {});
-  await new Promise(resolve => {
-    const check = setInterval(() => { if (f.requests.includes("/readyz")) { clearInterval(check); resolve(); } }, 10);
-  });
+  await waitFor(() => tunnel.status().healthy);
   assert.equal(resolved, false);
   assert.equal(tunnel.status().healthy, true);
   assert.equal(tunnel.status().ready, false);
@@ -268,7 +366,7 @@ test("a rejected runtime key fails readiness despite passing local probes and cl
     return true;
   });
   await tunnel.close();
-  assert.deepEqual(f.requests, ["/healthz", "/readyz", "/health/control-plane"]);
+  assert.deepEqual(f.requests, ["/health?details=true"]);
   assert.deepEqual(tunnel.status(), { state: "failed", running: false, healthy: false, ready: false, pid: f.child.pid, error: "web_tunnel_auth_rejected" });
   assert.deepEqual(f.child.kills, ["SIGTERM"]);
   assert.deepEqual(readdirSync(f.stateDir), []);
@@ -281,8 +379,7 @@ test("local readiness waits for the first successful poll and keeps a long poll 
   const tunnel = await f.start();
   let resolved = false;
   void tunnel.ready.then(() => { resolved = true; }, () => {});
-  await waitFor(() => f.requests.includes("/readyz"));
-  await new Promise(resolve => setTimeout(resolve, 25));
+  await waitFor(() => f.requests.length >= 2);
   assert.equal(resolved, false);
   assert.equal(tunnel.status().ready, false);
   f.setPolling(pollingHealth());
@@ -290,8 +387,7 @@ test("local readiness waits for the first successful poll and keeps a long poll 
   assert.equal(tunnel.status().ready, true);
   const count = f.requests.length;
   f.setPolling(pollingHealth({}, { state: "backpressured" }));
-  await waitFor(() => f.requests.length > count + 2);
-  await new Promise(resolve => setTimeout(resolve, 25));
+  await waitFor(() => f.requests.length >= count + 2);
   assert.equal(tunnel.status().ready, true);
 });
 
@@ -324,25 +420,176 @@ test("a failed poll revokes current readiness until a subsequent successful poll
   assert.deepEqual(f.child.kills, []);
 });
 
-test("unavailable or unsupported poll diagnostics cannot establish readiness", { timeout: 25_000 }, async t => {
-  for (const [snapshot, status] of [[pollingHealth(), 404], [pollingHealth({}, { schema_version: 2 }), 200],
-    [pollingHealth({ last_success: "not a timestamp" }), 200], [pollingHealth({}, { component: "mcp" }), 200],
-    [pollingHealth({}, { oversized: "x".repeat(25 * 1024) }), 200]]) {
-    await t.test(`schema ${snapshot.schema_version}, component ${snapshot.component}, HTTP ${status}, bytes ${JSON.stringify(snapshot).length}`, async t => {
+test("unavailable or unsupported poll diagnostics cannot establish readiness", { timeout: 45_000 }, async t => {
+  const cases = [
+    ["route unavailable", {}, pollingHealth(), 404],
+    ["transient HTTP failure", {}, pollingHealth(), 503],
+    ["local HTTP denial is not hosted-poll rejection", {}, pollingHealth(), 403],
+    ["unsupported schema", { schema_version: 2 }],
+    ["missing liveness", { live: undefined }],
+    ["missing readiness", { ready: undefined }],
+    ["invalid readiness type", { ready: "true" }],
+    ["missing components", { components: undefined }],
+    ["missing control-plane", { components: { mcp: pollingHealth() } }],
+    ["limited control-plane", {}, pollingHealth({}, { limited: true })],
+    ["omitted control-plane details", {}, pollingHealth({}, { details: undefined })],
+    ["invalid failure count", {}, pollingHealth({ consecutive_failures: -1 })],
+    ["missing poll timestamp", {}, pollingHealth({ last_success: undefined })],
+    ["invalid poll timestamp", {}, pollingHealth({ last_success: "not a timestamp" })],
+    ["oversized aggregate", { future_field: "x".repeat(64 * 1024) }],
+  ];
+  for (const [name, fields, poll = pollingHealth(), status = 200] of cases) {
+    await t.test(name, async t => {
       const f = await fixture(t);
-      f.setPolling(snapshot, status);
+      f.setPolling(poll, status);
+      f.setSnapshot(fields);
       const tunnel = await f.start();
       let resolved = false;
       void tunnel.ready.then(() => { resolved = true; }, () => {});
-      await waitFor(() => f.requests.includes("/readyz"));
-      await new Promise(resolve => setTimeout(resolve, 25));
+      // A second request can only start after the first sample was consumed.
+      await waitFor(() => f.requests.length >= 2);
       assert.equal(resolved, false);
       assert.equal(tunnel.status().ready, false);
+      assert.equal(tunnel.status().running, true);
+      assert.deepEqual(f.child.kills, []);
       const rejected = assert.rejects(tunnel.ready, { code: "web_tunnel_cancelled" });
       await tunnel.close();
       await rejected;
     });
   }
+});
+
+test("aggregate byte budget accepts the documented limit and rejects one extra byte with recovery", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const empty = healthSnapshot(pollingHealth(), { future_field: "" });
+  const padding = "x".repeat(64 * 1024 - Buffer.byteLength(JSON.stringify(empty)));
+  f.setSnapshot({ future_field: padding });
+  const tunnel = await f.start();
+  await tunnel.ready;
+  assert.equal(tunnel.status().ready, true, "Aggregate responses above the former 24 KiB component limit are supported.");
+  f.setSnapshot({ future_field: `${padding}x` });
+  await waitFor(() => !tunnel.status().healthy);
+  assert.equal(tunnel.status().ready, false);
+  f.setSnapshot({ future_field: "x".repeat(25 * 1024), truncated: true });
+  // Truncation elsewhere does not invalidate complete control-plane evidence.
+  await waitFor(() => tunnel.status().ready);
+  assert.deepEqual(f.child.kills, []);
+});
+
+test("aggregate liveness and local startup readiness each gate successful poll evidence", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const tunnel = await f.start();
+  await tunnel.ready;
+  f.setHealth(503, 200);
+  await waitFor(() => !tunnel.status().healthy);
+  assert.equal(tunnel.status().ready, false);
+  f.setHealth(200, 503);
+  await waitFor(() => tunnel.status().healthy);
+  assert.equal(tunnel.status().ready, false);
+  f.setHealth(200, 200);
+  await waitFor(() => tunnel.status().ready);
+  assert.deepEqual(f.child.kills, []);
+});
+
+test("transient HTTP and malformed aggregate bodies revoke current readiness and recover", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const tunnel = await f.start();
+  await tunnel.ready;
+  for (const [status, body] of [[503, undefined], [200, "{"], [200, Buffer.from([0xff])]]) {
+    f.setPolling(pollingHealth(), status);
+    f.setBody(body);
+    await waitFor(() => !tunnel.status().healthy);
+    assert.equal(tunnel.status().ready, false);
+    assert.equal(tunnel.status().running, true);
+    f.setPolling(pollingHealth());
+    f.setBody(undefined);
+    await waitFor(() => tunnel.status().ready);
+    assert.deepEqual(f.child.kills, []);
+  }
+});
+
+test("an unfinished aggregate request cannot overlap another poll or restore readiness during close", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const tunnel = await f.start();
+  await tunnel.ready;
+  const pending = f.holdNextResponse();
+  const response = await pending;
+  const count = f.requests.length;
+  // Keep the response pending across the next cadence tick, using its actual
+  // abort as evidence that the bounded request has drained.
+  const drained = new Promise(resolve => response.once("close", resolve));
+  await drained;
+  assert.equal(f.requests.length, count, "The 1.5s request spans a 1s cadence tick without overlapping it.");
+  await waitFor(() => !tunnel.status().healthy);
+  await waitFor(() => tunnel.status().ready);
+  const pendingClose = f.holdNextResponse();
+  const closingResponse = await pendingClose;
+  const closingDrain = new Promise(resolve => closingResponse.once("close", resolve));
+  const closing = tunnel.close();
+  closingResponse.end(JSON.stringify(healthSnapshot()));
+  await Promise.all([closing, closingDrain]);
+  assert.equal(tunnel.status().ready, false);
+  assert.equal(tunnel.status().healthy, false);
+  assert.equal(tunnel.status().state, "stopped");
+});
+
+test("unacknowledged aggregate cancellation cannot hold the poll lease across its next cadence", { timeout: 10_000 }, async t => {
+  for (const kind of ["stalled read", "oversized body", "HTTP rejection"]) await t.test(kind, async t => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const f = await fixture(t);
+    const entered = Promise.withResolvers(), cancelled = Promise.withResolvers();
+    const timeout = new AbortController();
+    let sampleDeadlines = 0;
+    t.mock.method(AbortSignal, "timeout", () => ++sampleDeadlines === 1 ? timeout.signal : new AbortController().signal);
+    let samples = 0;
+    t.mock.method(globalThis, "fetch", async () => {
+      samples += 1;
+      if (samples > 1) return new Response(JSON.stringify(healthSnapshot()));
+      return new Response(new ReadableStream({
+        start(controller) { if (kind === "oversized body") controller.enqueue(new Uint8Array(64 * 1024 + 1)); },
+        pull() { entered.resolve(); },
+        cancel() { cancelled.resolve(); return new Promise(() => {}); },
+      }), { status: kind === "HTTP rejection" ? 503 : 200 });
+    });
+    const tunnel = await f.start();
+    if (kind === "stalled read") {
+      await entered.promise;
+      timeout.abort(new DOMException("Synthetic sample deadline.", "TimeoutError"));
+    }
+    await cancelled.promise;
+    // Drain the actual read/cancel continuations before the next paced sample.
+    await new Promise(resolve => setImmediate(resolve));
+    t.mock.timers.tick(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(samples, 2, "the next tick is not blocked by a producer's pending cancel promise");
+    await tunnel.ready;
+    assert.equal(tunnel.status().ready, true);
+    await tunnel.close();
+  });
+});
+
+test("a late successful snapshot cannot restore readiness before child closure", { timeout: 25_000 }, async t => {
+  const f = await fixture(t);
+  const requested = Promise.withResolvers(), result = Promise.withResolvers();
+  t.mock.method(globalThis, "fetch", () => { requested.resolve(); return result.promise; });
+  t.mock.method(f.child, "kill", signal => { f.child.kills.push(signal); return true; });
+  const tunnel = await f.start();
+  await requested.promise;
+  const rejected = assert.rejects(tunnel.ready, { code: "web_tunnel_cancelled" });
+  const closing = tunnel.close();
+  result.resolve(new Response(JSON.stringify(healthSnapshot())));
+  // Drain the resolved fetch/body microtasks without inferring success from
+  // elapsed time. The synthetic child stays open until assertions complete.
+  await new Promise(resolve => setImmediate(resolve));
+  try {
+    assert.equal(tunnel.status().state, "stopping");
+    assert.equal(tunnel.status().running, true);
+    assert.equal(tunnel.status().healthy, false);
+    assert.equal(tunnel.status().ready, false);
+  } finally { f.child.finish(null, "SIGTERM"); }
+  await closing;
+  await rejected;
+  assert.deepEqual(f.child.kills, ["SIGTERM"]);
 });
 
 test("signal cancellation stops the owned child, removes private files, and preserves the key", { timeout: 25_000 }, async t => {

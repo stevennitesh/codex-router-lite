@@ -10,6 +10,9 @@ $deploymentLock = $null
 $completion = $null
 try {
   $request = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  if ($null -ne $request.reopenCodex -and (-not $request.requireAcceptance -or $request.acceptanceKind -ne 'web-runtime-maintenance')) {
+    throw 'Codex reopen is restricted to accepted Web runtime maintenance.'
+  }
   foreach ($property in $request.environment.PSObject.Properties) {
     [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, "Process")
   }
@@ -32,7 +35,12 @@ try {
   $acceptance = $null
   if ($request.requireAcceptance) {
     $acceptance = Get-Content -Raw -LiteralPath $acceptancePath -Encoding UTF8 | ConvertFrom-Json
-    if ($acceptance.version -ne 1 -or $acceptance.accepted -ne $true -or
+    if ($request.acceptanceKind -eq 'web-runtime-maintenance') {
+      & node (Join-Path $PSScriptRoot 'web-runtime-maintenance.mjs') accept $parameters['ExpectedRouterCommit'] $parameters['CandidateBinary'] $parameters['ExpectedBinarySha256'] $parameters['ExpectedCandidateSha256'] $acceptancePath
+      if ($LASTEXITCODE -ne 0) { throw 'Web runtime maintenance acceptance validation failed.' }
+    } elseif ($request.acceptanceKind -and $request.acceptanceKind -ne 'switchyard') {
+      throw 'Unsupported independent deployment acceptance owner.'
+    } elseif ($acceptance.version -ne 1 -or $acceptance.accepted -ne $true -or
         $acceptance.routerCommit -ne $parameters["ExpectedRouterCommit"].ToLowerInvariant() -or
         $acceptance.switchyardBinarySha256 -ne $parameters["ExpectedBinarySha256"].ToLowerInvariant() -or
         -not $acceptance.checks -or -not @($acceptance.checks.PSObject.Properties).Count -or
@@ -51,5 +59,19 @@ try {
   if ($transcribing) { Stop-Transcript | Out-Null }
   if ($deploymentLock) { $deploymentLock.Dispose() }
 }
+if ($null -ne $request.reopenCodex) {
+  $completion['reopen'] = @{ requested = $true; attempted = $false; succeeded = $false; status = $(if ($exitCode -eq 0) { 'pending' } else { 'not-attempted' }) }
+}
 Write-DeploymentJson $resultPath $completion
+if ($exitCode -eq 0 -and $null -ne $request.reopenCodex) {
+  # Acceptance is validated and durable, and finally released the deployment
+  # lock above. Activation is a separate outcome and cannot trigger rollback.
+  try {
+    . (Join-Path $PSScriptRoot 'codex-app-activation.ps1')
+    $completion['reopen'] = Complete-CodexMaintenanceReopen $request.reopenCodex $resultPath
+  } catch {
+    $completion['reopen'] = @{ requested = $true; attempted = $false; succeeded = $false; status = 'failed'; failure = 'activation-helper-unavailable' }
+  }
+  Write-DeploymentJson $resultPath $completion
+}
 exit $exitCode

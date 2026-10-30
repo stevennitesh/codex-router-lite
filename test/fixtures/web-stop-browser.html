@@ -28,14 +28,62 @@
     <button type="button" data-scenario="click-idle-transition">Click restores idle</button>
     <button type="button" data-scenario="absent-unconfirmed">Absent unconfirmed</button>
     <button type="button" data-scenario="explicit-complete">Explicit complete</button>
+    <button type="button" data-scenario="observation-labelledby">Observation labelledby completion</button>
+    <button type="button" data-scenario="observation-text">Observation text completion</button>
+    <button type="button" data-scenario="observation-temporary">Observation labelledby temporary mode</button>
+    <button type="button" data-scenario="observation-quoted-control">Observation quoted control</button>
+    <button type="button" data-scenario="observation-indicator-transition">Observation indicator transition</button>
+    <button type="button" data-scenario="send-pending">Pending Send anchor</button>
+    <button type="button" data-scenario="send-history">Send with quoted history marker</button>
+    <button type="button" data-scenario="send-duplicate-marker">Duplicate Send marker</button>
+    <button type="button" data-scenario="send-duplicate-key">Duplicate Send identity</button>
+    <button type="button" data-scenario="send-foreign-latest">Superseded Send anchor</button>
+    <button type="button" data-scenario="send-temporary">Temporary Send mode</button>
+    <button type="button" data-scenario="send-duplicate-mode">Duplicate Send mode controls</button>
+    <button type="button" data-scenario="send-hidden-mode">Hidden inactive Send mode</button>
+    <button type="button" data-scenario="send-disabled">Disabled Send readiness</button>
+    <button type="button" data-scenario="send-aria-disabled">Aria-disabled Send readiness</button>
+    <button type="button" data-scenario="send-route-settlement">Unsettled Send route</button>
+    <button type="button" data-scenario="home-hydration">Home hydration</button>
+    <button type="button" data-scenario="home-duplicate">Duplicate home model</button>
+    <button type="button" data-scenario="home-temporary">Temporary home mode</button>
+    <button type="button" data-scenario="recovery-progress">Recovery checkpoint render</button>
+    <button type="button" data-scenario="recovery-duplicate-message">Duplicate recovery message</button>
+    <button type="button" data-scenario="recovery-duplicate-turn">Duplicate recovery generation</button>
+    <button type="button" data-scenario="recovery-foreign-latest">Foreign recovery generation</button>
+    <button type="button" data-scenario="recovery-formatted">Formatted recovery checkpoint</button>
   </nav>
   <output id="contract-status" data-scenario="not-selected" data-stop-clicks="0" aria-live="polite">Choose a fixture scenario.</output>
   <section id="rendered-chat" aria-label="Rendered chat fixture"></section>
   <button type="button" id="advance-generation" hidden>Advance fixture generation</button>
+  <button type="button" id="complete-generation" hidden>Finish fixture generation</button>
+  <button type="button" id="publish-send-marker" hidden>Publish pending Send marker</button>
+  <button type="button" id="publish-send-identity" hidden>Publish verified Send identity</button>
+  <button type="button" id="enable-send-control" hidden>Enable fixture Send</button>
+  <button type="button" id="settle-send-route" hidden>Settle fixture Send route</button>
+  <button type="button" id="hydrate-home" hidden>Hydrate fixture home</button>
+  <button type="button" id="publish-checkpoint" hidden>Publish recovery checkpoint</button>
+  <button type="button" id="grow-checkpoint" hidden>Reveal recovery text</button>
+  <button type="button" id="complete-checkpoint" hidden>Complete recovery checkpoint</button>
+  <a href="#checkpoint" id="checkpoint-link">Navigate to fixture checkpoint</a>
   <script>
     const chat = document.querySelector('#rendered-chat');
     const status = document.querySelector('#contract-status');
     const advance = document.querySelector('#advance-generation');
+    const finish = document.querySelector('#complete-generation');
+    const publishMarker = document.querySelector('#publish-send-marker');
+    const publishIdentity = document.querySelector('#publish-send-identity');
+    const enableSend = document.querySelector('#enable-send-control');
+    const settleSendRoute = document.querySelector('#settle-send-route');
+    const hydrateHome = document.querySelector('#hydrate-home');
+    const publishCheckpoint = document.querySelector('#publish-checkpoint');
+    const growCheckpoint = document.querySelector('#grow-checkpoint');
+    const completeCheckpoint = document.querySelector('#complete-checkpoint');
+    const recoveryReplyId = '00112233-4455-4677-8899-aabbccddeeff';
+    const recoveryText = 'Recovered saved answer';
+    const sendMarker = 'Router generation: 11111111-2222-4333-8444-555555555555';
+    const sendKey = '11112222-3333-4444-8555-666677778888';
+    const historyKey = '00000000-1111-4222-8333-444455556666';
     let stopClicks = 0;
     let scenario = 'not-selected';
 
@@ -88,6 +136,158 @@
       stopClicks = 0;
       chat.replaceChildren(makeTurn('fixture-owned-generation', next === 'explicit-complete'));
       advance.hidden = next !== 'changed-generation';
+      finish.hidden = next !== 'observation-indicator-transition';
+      publishMarker.hidden = !['send-pending', 'send-history'].includes(next);
+      publishIdentity.hidden = true;
+      enableSend.hidden = !['send-disabled', 'send-aria-disabled'].includes(next);
+      settleSendRoute.hidden = next !== 'send-route-settlement';
+      hydrateHome.hidden = next !== 'home-hydration';
+      publishCheckpoint.hidden = next !== 'recovery-progress';
+      growCheckpoint.hidden = true;
+      completeCheckpoint.hidden = true;
+      if (next.startsWith('home-')) {
+        chat.replaceChildren();
+        const composer = document.createElement('div');
+        composer.setAttribute('role', 'textbox');
+        composer.setAttribute('aria-label', 'Ask ChatGPT');
+        composer.setAttribute('contenteditable', next === 'home-hydration' ? 'false' : 'true');
+        const model = document.createElement('button');
+        model.type = 'button';
+        model.setAttribute('aria-label', 'Select ChatGPT model');
+        model.textContent = 'Fixture model';
+        model.disabled = next === 'home-hydration';
+        chat.append(composer, model);
+        if (next === 'home-duplicate') chat.append(model.cloneNode(true));
+        if (next !== 'home-hydration') appendTemporaryControl();
+        if (next === 'home-temporary') {
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.setAttribute('aria-label', 'Turn off temporary chat');
+          toggle.textContent = 'Fixture temporary mode';
+          chat.append(toggle);
+        }
+        record();
+        return;
+      }
+      if (next.startsWith('recovery-')) {
+        chat.replaceChildren();
+        if (next !== 'recovery-progress') {
+          const turn = makeRecoveryTurn(true, recoveryText);
+          chat.append(turn);
+          if (next === 'recovery-duplicate-message') turn.append(turn.querySelector('[data-chatgpt-selection-message-id]').cloneNode(true));
+          if (next === 'recovery-duplicate-turn') chat.append(makeTurn('fixture-owned-generation', true));
+          if (next === 'recovery-foreign-latest') chat.append(makeTurn('fixture-successor-generation', true));
+          if (next === 'recovery-formatted') {
+            const answer = turn.querySelector('[data-markdown-text-style="assistant-message"]');
+            const paragraph = text => {
+              const element = document.createElement('p');
+              element.textContent = text;
+              return element;
+            };
+            const source = document.createElement('div');
+            source.className = 'cm-content';
+            source.setAttribute('data-language', 'text');
+            for (const text of ['first', '', 'last']) {
+              const line = document.createElement('div');
+              line.className = 'cm-line';
+              line.textContent = text;
+              source.append(line);
+            }
+            const code = document.createElement('pre');
+            code.append(source);
+            answer.replaceChildren(paragraph('Before.'), paragraph('After.'), code);
+          }
+        }
+        record();
+        return;
+      }
+      if (next.startsWith('send-')) {
+        chat.replaceChildren();
+        if (next === 'send-route-settlement') history.replaceState(null, '', '/fixture-send-unsettled');
+        if (!enableSend.hidden) {
+          const send = document.createElement('button');
+          send.type = 'button';
+          send.setAttribute('aria-label', 'Send');
+          send.textContent = 'Fixture Send control';
+          if (next === 'send-disabled') send.disabled = true;
+          else send.setAttribute('aria-disabled', 'true');
+          chat.append(send);
+          record();
+          return;
+        }
+        const message = key => {
+          const turn = makeTurn(key);
+          turn.append(document.createTextNode(sendMarker));
+          return turn;
+        };
+        if (next === 'send-history') chat.append(message(historyKey));
+        if (!['send-pending', 'send-history'].includes(next)) {
+          chat.append(message(sendKey));
+          if (next === 'send-duplicate-marker') chat.append(message('99990000-1111-4222-8333-444455556666'));
+          if (next === 'send-duplicate-key') chat.append(makeTurn(sendKey));
+          if (next === 'send-foreign-latest') chat.append(makeTurn('99990000-1111-4222-8333-444455556666'));
+          if (['send-temporary', 'send-duplicate-mode', 'send-hidden-mode'].includes(next)) {
+            const label = document.createElement('span');
+            label.id = 'send-mode-label'; label.textContent = 'Turn off temporary chat';
+            chat.append(label);
+            const mode = document.createElement('button');
+            mode.setAttribute('aria-labelledby', label.id);
+            mode.setAttribute('aria-label', 'Conflicting direct label');
+            mode.textContent = 'Fixture mode control';
+            mode.hidden = next === 'send-hidden-mode';
+            chat.append(mode);
+            if (next === 'send-duplicate-mode') chat.append(mode.cloneNode(true));
+          }
+        }
+        record();
+        return;
+      }
+      if (next.startsWith('observation-')) {
+        const turn = chat.querySelector('[data-turn-key]');
+        turn.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state',
+          next === 'observation-indicator-transition' ? 'running' : 'complete');
+        const message = document.createElement('div');
+        message.setAttribute('data-chatgpt-selection-message-id', '00112233-4455-6677-8899-aabbccddeeff');
+        const answer = document.createElement('p');
+        answer.setAttribute('data-markdown-text-style', 'assistant-message');
+        answer.textContent = next === 'observation-indicator-transition' ? 'Unknown error' : 'Semantic fixture answer';
+        message.append(answer);
+        turn.append(message);
+        const regenerate = document.createElement('button');
+        regenerate.type = 'button';
+        regenerate.textContent = 'Regenerate response';
+        if (next === 'observation-labelledby') {
+          const label = document.createElement('span');
+          label.id = 'regenerate-semantic-label';
+          label.textContent = 'Regenerate response';
+          turn.append(label);
+          regenerate.setAttribute('aria-labelledby', label.id);
+          regenerate.setAttribute('aria-label', 'Conflicting direct label');
+          regenerate.textContent = 'Different visible text';
+        }
+        if (next === 'observation-quoted-control') {
+          const quoted = regenerate.cloneNode(true);
+          answer.append(quoted);
+        }
+        turn.append(regenerate);
+        if (next === 'observation-indicator-transition') {
+          regenerate.hidden = true;
+          chat.append(makeControl('stop'));
+        }
+        if (next === 'observation-temporary') {
+          const label = document.createElement('span');
+          label.id = 'temporary-semantic-label';
+          label.textContent = 'Turn off temporary chat';
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.textContent = 'Different toggle text';
+          toggle.setAttribute('aria-labelledby', label.id);
+          toggle.setAttribute('aria-label', 'Conflicting direct label');
+          chat.append(label, toggle);
+        }
+        record();
+        return;
+      }
       if (next === 'hidden-stop-idle' || next === 'duplicate-idle') {
         const stop = makeControl('stop');
         stop.hidden = true;
@@ -108,6 +308,85 @@
     advance.addEventListener('click', () => {
       chat.append(makeTurn('fixture-successor-generation'));
       advance.hidden = true;
+      record();
+    });
+    finish.addEventListener('click', () => {
+      chat.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state', 'complete');
+      chat.querySelectorAll('[data-fixture-control="stop"]').forEach(control => { control.hidden = true; });
+      chat.querySelector('[data-turn-key] button').hidden = false;
+      finish.hidden = true;
+      record();
+    });
+    publishMarker.addEventListener('click', () => {
+      const turn = makeTurn('renderer-placeholder');
+      turn.append(document.createTextNode(sendMarker));
+      chat.append(turn);
+      publishMarker.hidden = true;
+      publishIdentity.hidden = false;
+      record();
+    });
+    publishIdentity.addEventListener('click', () => {
+      chat.querySelector('[data-turn-key="renderer-placeholder"]').setAttribute('data-turn-key', sendKey);
+      publishIdentity.hidden = true;
+      record();
+    });
+    enableSend.addEventListener('click', () => {
+      const send = chat.querySelector('button[aria-label="Send"]');
+      send.disabled = false;
+      send.removeAttribute('aria-disabled');
+      enableSend.hidden = true;
+      record();
+    });
+    function appendTemporaryControl() {
+      const temporary = document.createElement('button');
+      temporary.type = 'button';
+      temporary.setAttribute('aria-label', 'Temporary chat');
+      temporary.textContent = 'Fixture temporary switch';
+      chat.append(temporary);
+    }
+    settleSendRoute.addEventListener('click', () => {
+      history.pushState(null, '', '/c/' + sendKey);
+      settleSendRoute.hidden = true;
+      record();
+    });
+    function makeRecoveryTurn(completed, text) {
+      const turn = makeTurn('fixture-owned-generation', completed);
+      const message = document.createElement('div');
+      message.setAttribute('data-chatgpt-selection-message-id', recoveryReplyId);
+      const answer = document.createElement('p');
+      answer.setAttribute('data-markdown-text-style', 'assistant-message');
+      answer.textContent = text;
+      message.append(answer);
+      turn.append(message);
+      return turn;
+    }
+    hydrateHome.addEventListener('click', () => {
+      chat.querySelector('[role="textbox"]').setAttribute('contenteditable', 'true');
+      chat.querySelector('button').disabled = false;
+      appendTemporaryControl();
+      hydrateHome.hidden = true;
+      record();
+    });
+    publishCheckpoint.addEventListener('click', () => {
+      const turn = makeRecoveryTurn(false, 'R');
+      // The message wrapper can precede its actual markdown renderer.
+      turn.querySelector('[data-markdown-text-style]').removeAttribute('data-markdown-text-style');
+      chat.append(turn);
+      publishCheckpoint.hidden = true;
+      growCheckpoint.hidden = false;
+      record();
+    });
+    growCheckpoint.addEventListener('click', () => {
+      const answer = chat.querySelector('[data-chatgpt-selection-message-id] p');
+      answer.setAttribute('data-markdown-text-style', 'assistant-message');
+      answer.textContent = recoveryText;
+      growCheckpoint.hidden = true;
+      completeCheckpoint.hidden = false;
+      record();
+    });
+    completeCheckpoint.addEventListener('click', () => {
+      chat.querySelector('[data-talvt-turn-state]').setAttribute('data-talvt-turn-state', 'complete');
+      completeCheckpoint.hidden = true;
       record();
     });
   </script>

@@ -159,6 +159,8 @@
     "src/web-stop-adapter.mjs",
     "src/web-stop-adapter-install.mjs",
     "src/web-runtime-refresh.mjs",
+    "src/web-maintenance-proof.mjs",
+    "src/web-maintenance-processes.ps1",
     "src/web-stop-adapter-env.ps1",
     "src/web-stop-adapter-entry.cs"
   ]

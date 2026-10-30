@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { publishUnderlyingDeploymentAcceptance } from "../maintenance/web-runtime-maintenance.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const runtimeFiles = ["switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json"];
@@ -46,7 +47,7 @@ function fixture({ unicodePaths = false } = {}) {
     assert.equal(child.status, 0, child.stderr);
     return JSON.parse(readFileSync(path.join(dir, "outcome.json"), "utf8"));
   };
-  return { dir, runtime, backup, operation, archive, metadata, result, metadataFile, resultFile, save, run,
+  return { dir, state, runtime, backup, operation, archive, metadata, result, metadataFile, resultFile, save, run,
     cleanup() { assert.ok(dir.startsWith(realpathSync.native(os.tmpdir()) + path.sep)); rmSync(dir, { recursive: true, force: true }); } };
 }
 
@@ -70,6 +71,36 @@ test("accepted recovery preserves Unicode paths and archives without rewriting t
     // A retry sees no pending backup and cannot move or overwrite the archive.
     assert.equal(f.run().succeeded, true);
     assert.equal(readFileSync(path.join(f.archive, "routes.toml"), "utf8"), "previous-routes.toml");
+  } finally { f.cleanup(); }
+});
+
+test("actual recovery reader retains the recognized underlying deployment owner after successful or failed outer Web maintenance", windows, () => {
+  for (const succeeded of [true, false]) {
+    const f = fixture();
+    try {
+      const accepted = structuredClone(f.result.acceptance);
+      const resultPath = publishUnderlyingDeploymentAcceptance(accepted, currentCommit, accepted.switchyardBinarySha256, {
+        stateDir: f.state, write: writeFileSync, isPrivate: () => true,
+      });
+      const resultBytes = readFileSync(resultPath);
+      writeFileSync(f.resultFile, JSON.stringify({ state: "completed", succeeded,
+        ...(succeeded ? { acceptance: { version: 1, accepted: true, deployment: accepted } } : { error: "final Web adapter rejected" }) }));
+      const actual = f.run();
+      assert.equal(actual.succeeded, true, actual.error);
+      assert.equal(actual.plan.acceptedResult, resultPath);
+      assert.equal(actual.plan.destination, path.join(path.dirname(resultPath), "retained-runtime-recovery"));
+      assert.deepEqual(readFileSync(resultPath), resultBytes, "recovery never rewrites completed underlying custody");
+      assert.equal(existsSync(f.backup), false);
+    } finally { f.cleanup(); }
+  }
+});
+
+test("underlying owner publication rejects incomplete accepted checks before creating recovery ownership", () => {
+  const f = fixture();
+  try {
+    delete f.result.acceptance.checks.processIdentity;
+    assert.throws(() => publishUnderlyingDeploymentAcceptance(f.result.acceptance, currentCommit,
+      f.result.acceptance.switchyardBinarySha256, { stateDir: f.state, write: writeFileSync, isPrivate: () => true }), /complete acceptance/u);
   } finally { f.cleanup(); }
 });
 

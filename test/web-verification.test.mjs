@@ -35,7 +35,7 @@ function evidence(phase = 'ready') {
     const callId = `call_router_web_${String(++counter).padStart(32, '0')}`;
     const token = `frame_${String(counter).padStart(16, '0')}`;
     const options = { bindingId: baseline.bindingId, sessionId: threadId, turnId, operation, frameToken: token,
-      ...(operation === 'send' ? { prompt: 'a prompt without the private marker' } : {}),
+      ...(operation === 'send' ? { prompt: 'a prompt without the private marker', modelFamily: 'GPT-6', power: 0 } : {}),
       ...(operation === 'continue' ? { expectedOwnerTurnIds: ['prior-turn'], interruptedTurnId: 'prior-turn' } : {}) };
     const frame = { operation, normal: true, url: baseline.chatUrl, tabId: '1', ...fields };
     rows.push(row('response_item', { type: 'function_call', call_id: callId, name: 'mcp__node_repl.js', arguments: JSON.stringify({ code: browserScript(options) }) }));
@@ -72,14 +72,28 @@ function replaceFrame(record) {
   record.output.output.content[0].text = text.replace(/\n\{[^\n]+\}\n/u, `\n${JSON.stringify({ routerBrowser: record.frame })}\n`);
 }
 
+function continuationCacheMiss(input, fields = {}) {
+  const full = structuredClone(input.continuation);
+  full.options.fullContinuation = true;
+  full.options.frameToken = 'frame_full_0000000000000001';
+  full.call.call_id = `call_router_web_${'f'.repeat(32)}`;
+  full.call.arguments = JSON.stringify({ code: browserScript(full.options) });
+  full.output.call_id = full.call.call_id;
+  Object.assign(full.frame, fields);
+  full.output.output.content[0].text = `ROUTER_WEB_BROWSER_${full.options.frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: full.frame })}\nROUTER_WEB_BROWSER_${full.options.frameToken}_END`;
+  input.continuation.frame = { operation: 'continue', needsFullContinuation: true, noActions: true };
+  replaceFrame(input.continuation);
+  const index = input.sessionRows.findIndex(entry => entry.payload === input.continuation.output);
+  input.sessionRows.splice(index + 1, 0, row('response_item', full.call), row('response_item', full.output));
+  return full;
+}
+
 function withModelIdentity(input, { model = 'chatgpt-web/gpt-6-sol', effort = 'medium', family = 'GPT-6', power = 1 } = {}) {
   Object.assign(input.run, { model, effort, selection: { family, power } });
   const context = row('turn_context', { turn_id: turnId, model, effort });
   input.sessionRows.splice(2, 0, context);
-  for (const record of [input.continuation, input.send]) {
-    Object.assign(record.options, { modelFamily: family, power });
-    record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
-  }
+  Object.assign(input.send.options, { modelFamily: family, power });
+  input.send.call.arguments = JSON.stringify({ code: browserScript(input.send.options) });
   input.context = context;
   return input;
 }
@@ -120,6 +134,40 @@ test('readiness refuses malformed delivery, duplicate calls, wrong sessions, and
     const input = evidence(); mutate(input);
     assert.equal(evaluateWebPhase(input).receipt.code, code);
   }
+});
+
+test('a dispatched Send qualifies only through later accepted anchored evidence, without hiding duplicate attempts', () => {
+  const dispatched = input => {
+    Object.assign(input.send.frame, { sent: false, dispatched: true, generationPending: true,
+      baselineReplyIds: [], conversationFull: false });
+    replaceFrame(input.send);
+    return input;
+  };
+  for (const phase of ['native', 'recall', 'ready', 'stop', 'continuation']) {
+    const result = evaluateWebPhase(dispatched(withModelIdentity(evidence(phase))));
+    assert.equal(result.receipt.status, 'passed', `${phase}: ${result.receipt.code}`);
+    assert.equal(result.receipt.browserSelectionVerified, true);
+  }
+  const unaccepted = dispatched(evidence());
+  unaccepted.ledger.uncertainSend = true;
+  assert.equal(evaluateWebPhase(unaccepted).receipt.status, 'pending');
+  const unanchored = dispatched(evidence());
+  delete unanchored.observation.frame.generationTurnKey;
+  replaceFrame(unanchored.observation);
+  assert.equal(evaluateWebPhase(unanchored).receipt.status, 'pending');
+  for (const mutate of [frame => { frame.generationPending = false; }, frame => { frame.extra = true; },
+    frame => { frame.baselineReplyIds = ['unverified']; }, frame => { frame.baselineReplyIds = [[generationTurnKey]]; },
+    frame => { frame.baselineReplyIds = [generationTurnKey, generationTurnKey]; }]) {
+    const input = dispatched(evidence()); mutate(input.send.frame); replaceFrame(input.send);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'unsupported_send_receipt');
+  }
+  const duplicate = dispatched(evidence());
+  const call = structuredClone(duplicate.send.call), output = structuredClone(duplicate.send.output);
+  call.call_id = `call_router_web_${'e'.repeat(32)}`; output.call_id = call.call_id;
+  duplicate.sessionRows.push(row('response_item', call), row('response_item', output));
+  assert.equal(evaluateWebPhase(duplicate).receipt.code, 'duplicate_send');
+  duplicate.sessionRows.pop();
+  assert.equal(evaluateWebPhase(duplicate).receipt.code, 'duplicate_send', 'an unpaired duplicate still represents another Send attempt');
 });
 
 test('app prompt ingress is recognized only in its exact first-item envelope; ordinary orphan outputs fail', () => {
@@ -207,8 +255,8 @@ test('model evidence rejects wrong or ambiguous native identity and mismatched b
   }
   const duplicated = withModelIdentity(evidence('native')); duplicated.sessionRows.push(structuredClone(duplicated.context));
   assert.equal(evaluateWebPhase(duplicated).receipt.code, 'ambiguous_native_model_context');
-  for (const operation of ['continuation', 'send']) for (const mutation of [{ modelFamily: 'GPT-5.6 Sol' }, { power: 4 }]) {
-    const input = withModelIdentity(evidence('native')), record = input[operation];
+  for (const mutation of [{ modelFamily: 'GPT-5.6 Sol' }, { power: 4 }]) {
+    const input = withModelIdentity(evidence('native')), record = input.send;
     Object.assign(record.options, mutation); record.call.arguments = JSON.stringify({ code: browserScript(record.options) });
     assert.equal(evaluateWebPhase(input).receipt.code, 'browser_model_or_power_mismatch');
   }
@@ -277,7 +325,7 @@ test('Stop rejects receipt mismatch, already-idle cleanup, and a result without 
   assert.equal(evaluateWebPhase(replaced).receipt.code, 'stop_authority_replaced');
 });
 
-test('continuation needs completed retention in the same binding and cannot reopen or recover the tab', () => {
+test('continuation needs completed retention and cannot claim unproved recovery or a changed tab', () => {
   const input = evidence('continuation');
   assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
   input.continuation.frame.recovered = true; replaceFrame(input.continuation);
@@ -285,6 +333,46 @@ test('continuation needs completed retention in the same binding and cannot reop
   delete input.continuation.frame.recovered; replaceFrame(input.continuation);
   input.ledger.tabId = 'reopened-tab';
   assert.equal(evaluateWebPhase(input).receipt.code, 'saved_binding_changed');
+});
+
+test('a framed cache miss permits one full continuation with verified same-tab restoration', () => {
+  for (const fields of [{}, { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: false }]) {
+    const input = evidence('continuation');
+    continuationCacheMiss(input, fields);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.status, 'passed', receipt.code);
+    assert.equal(receipt.continuationCacheMiss, true);
+    assert.equal(receipt.recoveryBranchExecuted, fields.recovered === true);
+    assert.equal(receipt.bindingRestored, fields.recovered === true);
+  }
+  for (const fields of [
+    { recovered: true },
+    { recovered: true, bindingRestored: true, tabReopened: true, tabNavigated: false },
+    { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: true },
+    { recovered: true, bindingRestored: true, tabReopened: false },
+    { recovered: true, bindingRestored: true, tabReopened: false, tabNavigated: false, tabId: 'another-tab' },
+  ]) {
+    const input = evidence('continuation'); continuationCacheMiss(input, fields);
+    assert.notEqual(evaluateWebPhase(input).receipt.status, 'passed');
+  }
+});
+
+test('cache fallback rejects malformed, repeated and missing full continuation evidence', () => {
+  for (const fields of [{ noActions: false }, { extra: true }, { operation: 'send' }]) {
+    const input = evidence('continuation'); continuationCacheMiss(input);
+    Object.assign(input.continuation.frame, fields); replaceFrame(input.continuation);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'invalid_continuation_cache_miss');
+  }
+  const repeated = evidence('continuation'), full = continuationCacheMiss(repeated);
+  full.frame = { operation: 'continue', needsFullContinuation: true, noActions: true }; replaceFrame(full);
+  assert.equal(evaluateWebPhase(repeated).receipt.code, 'invalid_continuation_cache_miss');
+  const missing = evidence('continuation'); const omitted = continuationCacheMiss(missing);
+  missing.sessionRows = missing.sessionRows.filter(entry => entry.payload.call_id !== omitted.call.call_id);
+  assert.equal(evaluateWebPhase(missing).receipt.code, 'full_continuation_required');
+  const unsolicited = evidence('continuation');
+  unsolicited.continuation.options.fullContinuation = true;
+  unsolicited.continuation.call.arguments = JSON.stringify({ code: browserScript(unsolicited.continuation.options) });
+  assert.equal(evaluateWebPhase(unsolicited).receipt.code, 'unexpected_full_continuation');
 });
 
 test('native verification requires one exact paired command and its real exit/output framing', () => {
@@ -327,11 +415,36 @@ test('JSONL append watcher waits for a truncated line to finish without polling'
   assert.throws(() => parseWebJsonLines('not-json\n'), /unsupported_jsonl/u);
 });
 
-test('missing terminal evidence reaches one failure deadline and closes its watchers', async () => {
-  let reads = 0, closes = 0;
-  await assert.rejects(watchWebEvidence(['test/evidence.jsonl'], () => { reads++; return { receipt: { status: 'pending' } }; },
-    { timeoutMs: 20, watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }) }), /evidence_deadline/u);
-  assert.equal(reads, 1); assert.equal(closes, 1);
+test('deadline inspects once more and preserves terminal evidence without a change event', async () => {
+  for (const finalReceipt of [{ status: 'passed', code: 'verified' }, { status: 'failed', code: 'fixture_changed' }, { status: 'pending' }]) {
+    let reads = 0, closes = 0, clears = 0, fire;
+    let receipt = { status: 'pending' };
+    const timer = {};
+    const waiting = watchWebEvidence(['test/evidence.jsonl'], () => { reads++; return { receipt }; }, {
+      watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }),
+      setTimer: callback => { fire = callback; return timer; },
+      clearTimer: value => { assert.equal(value, timer); clears++; },
+    });
+    receipt = finalReceipt;
+    fire();
+    if (finalReceipt.status === 'pending') await assert.rejects(waiting, /evidence_deadline/u);
+    else assert.deepEqual((await waiting).receipt, finalReceipt);
+    assert.equal(reads, 2); assert.equal(closes, 1); assert.equal(clears, 1);
+  }
+});
+
+test('deadline rejects an inspection error and closes its resources', async () => {
+  let reads = 0, closes = 0, clears = 0, fire;
+  const waiting = watchWebEvidence(['test/evidence.jsonl'], () => {
+    if (++reads === 2) throw new Error('private detail');
+    return { receipt: { status: 'pending' } };
+  }, {
+    watchFile: () => Object.assign(new EventEmitter(), { close: () => { closes++; } }),
+    setTimer: callback => { fire = callback; return 1; }, clearTimer: () => { clears++; },
+  });
+  fire();
+  await assert.rejects(waiting, /evidence_read_failed/u);
+  assert.equal(closes, 1); assert.equal(clears, 1);
 });
 
 test('waiting fails closed on changed installed identity and records a non-retriable sanitized receipt', async t => {

@@ -17,6 +17,10 @@ export const WEB_MODEL_REGISTRY = [
   { slug: "chatgpt-web/gpt-6-pro", displayName: "GPT-6 Astra Pro (Web)", family: "GPT-6", defaultEffort: "max", efforts: pro, requires: ["solAvailable", "proAvailable"], contextProfile: "pro" },
 ];
 
+export const WEB_ACCOUNT_CAPABILITY_KEYS = Object.freeze([...new Set(WEB_MODEL_REGISTRY.flatMap(row => [
+  ...row.requires, ...Object.values(row.efforts).flatMap(level => level.requires ?? []),
+]))]);
+
 const contextProfiles = {
   instant: { standard: [41_000, 32_000], pro: [111_193, 95_000] },
   thinking: { standard: [90_000, 80_000], pro: [111_193, 95_000] },
@@ -32,7 +36,7 @@ export function webModelSelection(slug, effort) {
 }
 
 export function buildWebBridgeModels(capabilities) {
-  if (!capabilities || !["solAvailable", "extraHighAvailable", "proAvailable"].every(key => typeof capabilities[key] === "boolean")) {
+  if (!capabilities || !WEB_ACCOUNT_CAPABILITY_KEYS.every(key => typeof capabilities[key] === "boolean")) {
     throw new Error("Web bridge account capabilities are missing or invalid; reconfigure the in-app browser with observed account capabilities.");
   }
   return WEB_MODEL_REGISTRY.filter(row => row.requires.every(key => capabilities[key])).map(row => {

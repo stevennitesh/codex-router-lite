@@ -1,13 +1,13 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isSavedChatUrl } from "./web-browser.mjs";
-import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 import { STOP_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
 // and runtimeModule; Router's atomic ledger writer preserves its private ACL.
-async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState) {
+async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState, waitForState) {
   const { threadId: nativeThread, turnId: nativeTurn, sessionId: nativeSession } = identity;
   const started = Date.now(), deadline = started + budgetMs;
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -184,7 +184,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // The SDK owns semantic names and visibility; no direct-label decoder is
     // allowed to reinterpret the controls selected by those locators.
     const browserState = createBrowserState(tab, { ui: config.ui, generationTurnKey,
-      stopName: config.stopButtonExactName, idleName: config.idleButtonExactName });
+      stopName: config.stopButtonExactName, idleName: config.idleButtonExactName }, waitForState);
     const { stop, ready } = browserState;
     const readAllowanceMs = 200;
     let receipt = !absent && state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
@@ -224,19 +224,21 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       diagnostic.readbackState = diagnostic.generationInactive ? "inactive_readback" : "unconfirmed_readback";
       return { visible: view.stopVisible, idleAbsent: view.idleAbsent, inactive: diagnostic.generationInactive };
     };
-    const waitForReadiness = async locator => {
+    const waitForReadiness = async (locator, readyObservation) => {
       // Leave transport/check headroom beyond the minimum read allowance. A
       // timeout's actual terminal reply need not arrive on its nominal tick.
       const readReserveMs = readAllowanceMs + 100;
-      assertCurrent(readAllowanceMs);
-      const timeoutMs = Math.floor(deadline - Date.now() - readReserveMs);
-      // Waiting is optional when the remaining budget can admit only the
-      // decisive read. Do not reject an already settled page for lack of time
-      // reserved exclusively for scheduling it.
-      if (timeoutMs < 1) return;
-      try { await locator.waitFor({ state: "visible", timeoutMs }); }
-      catch { /* A rejected or timed-out wait is never inactivity proof. */ }
-      assertCurrent(readAllowanceMs);
+      return await browserState.waitForReadiness(locator, {
+        nextTimeout: () => {
+          assertCurrent();
+          // A settled page can still use the decisive read when no scheduling
+          // headroom remains. The state read enforces its actual deadline.
+          return Math.floor(deadline - Date.now() - readReserveMs);
+        },
+        afterWait: () => assertCurrent(readAllowanceMs),
+        inspect: inspectGeneration,
+        ready: readyObservation,
+      });
     };
     stage = "generation_proof";
     await inspectGeneration(200);
@@ -255,8 +257,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     let observation = await inspectGeneration(200);
     if (!observation.inactive && !observation.visible && !receipt) {
       stage = "stop_visibility";
-      await waitForReadiness(ready(false).or(stop));
-      observation = await inspectGeneration();
+      observation = await waitForReadiness(ready(false).or(stop), view => view.inactive || view.visible);
     }
     if (!observation.inactive) {
       if (observation.visible && !receipt) {
@@ -285,8 +286,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         assertCurrent(readAllowanceMs);
         stage = "stop_readback_visibility";
         allowComposerRestored = receipt.acknowledged && receipt.idleAbsent;
-        if (!diagnostic.clickError) await waitForReadiness(ready(allowComposerRestored));
-        observation = await inspectGeneration();
+        observation = diagnostic.clickError ? await inspectGeneration()
+          : await waitForReadiness(ready(allowComposerRestored), view => view.inactive);
         if (diagnostic.clickError && !observation.inactive) deny("browser_operation_failed");
       }
       if (!observation.inactive) deny("stop_confirmation_failed");
@@ -326,5 +327,5 @@ export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnI
     ...(delivery === undefined ? {} : { delivery }),
     ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
       .map(name => [name, browserDom[name]])) };
-  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()});`;
+  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()}, ${waitForBrowserReadiness.toString()});`;
 }

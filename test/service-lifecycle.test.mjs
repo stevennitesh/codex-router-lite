@@ -480,7 +480,7 @@ console.log(JSON.stringify({state:'running'}));console.error('renderer diagnosti
   // beforeExit runs after Node drains its event loop and is skipped by a forced
   // process.exit, which can race native-handle teardown on Windows.
   writeFileSync(helpers, `import {writeFileSync} from 'node:fs';process.once('beforeExit',()=>writeFileSync(${JSON.stringify(drained)},'drained'));
-export async function prepareRouterServiceMutation(){if(process.env.THROW_REFUSAL==='1')throw new Error('synthetic ownership refusal');return {status:'offline'};}export async function resumeRouterAdmission(){return {};}`);
+export async function prepareRouterServiceMutation(){if(process.env.THROW_REFUSAL==='1')throw new Error('synthetic ownership refusal');return {status:'offline'};}export async function resumeRouterAdmission(){return {};}export async function assertRouterAdmissionStillClosed(){throw new Error('ordinary service entry must not bypass its drain');}`);
   writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&r.url===${JSON.stringify(fileUrl('src/service-drain.mjs'))})return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
   writeFileSync(composite, `import {runServiceCommandUnlocked} from ${JSON.stringify(fileUrl('src/service.mjs'))};import {withServiceOperationLock} from ${JSON.stringify(fileUrl('src/service-operation-lock.mjs'))};
 try{const status=await withServiceOperationLock(()=>runServiceCommandUnlocked('stop',['stop'],{quiet:true}));console.log(JSON.stringify({status}));process.exitCode=status;}catch(error){console.error(error.message);process.exitCode=1;}`);
@@ -518,7 +518,7 @@ test("the ordinary service caller retains its lease while awaiting the renderer"
   writeFileSync(helpers, `import {withServiceOperationLock as lock} from ${JSON.stringify(fileUrl('src/service-operation-lock.mjs'))};
 import assert from 'node:assert/strict';import {readLogTail} from ${JSON.stringify(fileUrl('src/windows-launch-diagnosis.mjs'))};
 export const withServiceOperationLock=operation=>lock(operation,{stateDir:${JSON.stringify(state)},waitMs:0,heartbeatMs:1000,retryMs:50});
-export const prepareRouterServiceMutation=async()=>({status:'offline'});export const resumeRouterAdmission=async()=>({});
+export const prepareRouterServiceMutation=async()=>({status:'offline'});export const resumeRouterAdmission=async()=>({});export const assertRouterAdmissionStillClosed=async()=>{throw new Error('ordinary service entry must not bypass its drain');};
 export const waitForServiceReadiness=async options=>{assert.equal(options.logPosition.size,${Buffer.byteLength(oldOutput)});const fresh=readLogTail(${JSON.stringify(log)},{after:options.logPosition});assert.equal(fresh,'current renderer output\\n');return {ok:true};};`);
   writeFileSync(loader, `export async function resolve(s,c,n){const r=await n(s,c);if(c.parentURL===${JSON.stringify(fileUrl('src/service.mjs'))}&&${JSON.stringify(['service-operation-lock.mjs','service-drain.mjs','service-readiness.mjs'].map(p=>fileUrl('src/'+p)))}.includes(r.url))return{url:${JSON.stringify(pathToFileURL(helpers).href)},shortCircuit:true};return r;}`);
   // Only the owner waits at the gate. A wrongly admitted stop must finish so
