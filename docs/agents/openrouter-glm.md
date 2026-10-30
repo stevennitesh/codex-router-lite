@@ -106,7 +106,7 @@ from the repository root:
 uv pip compile --python-platform windows --generate-hashes --python-version 3.11 --output-file requirements/python.txt requirements/python.in
 ```
 
-The maintained LiteLLM 1.103.8 backport admits patched filelock without metadata
+The maintained LiteLLM 1.103.10 backport admits patched filelock without metadata
 overrides; the 1.104–1.106 release lines constrain filelock below 4. Router pins
 filelock directly and rejects versions below its 4.2.1 security floor. Startup
 validates the internal capability against the same generated-key contract as
