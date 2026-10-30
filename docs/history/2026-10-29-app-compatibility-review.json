@@ -734,5 +734,30 @@
       "generationCompleted": true
     },
     "acceptance": "The deployed candidate passed one exact Instant sequence covering saved-context recovery, one native tool call, recall, actual native Codex Stop with positive adapter inactivity proof, and same-chat continuation. This does not qualify every route or establish repeated reliability; rollback artifacts were retained but live rollback was not tested."
+  },
+  "deliveryAuditRepair": {
+    "pullRequest": "https://github.com/stevennitesh/codex-router-lite/pull/40",
+    "trigger": "The initial PR CI Python audit found CVE-2026-114605 in the existing dnspython 2.8.0 lock entry.",
+    "advisory": "https://github.com/rthalley/dnspython/security/advisories/GHSA-45c3-73f7-pv4m",
+    "dependencyChange": {
+      "package": "dnspython",
+      "before": "2.8.0",
+      "after": "2.9.0",
+      "method": "Selectively regenerated the Windows Python 3.11 hashed lock with uv; only this version and its two generated hashes changed.",
+      "otherDistributionsUnchanged": 116,
+      "directPinsUnchanged": true
+    },
+    "validation": {
+      "sourceChecks": "passed",
+      "pinnedFullClosureAudit": "pip-audit 2.10.1: no known vulnerabilities found",
+      "isolatedInterpreter": "CPython 3.11.14 on Windows",
+      "hashRequiredInstallation": "passed",
+      "dependencyConsistency": "117 compatible installed distributions",
+      "realGatewayAndCleanupTests": { "passed": 27, "failed": 0, "skipped": 0 },
+      "pythonLockAndInstallerTests": { "passed": 12, "failed": 0, "skipped": 0 },
+      "coverage": "Actual loopback gateway boot, both GLM routes, schemas, history, authentication, spoof rejection, cancellation, and hashed uv/pip installation and recovery.",
+      "testMaintenance": "No tests added or modified for the lock-only repair. Existing meaningful gateway and installer regressions were reused."
+    },
+    "scope": "The dependency repair was validated in an isolated environment. It did not mutate the checkout's existing .venv or redeploy the running gateway; earlier installed Web acceptance remains bound to its recorded deployed candidate. Hosted CI and final merge state are recorded by the PR."
   }
 }
