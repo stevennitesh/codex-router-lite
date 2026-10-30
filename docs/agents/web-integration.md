@@ -180,9 +180,27 @@ observation loads its capability guidance before issuing commands or reading
 events. These are enforced SDK prerequisites, including after recovery; a warmed
 diagnostic session does not prove that a fresh runtime can use the capability.
 Observer failures retain a content-free stage and reason for diagnosis.
+Saved-chat recovery failures carry a fixed `web_saved_chat_recovery_failed` code
+and the pending browser stage through the ordinary Responses error path when one
+bounded native diagnostic marker has a recognized reason. Only fixed categories,
+booleans and bounded counts are exposed; native error text, chat URLs, identities,
+tokens, prompts and replies are discarded. Missing, malformed, ambiguous or
+unknown markers retain the generic execution failure. These diagnostics grant
+no ownership, Send retry or checkpoint authority.
 A fresh read still proves the empty composer or saved checkpoint,
 including its normalized text-prefix digest; a locator match is only a wakeup.
 Stable conflicting evidence fails without repeated reads or another action.
+For one exact completed generation and its recorded answer, a mounted reply
+shorter than the recorded prefix may spend the same recovery allowance waiting
+for that message's raw DOM text to change. The initial coherent projection
+captures the private comparison text; a conditional SDK locator excludes that
+unchanged text even when the renderer is already mounted. A fresh full normalized
+digest and ownership proof still decide recovery. A permanently short body or
+a changed full reply fails; this does not identify why the earlier projection
+was short. Terminal read-only recheck failures on the original surviving tab
+release only that attempt's exact active-owner entry, allowing a later attempt
+to prove the checkpoint afresh. Reopened, navigated, interrupted and replaced
+custody retain their existing failure guards.
 
 ### Observation and completion
 
@@ -903,6 +921,12 @@ adapter plan only if changed. The initial refresh compares its own prepared
 candidate with the reviewed plan before effects; the final plan must retain that
 official runtime cohort. Acceptance records the actual final identities and the
 underlying deployment's acceptance and durable rollback receipts.
+Its fixed `scope: "installation-and-runtime-readiness"` and
+`liveWebVerification: "required-after-reopen"` distinguish this structural
+acceptance from live Web qualification. After reopening Codex, verify a current
+Web turn, native tools, Stop and continuation in the retained saved chat before
+claiming those paths work. An accepted deployment remains accepted if a later
+live Web check fails, with its existing rollback custody preserved.
 The worker retains its verified official-runtime discovery only within that
 maintenance transaction. Final inspection revalidates the original configuration
 and runtime identity alongside current protected adapter ownership. Codex's cached

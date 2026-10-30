@@ -6,6 +6,8 @@ Current work starts at [the repository entry](../../AGENTS.md).
 
 ## Compatibility and retired routes
 
+- [Saved-chat recovery readiness, failed-owner cleanup and private-safe diagnostics, 2026-10-30](2026-10-30-web-recovery-diagnostics.json)
+
 - [Dependabot SDK, LiteLLM and FastAPI review, repaired Windows locks and combined validation, 2026-10-29](2026-10-29-dependabot-review.json)
 
 - [Windows app 26.1027 compatibility, upstream review and deployed Interrupt deadline repair with one live Instant Stop and continuation, 2026-10-29](2026-10-29-app-compatibility-review.json)

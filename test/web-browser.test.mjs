@@ -481,6 +481,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
     locator(selector) { return makeLocator("selector", selector, false, kind === "selector" ? name : scopeSelector); },
     filter({ hasText: text, visible, has, hasNot }) {
+      if (kind === "selector" && name.startsWith('[data-chatgpt-selection-message-id="')
+          && has?.name?.startsWith("xpath=self::*[string(.) != ")) {
+        const literal = /^xpath=self::\*\[string\(\.\) != ([\s\S]+)\]$/u.exec(has.name)?.[1];
+        assert(literal);
+        const prior = literal.startsWith("concat(") ? [...literal.matchAll(/'([^']*)'|"([^"]*)"/gu)].map(match => match[1] ?? match[2]).join("") : literal.slice(1, -1);
+        return new StopPolicyLocator(() => this.resolve().filter(element => element.textContent !== prior), "checkpoint-content");
+      }
       if (kind === "textbox" && name === "Ask ChatGPT" && has?.name === "xpath=self::div[@contenteditable='true']") {
         const result = makeLocator(kind, name, visibleOnly), resolve = result.resolve;
         result.resolve = () => {
@@ -688,7 +695,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return new StopPolicyLocator(() => this.resolve().filter(element =>
         (options.visible === undefined || element.visible === options.visible)
         && (!options.has || options.has.resolve().length > 0)
-        && (!options.hasNot || options.hasNot.resolve().length === 0)), ["Ask ChatGPT", "Select ChatGPT model"].includes(options.has?.name) ? "home" : this.purpose, this.selector);
+        && (!options.hasNot || options.hasNot.resolve().length === 0)), options.has?.purpose === "checkpoint-content" ? "checkpoint-content"
+          : ["Ask ChatGPT", "Select ChatGPT model"].includes(options.has?.name) ? "home" : this.purpose, this.selector);
     }
     nth(index) { return new StopPolicyLocator(() => this.resolve().slice(index, index + 1)); }
     or(other) { if (other.kind) return makeUnion([Object.assign(this, { kind: "selector", name: "body", guardedBody: this }), other]); return new StopPolicyLocator(() => {
@@ -717,6 +725,19 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     }
     async waitFor({ state, timeoutMs }) {
       assert.equal(state, "visible"); assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
+      if (this.purpose === "checkpoint-content") {
+        ui.recoveryContentWaits = (ui.recoveryContentWaits ?? 0) + 1;
+        ui.actions.push("wait-checkpoint-content");
+        // A matching SDK condition cannot acquire a fixture wait hook. The
+        // short-body case must explicitly change an initially unready target.
+        if (this.resolve().length) return;
+        await ui.onRecoveryContentWait?.({ timeoutMs, matched: false });
+        if (!this.resolve().length) {
+          if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; }
+          throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        }
+        return;
+      }
       if (this.purpose === "home" || this.purpose === "checkpoint") {
         if (this.purpose === "home") { ui.homeWaits = (ui.homeWaits ?? 0) + 1; await ui.onHomeWait?.({ timeoutMs }); }
         else { ui.attachmentWaits += 1; ui.actions.push("wait-checkpoint"); await ui.onAttachmentWait?.({ selector: this.selector, timeoutMs }); }
@@ -3130,6 +3151,76 @@ test("full-chat binding recovery reports browser effects only while the recovere
   }
 });
 
+test("an already mounted completed recovery reply waits for its own content change before the full proof", async () => {
+  for (const updated of ["expected", "changed", "still short", "unchanged"]) {
+    const text = `Checkpoint with 'quotes', \"double quotes\" and a Unicode answer 🔧.\n\nFinal paragraph.`, short = `Checkpoint with 'quotes', \"double quotes\"`;
+    const f = await recoverableFixture({ text });
+    f.loseBinding(); f.ui.texts[0] = short;
+    const subscribed = Promise.withResolvers(), released = Promise.withResolvers();
+    f.ui.onAttachmentWait = () => assert.fail("The already mounted renderer cannot establish content progress.");
+    f.ui.onWait = () => assert.fail("Recovery cannot poll or succeed from a timer.");
+    f.ui.onRecoveryContentWait = async ({ matched }) => { assert.equal(matched, false); subscribed.resolve(); await released.promise; };
+    const reads = f.ui.replyReads, handoffs = f.ui.handoffs;
+    let finished = false;
+    const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery }).finally(() => { finished = true; });
+    await subscribed.promise;
+    assert.equal(finished, false); assert.equal(f.ui.replyReads - reads, 1);
+    assert.equal(f.ui.handoffs, handoffs); assert.equal(f.activeTurn(), undefined);
+    if (updated !== "unchanged") f.ui.texts[0] = updated === "expected" ? text : updated === "changed" ? "Changed full checkpoint content that is deliberately long enough to verify its wrong digest." : `${short} grows`;
+    released.resolve();
+    if (updated === "expected") {
+      const continued = await recovering;
+      assert.equal(continued.assistantText, text); assert.equal(continued.tabReopened, false); assert.equal(continued.tabNavigated, false);
+    } else {
+      await assert.rejects(recovering, updated === "changed" ? /reply-prefix-mismatch/u : /reply-prefix-too-short/u);
+      assert.equal(f.activeTurn(), undefined); assert.equal(f.ui.handoffs, handoffs);
+    }
+    assert.equal(f.ui.recoveryContentWaits, 1); assert.equal(f.ui.attachmentWaits, 0);
+    assert.equal(f.ui.waitedMs > 0, updated === "unchanged");
+    assert.equal(f.ui.reloads, 0); assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("a terminal read-only recovery failure releases only its exact original-tab custody and a fresh retry reproves the checkpoint", async () => {
+  const f = await recoverableFixture(); f.loseBinding();
+  f.ui.onMutationRead = () => { f.ui.texts[0] = "late short body"; };
+  const reads = f.ui.replyReads;
+  await assert.rejects(f.run("continue", { turnId: "failed-read", recovery: f.recovery }), error => {
+    const diagnostic = JSON.parse(error.message.split("ROUTER_WEB_RECOVERY_DIAGNOSTIC ")[1]);
+    assert.equal(diagnostic.reason, "reply-prefix-too-short"); assert.equal(diagnostic.phase, "registered-recheck");
+    return true;
+  });
+  assert.equal(f.activeTurn(), undefined); assert.equal(f.getState().bindingLost, true);
+  f.ui.onMutationRead = undefined; f.ui.texts[0] = f.text;
+  const continued = await f.run("continue", { turnId: "fresh-retry", recovery: f.recovery });
+  assert.equal(continued.assistantText, f.text); assert.equal(continued.recovered, true);
+  assert.ok(f.ui.replyReads - reads >= 4, "The retry must acquire a new reply proof.");
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.reloads, 0);
+  assert.equal(f.ui.navigations.length, 1);
+});
+
+test("failed recovery preserves replaced custody, interrupted custody and tab identity changes", async () => {
+  for (const change of ["replacement owner", "interrupted", "changed tab"]) {
+    const nativeContext = {}, f = await recoverableFixture({ nativeContext }); f.loseBinding();
+    let retainedOwner;
+    f.ui.onMutationRead = () => {
+      if (change === "replacement owner") {
+        const owner = f.activeTurn();
+        retainedOwner = { ...owner };
+        nativeContext.routerWebActiveTurns.set(base.sessionId, retainedOwner);
+      }
+      if (change === "changed tab") f.ui.tabId = "changed-tab";
+      f.ui.texts[0] = "late short body";
+    };
+    await assert.rejects(f.run("continue", { turnId: "failed-read", recovery: f.recovery,
+      ...(change === "interrupted" ? { interruptedTurnId: base.turnId } : {}) }), /reply changed|tab identity changed/u);
+    assert.ok(f.activeTurn(), change);
+    if (retainedOwner) assert.equal(f.activeTurn(), retainedOwner);
+    await assert.rejects(f.run("continue", { turnId: "fresh-retry", recovery: f.recovery }), /prior-recovery-unverified/u);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.reloads, 0);
+  }
+});
+
 test("a stale completed predecessor reloads once, waits for its exact checkpoint and acquires ownership only after full verification", async () => {
   const f = await staleCompletedCheckpointFixture(), order = [];
   f.ui.onReplyRead = () => order.push("snapshot");
@@ -3315,7 +3406,8 @@ test("semantic checkpoint readiness owns its exact message renderer and preserve
     const recovering = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
     if (form === "fragments") assert.equal((await recovering).assistantText, f.text);
     else await assert.rejects(recovering, /missing-fresh-reply|expected-reply-mismatch|invalid-reply-identities|reply-prefix-too-short/);
-    if (["settled short body", "fragments"].includes(form)) assert.equal(f.ui.waitedMs, 0);
+    if (form === "fragments") assert.equal(f.ui.waitedMs, 0);
+    if (form === "settled short body") assert.equal(f.ui.recoveryContentWaits, 1);
     assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 2); assert.equal(f.ui.reloads, 0);
   }
 });
@@ -3578,9 +3670,11 @@ test("saved-chat recovery rejects changed proof or composer with bounded private
       assert.ok(error.message.startsWith(prefix));
       const diagnostic = JSON.parse(error.message.slice(prefix.length));
       assert.equal(diagnostic.reason, reason);
+      assert.equal(diagnostic.phase, "initial-proof");
+      assert.equal(diagnostic.expectedPrefixUtf16Length, f.recovery.assistantPrefix.length);
       for (const [key, value] of Object.entries(expected)) assert.equal(diagnostic[key], value, `${reason}: ${key}`);
       for (const [key, value] of Object.entries(diagnostic)) {
-        if (key !== "reason") assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
+        if (!["reason", "phase"].includes(key)) assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
       }
       assert.ok(error.message.length < 2048);
       assert.doesNotMatch(error.message, /PRIVATE_RECOVERY_SECRET|private\.invalid|https:\/\/|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/iu);
@@ -3589,16 +3683,31 @@ test("saved-chat recovery rejects changed proof or composer with bounded private
       return true;
     });
     assert.equal(f.ui.composerReads - composerReads, Number(reason.startsWith("composer-")), "Recovery adds no composer reread.");
-    assert.equal(f.ui.replyReads - replyReads, Number(!["saved-url-changed", "temporary-mode-active"].includes(reason)));
+    assert.equal(f.ui.replyReads - replyReads, reason === "reply-prefix-too-short" ? 2 : Number(!["saved-url-changed", "temporary-mode-active"].includes(reason)));
     assert.equal(f.ui.viewportReads, Number(reason === "generation-turn-not-unique"), "Only the rejected generation identity permits one viewport diagnostic read.");
     assert.equal(f.ui.newTabs, 1);
     assert.equal(f.ui.navigations.length, 1);
     assert.equal(f.ui.stopClicks, 0);
     assert.equal(f.ui.sendClicks, 1);
     assert.equal(f.ui.handoffs, handoffs);
-    assert.deepEqual(f.ui.actions, actions);
+    assert.deepEqual(f.ui.actions, reason === "reply-prefix-too-short" ? [...actions, "wait-checkpoint-content"] : actions);
     assert.equal(f.activeTurn(), undefined);
   }
+});
+
+test("recovery diagnostic reply lengths are bounded UTF16 counts from the failed projection", async () => {
+  const f = await recoverableFixture({ text: "Expected 🔧 checkpoint" }); f.loseBinding();
+  f.ui.texts[0] = "Different 🔧 content".repeat(1000);
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), error => {
+    const diagnostic = JSON.parse(error.message.split("ROUTER_WEB_RECOVERY_DIAGNOSTIC ")[1]);
+    assert.equal(diagnostic.reason, "reply-prefix-mismatch");
+    assert.equal(diagnostic.expectedPrefixUtf16Length, f.text.length);
+    assert.equal(diagnostic.recordedReplyUtf16Length, 10000);
+    assert.equal(diagnostic.recordedReplyUtf16LengthCapped, true);
+    assert.equal(diagnostic.recordedReplyHasAnswer, true);
+    assert.equal(error.message.includes("Different"), false);
+    return true;
+  });
 });
 
 test("retained interrupted recovery diagnoses missing and displaced fresh replies before reading the composer", async () => {
@@ -3690,7 +3799,7 @@ test("a rejected generation checkpoint distinguishes changed turn identity, abse
       assert.equal(diagnostic.reason, "generation-turn-not-unique");
       for (const [key, value] of Object.entries(expected)) assert.equal(diagnostic[key], value, `${scenario}: ${key}`);
       for (const key of ["generationIsLatest", "freshReplyCount", "expectedReplyMatches", "prefixLongEnough", "prefixMatches", "composerCount"]) assert.equal(diagnostic[key], null);
-      for (const [key, value] of Object.entries(diagnostic)) if (key !== "reason") {
+      for (const [key, value] of Object.entries(diagnostic)) if (!["reason", "phase"].includes(key)) {
         assert.ok(value === null || typeof value === "boolean" || Number.isSafeInteger(value) && value >= 0 && value <= 10000);
       }
       assert.ok(error.message.length < 2048);

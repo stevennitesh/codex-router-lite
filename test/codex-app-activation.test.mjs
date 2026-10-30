@@ -53,6 +53,7 @@ test("worker reopens only after durable accepted success and lock release, retai
     const resultPath = path.join(operation, "result.json"), trace = path.join(directory, "activated"), binary = path.join(directory, "switchyard.exe");
     const commit = "a".repeat(40), binaryHash = "b".repeat(64), candidateHash = "c".repeat(64);
     const accepted = { version: 1, accepted: true, routerCommit: commit, candidateSha256: candidateHash, sourceRoot: root, candidateBinary: binary,
+      scope: "installation-and-runtime-readiness", liveWebVerification: "required-after-reopen",
       switchyardBinarySha256: binaryHash, codexReopenRequired: true, deploymentAcceptancePath: path.join(operation, "router.json"), deploymentResultPath: path.join(operation, "underlying-result.json"),
       deployment: { version: 1, accepted: true, deployed: true, routerCommit: commit, switchyardBinarySha256: binaryHash, switchyardCommit: commit,
         switchyardRoutesSha256: binaryHash, rollbackRoot: directory, rollbackRouterRoot: directory, checks: Object.fromEntries(["switchyardHealth", "taskIdentity", "routerFullHealth", "cleanCandidate", "installManifest", "doctor", "protectedEndpoints", "processIdentity", "provenance", "installedHashes", "installedCatalog"].map(name => [name, true])) },

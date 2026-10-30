@@ -52,6 +52,9 @@
     <button type="button" data-scenario="recovery-duplicate-turn">Duplicate recovery generation</button>
     <button type="button" data-scenario="recovery-foreign-latest">Foreign recovery generation</button>
     <button type="button" data-scenario="recovery-formatted">Formatted recovery checkpoint</button>
+    <button type="button" data-scenario="recovery-short">Mounted short recovery checkpoint</button>
+    <button type="button" data-scenario="recovery-permanent-short">Permanently short recovery checkpoint</button>
+    <button type="button" data-scenario="recovery-changed">Changed full recovery checkpoint</button>
   </nav>
   <output id="contract-status" data-scenario="not-selected" data-stop-clicks="0" aria-live="polite">Choose a fixture scenario.</output>
   <section id="rendered-chat" aria-label="Rendered chat fixture"></section>
@@ -172,8 +175,10 @@
       if (next.startsWith('recovery-')) {
         chat.replaceChildren();
         if (next !== 'recovery-progress') {
-          const turn = makeRecoveryTurn(true, recoveryText);
+          const short = ['recovery-short', 'recovery-permanent-short', 'recovery-changed'].includes(next);
+          const turn = makeRecoveryTurn(true, short ? 'Recovered' : recoveryText);
           chat.append(turn);
+          growCheckpoint.hidden = !short;
           if (next === 'recovery-duplicate-message') turn.append(turn.querySelector('[data-chatgpt-selection-message-id]').cloneNode(true));
           if (next === 'recovery-duplicate-turn') chat.append(makeTurn('fixture-owned-generation', true));
           if (next === 'recovery-foreign-latest') chat.append(makeTurn('fixture-successor-generation', true));
@@ -379,9 +384,10 @@
     growCheckpoint.addEventListener('click', () => {
       const answer = chat.querySelector('[data-chatgpt-selection-message-id] p');
       answer.setAttribute('data-markdown-text-style', 'assistant-message');
-      answer.textContent = recoveryText;
+      answer.textContent = scenario === 'recovery-changed' ? 'Changed full saved answer with another digest'
+        : scenario === 'recovery-permanent-short' ? answer.textContent : recoveryText;
       growCheckpoint.hidden = true;
-      completeCheckpoint.hidden = false;
+      completeCheckpoint.hidden = scenario !== 'recovery-progress';
       record();
     });
     completeCheckpoint.addEventListener('click', () => {
