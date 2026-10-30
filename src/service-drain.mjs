@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { INTERNAL_SECRET_PATH, PORTS, loopback } from "./paths.mjs";
 import { conclusivelyRefused } from "./transport-error-graph.mjs";
+import { readServiceProcessState, serviceProcessOwns } from "./service-process.mjs";
 
 const SERVICE = "codex-router";
 
@@ -98,6 +99,32 @@ export async function resumeRouterAdmission({
   });
   if (!response.ok) throw new Error(`Router admission resume failed with HTTP ${response.status}.`);
   return jsonResponse(response);
+}
+
+// A coordinator may retain an uncertain Send while admission is closed. Its
+// restart must not issue another forced drain that could interrupt newly
+// admitted work. Authenticate a fresh status and the live owned process instead.
+export async function assertRouterAdmissionStillClosed(expected, {
+  fetchImpl = fetch, internalKey, baseUrl = loopback(PORTS.router, ""),
+  readProcess = readServiceProcessState, ownsProcess = serviceProcessOwns,
+} = {}) {
+  const reject = () => new Error("Prepared Router admission is no longer closed with the same settled Web work; refusing restart without another interruption.");
+  const counts = value => value?.known === true && [value.activeTurns, value.uncertainSends, value.unresolvedActions]
+    .every(count => Number.isSafeInteger(count) && count >= 0) && value.activeTurns === 0 && value.unresolvedActions === 0;
+  if (expected?.status !== "forced" || expected.state !== "closed" || expected.activeRequests !== 0 || !counts(expected.webRuntime)) throw reject();
+  const before = readProcess();
+  if (!before || !ownsProcess(before, { sourceRoot: before.sourceRoot })) throw reject();
+  internalKey ??= readFileSync(INTERNAL_SECRET_PATH, "utf8").trim();
+  if (!internalKey) throw reject();
+  const response = await fetchImpl(`${baseUrl}/internal/lifecycle`, {
+    headers: { authorization: `Bearer ${internalKey}` }, signal: AbortSignal.timeout(3_000), redirect: "error",
+  });
+  const observed = await jsonResponse(response), after = readProcess();
+  if (!response.ok || observed.capability !== "drain-v1" || observed.state !== "closed" || observed.activeRequests !== 0
+      || !counts(observed.webRuntime) || observed.webRuntime.uncertainSends !== expected.webRuntime.uncertainSends
+      || !after || after.pid !== before.pid || after.processIdentity !== before.processIdentity
+      || !ownsProcess(after, { sourceRoot: before.sourceRoot })) throw reject();
+  return expected;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

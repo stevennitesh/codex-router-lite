@@ -96,6 +96,9 @@ function windowsPowerShellRuntimeEnvironment(extra = {}) {
       "ProgramFiles(x86)",
       "ProgramW6432",
       "USERPROFILE",
+      // PowerShell module discovery caches belong to the selected profile.
+      "APPDATA",
+      "LOCALAPPDATA",
     ]
       .map((name) => name.toLowerCase()),
   );

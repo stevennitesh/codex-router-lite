@@ -5,6 +5,7 @@ import { authenticatedRoute, secretEqual } from "./caller-auth.mjs";
 import {
   MAX_BODY_BYTES,
   MAX_BUFFERED_RESPONSE_BYTES,
+  readWithAbort,
   readResponseBody,
 } from "./http-utils.mjs";
 import { HeaderlessSseDetector } from "./sse-prefix.mjs";
@@ -651,8 +652,7 @@ async function sniffUndeclaredResponse(upstream, signal) {
   let decision = "pending";
   try {
     while (decision === "pending") {
-      signal?.throwIfAborted();
-      const result = await reader.read();
+      const result = await readWithAbort(reader, signal);
       if (result.done) {
         decision = detector.end().decision;
         break;
@@ -664,6 +664,7 @@ async function sniffUndeclaredResponse(upstream, signal) {
     throw error;
   } finally {
     void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
   return {
     kind: decision === "event-stream" ? "event-stream" : "other",
@@ -720,8 +721,7 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
   };
   try {
     while (true) {
-      if (signal.aborted) throw signal.reason || new Error("WebSocket closed.");
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithAbort(reader, signal);
       if (done) break;
       const text = decoder.decode(value, { stream: true });
       for (const piece of lines.scan(text)) {
@@ -738,7 +738,9 @@ async function relaySse(body, onEvent, { signal, maxEventBytes }) {
     // EOF does not terminate an SSE event. Discard any unfinished line/event;
     // the caller's existing missing-completion path reports the failed stream.
   } finally {
-    await reader.cancel().catch(() => {});
+    // Completion or cancellation ends the logical response. A producer that
+    // never acknowledges cancel must not retain the serialized peer queue.
+    void reader.cancel().catch(() => {});
     reader.releaseLock?.();
   }
 }

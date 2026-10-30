@@ -4,9 +4,10 @@ export const INTERRUPT_TOOL = 'router_web_interrupt';
 export const ADAPTER_HOOK_STATUS = 'Stopping ChatGPT Web generation through Router adapter';
 
 // One trusted callback owns child draining, browser cancellation and readback.
+// Codex caps Interrupt hooks at three seconds, including MCP callbacks.
 // Leave 150 ms for the host callback, 350 ms for the native terminal receipt,
 // and 100 ms between the browser script and its native execution allowance.
-const hookTimeoutMs = 10_000, graceMs = hookTimeoutMs - 150, cleanupMs = graceMs - 350;
+const hookTimeoutMs = 3_000, graceMs = hookTimeoutMs - 150, cleanupMs = graceMs - 350;
 const scriptReturnMarginMs = 100;
 export const STOP_BUDGET = Object.freeze({ hookTimeoutMs, graceMs, cleanupMs, scriptReturnMarginMs,
   scriptMs: cleanupMs - scriptReturnMarginMs, proofElapsedMs: hookTimeoutMs });

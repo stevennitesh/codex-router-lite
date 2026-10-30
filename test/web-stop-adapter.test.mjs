@@ -67,7 +67,7 @@ function ordinary(turn = TURN, operation = 'observe') {
   const config = { bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD, turnId: turn, operation,
     frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule,
     ...(operation === 'continue' ? { expectedOwnerTurnIds: [TURN] } : {}),
-    ...(operation === 'send' ? { prompt: 'synthetic send fixture' } : {}) };
+    ...(operation === 'send' ? { prompt: 'synthetic send fixture', modelFamily: 'GPT-6', power: 0 } : {}) };
   const sandbox = { futureOpaque: ['private opaque value', { retained: true }], permissionProfile: { opaque: true } };
   return { name: 'js', arguments: { code: browserScript(config), timeout_ms: 30000 }, _meta: {
     threadId: APPROVED_THREAD, sessionId: SOURCE_SESSION, callId: `call_router_web_${'a'.repeat(32)}`,
@@ -262,6 +262,7 @@ test('Stop generation rejects invalid and injected identities at the adapter bou
 test('the trusted hook, adapter, script and proof share one bounded cancellation allowance', () => {
   const bridge = new AdapterBridge({ outer: {}, child: {}, stopConfig: STOP_CONFIG });
   assert.equal(createAdapterHook().timeout * 1000, STOP_BUDGET.hookTimeoutMs);
+  assert.equal(createAdapterHook().timeout, 3, 'Codex clamps Interrupt hooks, including MCP callbacks, to three seconds.');
   assert.equal(bridge.graceMs, STOP_BUDGET.graceMs);
   assert.equal(bridge.cleanupMs, STOP_BUDGET.cleanupMs);
   assert.ok(STOP_BUDGET.scriptMs < bridge.cleanupMs && bridge.cleanupMs < bridge.graceMs
@@ -438,6 +439,12 @@ function observationResult(params, fields = {}) {
     operation: 'observe', normal: true, completed: false, stopVisible: true, statusComplete: false, ...fields,
   } }) + config.frameEnd }] };
 }
+function ownershipPendingResult(params, fields = {}) {
+  const config = readBrowserProgram(params.arguments.code);
+  return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
+    operation: 'observe', ownershipPending: true, ...fields,
+  } }) + config.frameEnd }] };
+}
 function sendResult(params, fields = {}) {
   const config = readBrowserProgram(params.arguments.code);
   return { content: [{ type: 'text', text: config.frameBegin + JSON.stringify({ routerBrowser: {
@@ -456,6 +463,44 @@ test('a confirmed Send terminal authorizes Stop before observation with only its
   assert.equal(f.calls.length, 2, 'Stop does not replay Send or require another observation.');
   assert.equal(f.calls[1].arguments.code, stopCode(STOP_CONFIG, cached(source).identity, f.calls[1].arguments.timeout_ms - 100, delivery));
   assert.deepEqual(f.calls[1]._meta, retainedMetadata(source._meta));
+});
+
+test('the first strict anchored observation supplies Stop delivery while the ledger remains uncertain', async t => {
+  const f = await protocolFixture(t, params => {
+    if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+    const config = readBrowserProgram(params.arguments.code);
+    if (config.operation === 'send') return sendResult(params, { sent: false, dispatched: true, generationPending: true, generationTurnKey: undefined });
+    return observationResult(params, { tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
+      generationTurnKey: GENERATION, baselineReplyIds: [], generationReplyIds: [], replyId: null, assistantText: '' });
+  });
+  await f.client.callTool(ordinary(TURN, 'send'));
+  assert.equal(f.bridge.cache, null, 'Unanchored dispatch supplies no Stop generation.');
+  const source = ordinary(TURN, 'observe');
+  await f.client.callTool(source);
+  const delivery = { bindingId: 'fixtureBinding', tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat', generationTurnKey: GENERATION };
+  assert.deepEqual(f.bridge.cache.delivery, delivery);
+  assert.equal((await f.client.callTool(hook())).isError, undefined);
+  assert.equal(f.calls.at(-1).arguments.code, stopCode(STOP_CONFIG, cached(source).identity, f.calls.at(-1).arguments.timeout_ms - 100, delivery));
+  assert.equal(f.calls.length, 3);
+});
+
+test('pending or malformed observations cannot manufacture a Stop delivery target', async t => {
+  for (const branch of ['pending', 'missing generation', 'foreign tab', 'duplicate replies', 'foreign latest', 'wrong nonce']) await t.test(branch, async t => {
+    const source = ordinary(TURN, 'observe');
+    source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code), tabId: 'owned-tab' });
+    const f = await protocolFixture(t, params => {
+      if (branch === 'pending') return ownershipPendingResult(params);
+      const result = observationResult(params, { tabId: branch === 'foreign tab' ? 'foreign-tab' : 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
+        generationTurnKey: branch === 'missing generation' ? undefined : GENERATION, baselineReplyIds: [],
+        generationReplyIds: branch === 'duplicate replies' ? [GENERATION, GENERATION] : [], replyId: null, assistantText: '',
+        ...(branch === 'foreign latest' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {}) });
+      if (branch === 'wrong nonce') result.content[0].text = result.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
+      return result;
+    });
+    await f.client.callTool(source).catch(() => {});
+    assert.equal(f.bridge.cache?.delivery, undefined);
+    assert.equal(f.calls.length, 1);
+  });
 });
 
 test('uncertain, malformed, foreign and failed Send terminals never authorize Stop', async t => {
@@ -581,6 +626,183 @@ test('pending input returns its first incomplete text once, then later partial t
   assert.equal(final.completed, true); assert.equal(reads, 5);
   assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 2);
   assert.deepEqual(f.receipts.filter(entry => entry.code === 'observation_wait_finished').map(entry => entry.readCount), [2, 3]);
+});
+
+test('pending ownership stays inside one held observation until a fresh owned answer arrives', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const f = await waitingFixture(t, params => ++reads < 3 ? ownershipPendingResult(params)
+    : observationResult(params, { assistantText: 'Fresh owned partial answer' }));
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  const first = await f.waitForChildTerminal(message => message.result?.content);
+  const state = [...f.bridge.pending.values()][0].wait;
+  const deadlines = [state.deadlineAt, state.executionDeadlineAt];
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== first.id);
+  assert.deepEqual([state.deadlineAt, state.executionDeadlineAt], deadlines);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, state.config.frameToken).assistantText, 'Fresh owned partial answer');
+  assert.equal(reads, 3);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 1);
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'browser_ready');
+});
+
+test('broker wake during pending ownership waits for a fresh owned result and never returns an earlier snapshot', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const f = await waitingFixture(t, params => ++reads === 1 ? observationResult(params, { assistantText: ' ' })
+    : reads < 4 ? ownershipPendingResult(params) : observationResult(params, { replyId: 'fresh-owned' }));
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  let prior = await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(5);
+  prior = await f.waitForChildTerminal(message => message.result?.content && message.id !== prior.id);
+  const pending = [...f.bridge.pending.values()][0], state = pending.wait;
+  const deadlines = [state.deadlineAt, state.executionDeadlineAt];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity();
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== prior.id
+    && message.result.content.some(item => item.text?.includes('ownershipPending')));
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  assert.deepEqual([state.deadlineAt, state.executionDeadlineAt], deadlines);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, state.config.frameToken).replyId, 'fresh-owned');
+  assert.equal(reads, 4);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+});
+
+test('a broker wake during an active read remains pending when that read loses its mounted ownership', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  let reads = 0;
+  const { promise: entered, resolve: enter } = Promise.withResolvers();
+  const { promise: terminal, resolve: release } = Promise.withResolvers();
+  const f = await waitingFixture(t, async params => {
+    if (++reads === 1) return observationResult(params);
+    if (reads === 2) { enter(); await terminal; return ownershipPendingResult(params); }
+    return observationResult(params, { replyId: 'fresh-after-wake' });
+  });
+  t.after(release);
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = f.client.callTool(f.source);
+  const first = await f.waitForChildTerminal(message => message.result?.content);
+  t.mock.timers.tick(5); await entered;
+  const pending = [...f.bridge.pending.values()][0];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity(); release();
+  await f.waitForChildTerminal(message => message.result?.content && message.id !== first.id);
+  assert.equal(f.forwardedOuter.filter(message => message.result?.content).length, 0);
+  t.mock.timers.tick(5);
+  assert.equal(parseBrowserOutput(await answer, pending.wait.config.frameToken).replyId, 'fresh-after-wake');
+  assert.equal(reads, 3);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'broker_activity');
+});
+
+test('pending ownership expires on the original deadline even after a sticky broker wake', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  const f = await waitingFixture(t, params => ownershipPendingResult(params), { observationWaitMs: 30, observationIntervalMs: 1000 });
+  f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+  const answer = assert.rejects(f.client.callTool(f.source), error => error.code === -32603
+    && /Router browser observation ownership is unavailable/u.test(error.message));
+  await f.waitForChildTerminal(message => message.result?.content);
+  const pending = [...f.bridge.pending.values()][0];
+  const woken = brokerWake(t, pending), releaseActivity = f.broker.beginActivity(f.turn.token);
+  assert.equal(await woken, 'broker_activity'); releaseActivity();
+  t.mock.timers.tick(30); await answer;
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.receipts.find(entry => entry.code === 'observation_wait_finished').wakeReason, 'deadline');
+  assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+});
+
+test('pending ownership preserves actual child failures and fails closed on broker loss', async t => {
+  for (const branch of ['tool error', 'RPC error', 'broker error', 'broker closed']) await t.test(branch, async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    let reads = 0;
+    const nativeError = { isError: true, content: [{ type: 'text', text: 'Actual native observation failure' }] };
+    const f = await waitingFixture(subtest, params => {
+      if (++reads === 1) return ownershipPendingResult(params);
+      if (branch === 'RPC error') throw new McpError(-32602, 'Actual native RPC failure');
+      return nativeError;
+    });
+    f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+    const answer = f.client.callTool(f.source).then(result => ({ result }), error => ({ error }));
+    await f.waitForChildTerminal(message => message.result?.content);
+    const pending = [...f.bridge.pending.values()][0];
+    if (branch === 'broker error') f.bridge.wakeObservation(pending, 'broker_error');
+    else if (branch === 'broker closed') f.broker.cancel(f.turn.token);
+    else subtest.mock.timers.tick(5);
+    const outcome = await answer;
+    if (branch === 'tool error') assert.deepEqual(outcome.result, nativeError);
+    else if (branch === 'RPC error') {
+      assert.equal(outcome.error.code, -32602); assert.match(outcome.error.message, /Actual native RPC failure/u);
+    } else {
+      assert.equal(outcome.error.code, -32603); assert.match(outcome.error.message, /observation channel is unavailable/u);
+      assert.equal(reads, 1);
+    }
+    assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+  });
+});
+
+test('Stop during pending ownership freezes reads and waits for an active child terminal', async t => {
+  for (const active of [false, true]) await t.test(active ? 'active pending read' : 'idle pending interval', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    let reads = 0;
+    const { promise: entered, resolve: enter } = Promise.withResolvers();
+    const { promise: terminal, resolve: release } = Promise.withResolvers();
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) return success();
+      if (++reads === 2) { enter(); await terminal; }
+      return ownershipPendingResult(params);
+    });
+    subtest.after(release);
+    f.source.arguments.code = browserScript({ ...readBrowserProgram(f.source.arguments.code), inputAcknowledgementPending: true });
+    const control = new AbortController();
+    const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await f.waitForChildTerminal(message => message.result?.content);
+    if (active) { subtest.mock.timers.tick(5); await entered; }
+    control.abort(); assert.equal(await answer, 'cancelled');
+    const stopped = f.client.callTool(hook());
+    await f.waitForReceipt('cleanup_authority_consumed');
+    if (active) assert.equal(f.calls.length, 2, 'Cleanup must await the actual active pending read terminal.');
+    release(); assert.equal((await stopped).isError, undefined);
+    assert.equal(reads, active ? 2 : 1);
+    assert.equal(f.calls.length, reads + 1);
+    assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+    subtest.mock.timers.tick(1000); await f.client.ping();
+    assert.equal(f.calls.length, reads + 1);
+  });
+});
+
+test('malformed and unqualified pending frames fail without escaping the adapter', async t => {
+  for (const branch of ['normal fields', 'private text', 'false flag', 'wrong operation', 'acknowledged input', 'direct observation', 'unqualified metadata',
+    'ambiguous envelope', 'foreign nonce', 'malformed JSON', 'ambiguous direct envelope']) {
+    await t.test(branch, async subtest => {
+      subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+      const fields = branch === 'normal fields' ? { normal: true } : branch === 'private text' ? { assistantText: 'private pending text' }
+        : branch === 'false flag' ? { ownershipPending: false } : branch === 'wrong operation' ? { operation: 'retain' } : {};
+      const f = await waitingFixture(subtest, params => {
+        const result = ownershipPendingResult(params, fields);
+        if (branch.startsWith('ambiguous')) result.content.push(clone(result.content[0]));
+        if (branch === 'foreign nonce') result.content[0].text = result.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
+        if (branch === 'malformed JSON') result.content[0].text = result.content[0].text.replace('"ownershipPending":true', '"ownershipPending":');
+        return result;
+      });
+      const { observationWait, ...config } = readBrowserProgram(f.source.arguments.code);
+      f.source.arguments.code = browserScript({ ...config, ...(['direct observation', 'ambiguous direct envelope'].includes(branch) ? {} : { observationWait }),
+        inputAcknowledgementPending: branch !== 'acknowledged input' });
+      if (branch === 'unqualified metadata') f.source._meta.callId = 'ordinary-unqualified';
+      await assert.rejects(f.client.callTool(f.source), error => error.code === -32603 && /observation ownership is unavailable/u.test(error.message));
+      assert.equal(f.calls.length, 1);
+      assert.equal(JSON.stringify(f.forwardedOuter).includes('ownershipPending'), false);
+      assert.equal(JSON.stringify(f.forwardedOuter).includes('private pending text'), false);
+    });
+  }
 });
 
 test('canonical subagents hold exact read-only observations without acquiring primary Stop authority', async t => {
@@ -993,6 +1215,73 @@ test('Stop freezes repeated observation between reads and during a real active c
     assert.ok(f.receipts.some(entry => entry.code === 'stop_confirmed'));
     subtest.mock.timers.tick(1000); await f.client.ping();
     assert.equal(f.calls.length, 2);
+  });
+});
+
+test('interrupted active-read terminals classify native failures without retaining private error payloads', async t => {
+  for (const fixture of [
+    { name: 'RPC cancellation before execution', rpc: true, message: 'js execution cancelled before execution',
+      signatures: ['cancelled_before_execution'], kernelResetReported: false },
+    { name: 'tool cancellation and kernel reset', message: 'js execution cancelled; kernel reset',
+      signatures: ['execution_cancelled'], kernelResetReported: true },
+    { name: 'plain cancellation without a reported reset', message: 'JavaScript execution cancelled',
+      signatures: ['execution_cancelled'], kernelResetReported: false },
+    { name: 'structured native kernel closure', structured: true, message: 'node_repl kernel closed unexpectedly',
+      signatures: ['kernel_closed'], kernelResetReported: false },
+    { name: 'unrecognized native failure', message: 'Unknown synthetic native failure',
+      signatures: [], kernelResetReported: false },
+  ]) await t.test(fixture.name, async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+    const privateText = 'synthetic-private-interrupted-read-credential';
+    const { promise: started, resolve: entered } = Promise.withResolvers();
+    const { promise: gate, resolve: release } = Promise.withResolvers();
+    const message = fixture.structured
+      ? JSON.stringify({ error: fixture.message, error_kind: 'uncaught_exception', privatePayload: privateText }) : fixture.message;
+    const nativeResult = { isError: true, content: [{ type: 'text', text: message }, { type: 'text', text: privateText }] };
+    let running = false;
+    const f = await waitingFixture(subtest, async params => {
+      if (params.arguments.code.includes('stopOwnedWebTurn')) { assert.equal(running, false); return success(); }
+      running = true; entered(); await gate; running = false;
+      if (fixture.rpc) throw new McpError(-32602, message, { privatePayload: privateText });
+      return nativeResult;
+    }, { observationIntervalMs: 1000 });
+    subtest.after(release);
+    const control = new AbortController();
+    const answer = f.client.callTool(f.source, undefined, { signal: control.signal }).catch(() => 'cancelled');
+    await started;
+    const sourceWire = f.forwardedInner.find(entry => entry.method === 'tools/call');
+    assert.match(sourceWire.id, /^router_observe_/u);
+    const outerId = f.bridge.observationChildren.get(sourceWire.id).wait.outerId;
+    control.abort(); assert.equal(await answer, 'cancelled');
+    const stop = f.client.callTool(hook());
+    await f.waitForReceipt('cleanup_authority_consumed');
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.receipts.some(entry => entry.code === 'interrupted_observation_terminal'), false);
+    subtest.mock.timers.tick(25); release();
+    assert.equal((await stop).isError, undefined);
+    assert.equal(f.calls.length, 2, 'Cleanup starts only after the actual failed read terminal.');
+    const terminals = f.receipts.filter(entry => entry.code === 'interrupted_observation_terminal');
+    const text = fixture.rpc ? `MCP error -32602: ${message}` : `${message}\n${privateText}`;
+    assert.deepEqual(terminals, [{
+      at: new Date(1025).toISOString(), code: 'interrupted_observation_terminal', generation: GENERATION,
+      elapsedMs: 25, callbackElapsedMs: 25, childTerminalObserved: true,
+      rpcError: fixture.rpc === true, toolError: fixture.rpc !== true, resultSucceeded: false, cleanupActive: true,
+      nativeFailure: {
+        source: fixture.rpc ? 'rpc_error' : 'tool_error', ...(fixture.rpc ? { rpcCode: -32602 } : {}),
+        textBytes: Buffer.byteLength(text), textSha256: createHash('sha256').update(text).digest('hex'),
+        signatures: fixture.signatures, kernelResetReported: fixture.kernelResetReported,
+        errorKinds: fixture.structured ? ['uncaught_exception'] : [], errorClasses: [],
+      },
+    }]);
+    const response = f.forwardedOuter.find(entry => !entry.method && entry.id === outerId);
+    assert.ok(response, 'The original terminal still reaches its owning outer request.');
+    if (fixture.rpc) assert.deepEqual(response.error, { code: -32602, message: `MCP error -32602: ${message}`, data: { privatePayload: privateText } });
+    else assert.deepEqual(response.result, nativeResult);
+    subtest.mock.timers.tick(1000); await f.client.ping(); assert.equal(f.calls.length, 2);
+    const diagnostics = JSON.stringify(f.receipts);
+    for (const secret of [privateText, fixture.message, 'private opaque value'])
+      assert.equal(diagnostics.includes(secret), false);
+    for (const identity of [APPROVED_THREAD, TURN]) assert.equal(JSON.stringify(terminals).includes(identity), false);
   });
 });
 
@@ -1935,13 +2224,13 @@ test('Stop accepts an actual terminal after its execution allowance within the o
   assert.equal(f.receipts.some(entry => entry.code === 'stop_terminal_after_retirement'), false);
 });
 
-test('the extended Stop window waits for its actual child terminal and coalesces duplicate callbacks without another action', async t => {
+test('the host-bounded Stop window waits for its actual child terminal and coalesces duplicate callbacks without another action', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const terminal = Promise.withResolvers();
   const f = await protocolFixture(t, async params => {
     if (params.arguments?.code?.includes('stopOwnedWebTurn')) {
       await terminal.promise;
-      return success({ elapsedMs: 3200, inactivityEvidence: 'composer_restored' });
+      return success({ elapsedMs: 2000, inactivityEvidence: 'composer_restored' });
     }
     return ordinaryResult;
   });
@@ -1949,16 +2238,16 @@ test('the extended Stop window waits for its actual child terminal and coalesces
   await f.client.callTool(ordinary());
   const owned = f.client.callTool(hook());
   await f.waitForCall(params => params.arguments?.code?.includes('stopOwnedWebTurn'));
-  t.mock.timers.tick(3200); await f.client.ping();
+  t.mock.timers.tick(2000); await f.client.ping();
   assert.equal(f.receipts.some(entry => ['stop_confirmed', 'stop_unconfirmed'].includes(entry.code)), false,
-    'Passing the old callback deadline does not invent a native terminal.');
+    'An unsettled child does not become a successful native terminal.');
   const duplicate = f.client.callTool(hook()); await f.waitForReceipt('cleanup_duplicate_queued');
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
   terminal.resolve();
   for (const result of await Promise.all([owned, duplicate])) assert.equal(result.isError, undefined);
   const confirmed = f.receipts.find(entry => entry.code === 'stop_confirmed');
   assert.equal(confirmed.childTerminalObserved, true); assert.equal(confirmed.inactivityEvidence, 'composer_restored');
-  assert.equal(confirmed.elapsedMs, 3200);
+  assert.equal(confirmed.elapsedMs, 2000);
   assert.equal((await f.client.callTool(hook())).isError, true, 'A retired native turn cannot regain cancellation authority.');
   assert.equal(f.calls.filter(params => params.arguments?.code?.includes('stopOwnedWebTurn')).length, 1);
 });

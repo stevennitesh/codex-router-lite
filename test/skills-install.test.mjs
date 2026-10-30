@@ -30,8 +30,27 @@ fs.cpSync = (from,to,options) => {
     if(fault?.startsWith('fail-copy') && (fault !== 'fail-copy-partial' || counts.publications > 1)) {
       throw Object.assign(new Error('Synthetic publication failure'),{code:'EIO'});
     }
+    if(fault?.startsWith('publication-') && path.basename(to)==='SKILL.md') {
+      if(fault==='publication-replaced-directory') {
+        const dir=path.dirname(to), claimed=dir+'.claimed';
+        original.rename(dir,claimed); fs.mkdirSync(dir);
+        original.cp(path.join(claimed,'.codex-router-publishing'),path.join(dir,'.codex-router-publishing'));
+        original.write(path.join(dir,'user.txt'),'Competing directory content');
+      } else if(fault==='publication-malformed-marker') {
+        original.write(path.join(path.dirname(to),'.codex-router-publishing'),'malformed marker');
+        throw Object.assign(new Error('Synthetic publication failure'),{code:'EIO'});
+      } else if(fault.startsWith('publication-equal')) original.cp(from,to);
+      else original.write(to,'Competing user content');
+    }
   }
   return original.cp(from,to,options);
+};
+fs.writeFileSync = (file,...args) => {
+  const result=original.write(file,...args);
+  if(fault==='publication-equal-crash' && path.basename(file)==='.codex-router-publication-relinquished') {
+    process.kill(process.pid,'SIGKILL');
+  }
+  return result;
 };
 fs.mkdtempSync = (prefix,...args) => {
   if(path.basename(prefix).startsWith('.codex-router-install-')) counts.staging++;
@@ -137,7 +156,7 @@ test("changed content replaces owned skills and stale skills still retire", t =>
   writeFileSync(sourceFile,changed);
   assert.match(f.run("install"),/installed 1 skill/u);
   assert.equal(readFileSync(installedFile,"utf8"),changed);
-  assert.equal(JSON.parse(readFileSync(markerPath,"utf8")).token,originalMarker.token);
+  assert.notEqual(JSON.parse(readFileSync(markerPath,"utf8")).token,originalMarker.token);
   rmSync(path.join(f.source,name),{recursive:true,force:true});
   assert.match(f.run("install"),/removed stale managed skill/u);
   assert.equal(existsSync(path.join(f.skills,name)),false);
@@ -215,6 +234,58 @@ for(const kind of ["empty","populated","file"]) {
     const preserved = readdirSync(f.skills).filter(n=>n.startsWith(`${name}.codex-router-preserved-`));
     assert.equal(preserved.length,1);
     assert.equal(readFileSync(path.join(f.skills,preserved[0],"SKILL.md"),"utf8"),previous);
+  });
+}
+
+for (const kind of ["different", "equal", "replaced-directory", "malformed-marker"]) {
+  test(`failed publication preserves competing ${kind} content through later uninstall`, t => {
+    const f = fixture(t); f.run("install");
+    const name=f.names[0], dir=path.join(f.skills,name), sourceFile=path.join(f.source,name,"SKILL.md");
+    const previous=readFileSync(sourceFile,"utf8"), changed=previous+"\nChanged fixture instructions.\n";
+    writeFileSync(sourceFile,changed);
+    const result=f.invoke(["install"],{fault:`publication-${kind}`,expectSuccess:false});
+    assert.equal(result.status,2);
+    const before=snapshot(dir);
+    if(kind==='different') assert.equal(readFileSync(path.join(dir,"SKILL.md"),"utf8"),"Competing user content");
+    if(kind==='equal') assert.equal(readFileSync(path.join(dir,"SKILL.md"),"utf8"),changed);
+    if(kind==='replaced-directory') assert.equal(readFileSync(path.join(dir,"user.txt"),"utf8"),"Competing directory content");
+    if(kind==='malformed-marker') assert.equal(readFileSync(path.join(dir,".codex-router-publishing"),"utf8"),"malformed marker");
+    const preserved=readdirSync(f.skills).filter(n=>n.startsWith(`${name}.codex-router-preserved-`));
+    assert.equal(preserved.length,1);
+    assert.equal(readFileSync(path.join(f.skills,preserved[0],"SKILL.md"),"utf8"),previous);
+    f.run("uninstall");
+    assert.deepEqual(snapshot(dir),before);
+    assert.equal(readdirSync(f.skills).some(n=>n.startsWith('.codex-router-retire-')),false);
+  });
+}
+
+for (const malformed of [false, true]) {
+  test(`crash after relinquishing equal-byte publication ${malformed ? 'refuses malformed revocation' : 'cannot revive stale ownership'}`, t => {
+    const f=fixture(t); f.run("install");
+    const name=f.names[0], dir=path.join(f.skills,name), sourceFile=path.join(f.source,name,"SKILL.md");
+    const previous=readFileSync(sourceFile,"utf8"), changed=previous+"\nChanged fixture instructions.\n";
+    writeFileSync(sourceFile,changed);
+    const result=f.invoke(["install"],{fault:'publication-equal-crash',expectSuccess:false});
+    assert.notEqual(result.status,0);
+    const quarantine=readdirSync(f.skills).find(n=>n.startsWith('.codex-router-retire-'));
+    assert.ok(quarantine);
+    const revoked=path.join(f.skills,quarantine,'.codex-router-publication-relinquished');
+    assert.equal(existsSync(revoked),true);
+    if(malformed) { rmSync(revoked); mkdirSync(revoked); }
+    const before=snapshot(dir);
+    const recovery=f.invoke(["uninstall"],{expectSuccess:!malformed});
+    if(malformed) {
+      assert.equal(recovery.status,2);
+      assert.match(recovery.stderr,/Invalid abandoned skill transaction/u);
+      assert.equal(existsSync(path.join(f.skills,quarantine,'content','SKILL.md')),true);
+    } else {
+      assert.equal(readFileSync(path.join(dir,"SKILL.md"),"utf8"),changed);
+      const preserved=readdirSync(f.skills).filter(n=>n.startsWith(`${name}.codex-router-preserved-`));
+      assert.equal(preserved.length,1);
+      assert.equal(readFileSync(path.join(f.skills,preserved[0],"SKILL.md"),"utf8"),previous);
+      assert.equal(existsSync(path.join(f.skills,quarantine)),false);
+    }
+    assert.deepEqual(snapshot(dir),before);
   });
 }
 

@@ -8,6 +8,7 @@ import { withCatalogPublicationLock } from "./catalog-publication-lock.mjs";
 import { codexVersion } from "./codex-binary.mjs";
 import { nativeAccountCatalogHeaders } from "./codex-native-session.mjs";
 import { writePrivateJsonAsync } from "./file-security.mjs";
+import { readResponseBody } from "./http-utils.mjs";
 import { NATIVE_ACCOUNT_CATALOG_PATH } from "./paths.mjs";
 import { environmentHttpProxyConfigured } from "./proxy-environment.mjs";
 import { MODEL_BY_SLUG } from "./routed-models.mjs";
@@ -99,32 +100,15 @@ function cacheIsFresh(cache, clientVersion, identity, now) {
   return Number.isFinite(validatedAt) && age >= 0 && age < NATIVE_ACCOUNT_CATALOG_TTL_MS;
 }
 
-async function boundedJson(response, maxBytes = MAX_ACCOUNT_CATALOG_BYTES) {
+async function boundedJson(response, signal, maxBytes = MAX_ACCOUNT_CATALOG_BYTES) {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
-    await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
+    void response.body?.cancel().catch(() => undefined);
     return undefined;
   }
-  if (!response.body) return undefined;
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        return undefined;
-      }
-      chunks.push(Buffer.from(value));
-    }
-  } finally {
-    reader.releaseLock?.();
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const bytes = await readResponseBody(response, { maxBytes, signal });
+    return JSON.parse(bytes.toString("utf8"));
   } catch {
     return undefined;
   }
@@ -214,15 +198,16 @@ export async function refreshNativeAccountCatalogUnlocked({
   let dispatcher;
   try {
     dispatcher = fetchImpl === undiciFetch ? dispatcherFactory() : undefined;
+    const signal = AbortSignal.timeout(timeoutMs);
     const response = await fetchImpl(url.toString(), {
       method: "GET",
       headers,
       redirect: "manual",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
       ...(dispatcher ? { dispatcher } : {}),
     });
     if (response.status === 304) {
-      await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
+      void response.body?.cancel().catch(() => undefined);
       if (!etag) return failed();
       if (!sameAccountSession(accountHeaders, await headersProvider())) {
         return failed(true);
@@ -231,10 +216,10 @@ export async function refreshNativeAccountCatalogUnlocked({
       return { status: "not-modified", fingerprint: current.fingerprint };
     }
     if (!response.ok || response.status >= 300) {
-      await Promise.resolve(response.body?.cancel?.()).catch(() => undefined);
+      void response.body?.cancel().catch(() => undefined);
       return failed();
     }
-    const parsed = await boundedJson(response);
+    const parsed = await boundedJson(response, signal);
     if (!validCatalog(parsed) || containsRoutedSlugs(parsed)) {
       return failed();
     }

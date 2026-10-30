@@ -7,7 +7,7 @@ import { captureLogPosition } from "./windows-launch-diagnosis.mjs";
 import { waitForServiceReadiness } from "./service-readiness.mjs";
 import { withServiceOperationLock } from "./service-operation-lock.mjs";
 import { environmentProxyOptedIn } from "./proxy-environment.mjs";
-import { prepareRouterServiceMutation, resumeRouterAdmission } from "./service-drain.mjs";
+import { prepareRouterServiceMutation, resumeRouterAdmission, assertRouterAdmissionStillClosed } from "./service-drain.mjs";
 
 const platform = process.env.CODEX_ROUTER_SERVICE_PLATFORM || process.platform;
 if (platform !== "win32") {
@@ -44,7 +44,7 @@ function remainingOperationMs(limit = Number.POSITIVE_INFINITY) {
 export async function runServiceCommandUnlocked(
   command = "status",
   args = [command],
-  { quiet = false } = {},
+  { quiet = false, closedAdmission, beforeMutation } = {},
 ) {
   const forceReplacement = args.includes(FORCE_REPLACEMENT_ARGUMENT);
   const platformArgs = args.filter((arg) => arg !== FORCE_REPLACEMENT_ARGUMENT);
@@ -70,12 +70,16 @@ export async function runServiceCommandUnlocked(
     );
   }
   let drain;
-  if (drainingCommands.has(command)) {
+  if (closedAdmission !== undefined) {
+    if (command !== "restart" || !forceReplacement) throw new Error("Prepared closed admission is restricted to an explicitly forced coordinated restart.");
+    drain = await assertRouterAdmissionStillClosed(closedAdmission);
+  } else if (drainingCommands.has(command)) {
     drain = await prepareRouterServiceMutation({ force: forceReplacement });
   }
   const logPosition = readinessCommands.has(command) ? captureLogPosition(LOG_PATH) : undefined;
   let result;
   try {
+    beforeMutation?.();
     // Await completion under the same lock without blocking its heartbeat.
     // No timeout/signal abandons the renderer or its native descendants.
     result = await new Promise((resolve, reject) => {
@@ -87,7 +91,7 @@ export async function runServiceCommandUnlocked(
       child.once("close", status => failure ? reject(failure) : resolve({ status }));
     });
   } catch (error) {
-    if (["drained", "forced"].includes(drain?.status)) await resumeRouterAdmission().catch(() => {});
+    if (error.runtimeRefreshRollbackAllowed !== false && ["drained", "forced"].includes(drain?.status)) await resumeRouterAdmission().catch(() => {});
     throw error;
   }
   if (result.status !== 0) {

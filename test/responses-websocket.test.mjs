@@ -782,9 +782,10 @@ for (const trailer of ["transport error", "malformed event"]) {
   });
 }
 
-test("WebSocket completion releases the serialized queue before upstream EOF", async t => {
-  const secondFetchStarted = Promise.withResolvers();
+test("WebSocket completion releases the serialized queue without waiting for EOF or cancellation acknowledgement", { timeout: 5_000 }, async t => {
   let hangingController;
+  let firstResponse;
+  let cancellations = 0;
   let turn = 0;
   t.after(() => {
     try {
@@ -796,43 +797,56 @@ test("WebSocket completion releases the serialized queue before upstream EOF", a
   const socket = openPeer(async () => {
     turn += 1;
     if (turn === 2) {
-      secondFetchStarted.resolve();
       return new Response(
         'data: {"type":"response.completed","response":{"id":"resp_second","status":"completed","output":[]}}\n\n',
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     }
-    return new Response(new ReadableStream({
+    firstResponse = new Response(new ReadableStream({
       start(controller) {
         hangingController = controller;
         controller.enqueue(Buffer.from(
           'data: {"type":"response.completed","response":{"id":"resp_hanging","status":"completed","output":[]}}\n\n',
         ));
       },
+      cancel() { cancellations++; return new Promise(() => {}); },
     }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    return firstResponse;
   });
   const first = await sendRequest(socket, {
     type: "response.create", input: [{ role: "user", content: "first" }], stream: true,
   });
   assert.deepEqual(first.map(event => event.type), ["response.completed"]);
-  const second = sendRequest(socket, {
+  const second = await sendRequest(socket, {
     type: "response.create", previous_response_id: "resp_hanging", input: [], stream: true,
   });
-  let nextFetchTimer;
-  try {
-    await Promise.race([
-      secondFetchStarted.promise,
-      new Promise((_, reject) => {
-        nextFetchTimer = setTimeout(
-          () => reject(new Error("Next WebSocket request remained blocked after completion.")),
-          2_000,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(nextFetchTimer);
-  }
-  assert.deepEqual((await second).map(event => event.type), ["response.completed"]);
+  assert.deepEqual(second.map(event => event.type), ["response.completed"]);
+  assert.equal(cancellations, 1);
+  assert.equal(firstResponse.body.locked, false);
+});
+
+test("closing a WebSocket releases a pending SSE read or content sniff without waiting for producer cancellation", { timeout: 5_000 }, async t => {
+  for (const contentType of ["text/event-stream", "application/octet-stream"]) await t.test(contentType, async () => {
+    const reading = Promise.withResolvers();
+    let cancellations = 0;
+    let peer;
+    let signal;
+    const socket = openPeer(async (_url, init) => {
+      signal = init.signal;
+      return new Response(new ReadableStream({
+        pull() { reading.resolve(); },
+        cancel() { cancellations++; return new Promise(() => {}); },
+      }, { highWaterMark: 0 }), { headers: { "content-type": contentType } });
+    }, {}, { onPeer: value => { peer = value; } });
+    socket.emit("data", clientFrame({ type: "response.create", input: [], stream: true }));
+    await reading.promise;
+    socket.emit("close");
+    await peer.queue;
+    assert.equal(cancellations, 1);
+    assert.equal(signal.aborted, true);
+    assert.equal(getEventListeners(signal, "abort").length, 0);
+    assert.deepEqual(serverEvents(socket), []);
+  });
 });
 
 test("WebSocket fixed loopback rejects redirects without replaying its POST", async t => {

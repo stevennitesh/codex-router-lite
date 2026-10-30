@@ -1,20 +1,15 @@
 import { probeDelayMs, probeTimeoutMs } from "./health-backoff.mjs";
+import { readResponseBody } from "./http-utils.mjs";
+
+const MAX_HEALTH_BODY_BYTES = 64 * 1024;
 
 // A failed connection backs off; a timed-out probe retries immediately with a
 // wider window because its wait already consumed time without proving failure.
 // Check actual HTTP readiness, including service identity when requested.
-// The final probe can exceed the overall deadline by one bounded probe window.
+// Each probe shares the remaining startup budget, including response bodies.
 
 function hasExited(child) {
   return Boolean(child) && (child.exitCode !== null || child.signalCode !== null);
-}
-
-async function drainResponse(response) {
-  if (typeof response?.arrayBuffer === "function") {
-    await response.arrayBuffer().catch(() => {});
-  } else if (typeof response?.body?.cancel === "function") {
-    await response.body.cancel().catch(() => {});
-  }
 }
 
 /**
@@ -52,25 +47,32 @@ export async function waitForHealth({
     while (Date.now() < deadline) {
       assertStillStarting();
 
-      const windowMs = probeTimeoutMs(attempt);
+      const windowMs = Math.max(1, Math.min(probeTimeoutMs(attempt), deadline - Date.now()));
       let timedOut = false;
       try {
         // Keep Node-owned timeout cancellation. A manually timed controller
         // also triggered the Windows libuv assertion during startup failure.
+        const signal = AbortSignal.timeout(windowMs);
         const response = await fetchImpl(url, {
           headers,
-          signal: AbortSignal.timeout(windowMs),
+          signal,
         });
+        // Own the body deadline too: a custom transport or stream producer may
+        // ignore fetch cancellation or never acknowledge a cancel request.
+        const body = await readResponseBody(response, { maxBytes: MAX_HEALTH_BODY_BYTES, signal });
         if (response.ok) {
           if (!expectedService) {
-            await drainResponse(response);
+            assertStillStarting();
             return;
           }
-          const payload = await response.json().catch(() => ({}));
-          if (payload.service === expectedService) return;
+          let payload;
+          try { payload = JSON.parse(body.toString("utf8")); } catch { /* A body without service identity is not ready. */ }
+          if (payload?.service === expectedService) {
+            assertStillStarting();
+            return;
+          }
           lastFailure = `the health response did not identify ${expectedService}`;
         } else {
-          await drainResponse(response);
           lastFailure = `the service answered HTTP ${response.status}`;
         }
       } catch (error) {

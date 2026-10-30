@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, opendirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, opendirSync, readFileSync, rmdirSync, unlinkSync, watch } from "node:fs";
 import path from "node:path";
 
 import { createPrivateFile } from "./file-security.mjs";
+import { readResponseBody } from "./http-utils.mjs";
 
 const startupMs = 60_000;
 const shutdownMs = 5_000;
@@ -38,24 +39,17 @@ function localUrl(value, { mcp = false } = {}) {
   return url;
 }
 
-async function readPollHealth(response) {
+async function readHealthSnapshot(response, signal) {
   if (!response.ok || !response.body) {
-    await response.body?.cancel();
+    void response.body?.cancel().catch(() => {});
     return undefined;
   }
-  const chunks = [];
-  let bytes = 0;
-  // Official v0.0.16 component health is bounded to 24 KiB. Keep the
-  // passive snapshot local: never retain or expose arbitrary daemon details.
-  for await (const chunk of response.body) {
-    bytes += chunk.byteLength;
-    if (bytes > 24 * 1024) throw failure("web_tunnel_not_ready");
-    chunks.push(chunk);
-  }
-  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
-  const failures = value?.details?.consecutive_failures;
-  return value?.schema_version === 1 && value.component === "control-plane" && value.limited === false
-    && Number.isSafeInteger(failures) && failures >= 0 ? value : undefined;
+  // Official v0.0.16 aggregate health is bounded to 64 KiB. Keep the
+  // passive snapshot local and let the shared reader own deadlines/cancellation.
+  const bytes = await readResponseBody(response, { maxBytes: 64 * 1024, signal });
+  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  return value?.schema_version === 1 && typeof value.live === "boolean" && typeof value.ready === "boolean"
+    && value.components && typeof value.components === "object" && !Array.isArray(value.components) ? value : undefined;
 }
 
 /** Own the official foreground tunnel daemon for the Router generation. */
@@ -141,6 +135,11 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
   let healthy = false, isReady = false, failureCode;
   let readySettled = false, resolveReady, rejectReady, resolveClosed, closePromise;
   let pollTimer, startupTimer, polling = false;
+  let healthWatcher, healthWatchClosed = Promise.resolve();
+  const closeHealthWatch = () => {
+    if (healthWatcher) { const watcher = healthWatcher; healthWatcher = undefined; watcher.close(); }
+    return healthWatchClosed;
+  };
   const lifetime = new AbortController();
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   // The caller may await readiness after connecting its other generation owners.
@@ -176,6 +175,7 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
     signal?.removeEventListener("abort", abort);
     settleReady(failure("web_tunnel_cancelled"));
     closePromise = (async () => {
+      await closeHealthWatch();
       if (child && !childClosed) {
         try { child.kill("SIGTERM"); } catch { /* Closure below remains the authority. */ }
         let forceTimer, deadline;
@@ -205,21 +205,19 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
     try {
       if (!regularFile(healthFile, 2048)) throw failure("web_tunnel_not_ready");
       const base = localUrl(readFileSync(healthFile, "utf8").trim());
+      // File publication only wakes the first sample; it never proves hosted
+      // readiness. Continue validating the URL on the ordinary health cadence.
+      await closeHealthWatch();
       const options = { signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]), redirect: "error", cache: "no-store" };
-      const health = await fetch(new URL("/healthz", base), options);
-      await health.body?.cancel();
+      const snapshot = await readHealthSnapshot(await fetch(new URL("/health?details=true", base), options), options.signal);
       if (closing || childClosed) return;
-      if (!health.ok) { healthy = false; isReady = false; return; }
-      const result = await fetch(new URL("/readyz", base), { ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]) });
-      await result.body?.cancel();
-      if (closing || childClosed) return;
-      if (!result.ok) { healthy = true; isReady = false; return; }
-      // /readyz gates local startup only; it can pass while every hosted
-      // poll is rejected. Require the daemon's own completed poll evidence.
-      const poll = await readPollHealth(await fetch(new URL("/health/control-plane", base), {
-        ...options, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(1500)]),
-      }));
-      if (closing || childClosed) return;
+      if (!snapshot?.live) { healthy = false; isReady = false; return; }
+      if (!snapshot.ready) { healthy = true; isReady = false; return; }
+      // The aggregate's ready field gates local startup only; require the
+      // daemon's completed hosted-poll evidence from the same bounded read.
+      const component = snapshot.components["control-plane"];
+      const failures = component?.details?.consecutive_failures;
+      const poll = component?.limited === false && Number.isSafeInteger(failures) && failures >= 0 ? component : undefined;
       const details = poll?.details;
       if (poll?.status === "degraded" && details.consecutive_failures > 0
           && details.failure_category === "http_error" && [401, 403].includes(details.http_status)) {
@@ -238,6 +236,18 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
   }
 
   try {
+    // Subscribe before launch so the daemon publishing its URL after `spawn`
+    // need not wait up to a second for the next health tick. Directory watching
+    // also covers atomic replacement. Unsupported/lost notifications retain
+    // the existing paced polling path, with no readiness inferred from events.
+    try {
+      const watcher = watch(directory, (_event, filename) => {
+        if (filename == null || filename.toString() === path.basename(healthFile)) void pollHealth();
+      });
+      healthWatcher = watcher;
+      healthWatchClosed = new Promise(resolve => watcher.once("close", resolve));
+      watcher.on("error", () => { void closeHealthWatch(); });
+    } catch { /* The regular health cadence remains available. */ }
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => environmentNames.has(name.toLowerCase())));
     child = spawnImpl(executable, ["run", "--config", configFile, "--admin-ui.log-buffer-events", "1"], {
       cwd: directory, env, windowsHide: true, shell: false,
@@ -256,6 +266,7 @@ export async function startWebTunnel({ executable, tunnelId, keyPath, serverUrl,
     });
   } catch {
     settleReady(failure("web_tunnel_start_failed"));
+    await closeHealthWatch();
     cleanup();
     throw failure("web_tunnel_start_failed");
   }

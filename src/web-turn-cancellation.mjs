@@ -1,3 +1,4 @@
+import { watch } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import path from "node:path";
 
@@ -53,25 +54,61 @@ const identity = stat => `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
  * must close this watcher when its Web generation completes or is retired.
  */
 export function watchWebTurnCancellation({
-  threadId, turnId, codexHome = CODEX_HOME, onCancel, onUnavailable, pollMs = 200,
+  threadId, turnId, codexHome = CODEX_HOME, onCancel, onUnavailable,
 } = {}) {
   if (!UUID.test(threadId ?? "") || typeof turnId !== "string" || !/^[\w-]{1,128}$/u.test(turnId)
       || !path.isAbsolute(codexHome) || typeof onCancel !== "function"
-      || onUnavailable !== undefined && typeof onUnavailable !== "function"
-      || !Number.isInteger(pollMs) || pollMs < 10 || pollMs > 5_000) {
+      || onUnavailable !== undefined && typeof onUnavailable !== "function") {
     throw new TypeError("Native cancellation monitoring requires an exact thread, turn and callback.");
   }
   let closed = false, state = "pending", timer, wake, filePath, generation, offset = 0;
+  let dirty = true, watchError, sessionsPath, sessionsGeneration, stoppingWatchers = false;
+  const directoryWatchers = [];
   let pending = Buffer.alloc(0), discardInitialPartial = false;
   let resolveReady, rejectReady, readySettled = false;
   const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
   // Owners can close before awaiting readiness without creating an unhandled rejection.
   void ready.catch(() => {});
-  const delay = () => new Promise(resolve => {
-    wake = resolve;
-    timer = setTimeout(() => { timer = undefined; wake = undefined; resolve(); }, pollMs);
-  });
+  function notify() {
+    dirty = true;
+    wake?.();
+    wake = undefined;
+  }
+  const nextChange = () => dirty || closed || watchError ? Promise.resolve()
+    : new Promise(resolve => { wake = resolve; });
   const decoder = new TextDecoder("utf-8", { fatal: true });
+  const normalize = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+
+  function subscribe(directory, recursive, listener) {
+    let watcher;
+    try { watcher = watch(directory, { recursive }, listener); }
+    catch { throw unavailable("rollout_watch"); }
+    const ended = new Promise(resolve => {
+      watcher.once("close", () => {
+        if (!stoppingWatchers && !closed) { watchError = unavailable("rollout_watch"); notify(); }
+        resolve();
+      });
+    });
+    watcher.on("error", () => { watchError = unavailable("rollout_watch"); notify(); });
+    directoryWatchers.push({ watcher, ended });
+  }
+
+  async function subscribeSessions() {
+    let stat;
+    try { stat = await lstat(sessionsPath, { bigint: true }); }
+    catch (error) { if (error.code === "ENOENT") return; throw error; }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw unavailable("rollout_path");
+    if (closed) return;
+    sessionsGeneration = identity(stat);
+    // Parent notification is already subscribed, so creation/replacement racing
+    // this subscription queues another authoritative check rather than a gap.
+    subscribe(sessionsPath, true, (_event, filename) => {
+      if (filename == null || !filePath) { notify(); return; }
+      const changed = normalize(path.resolve(sessionsPath, filename.toString()));
+      const target = normalize(filePath);
+      if (changed === target || target.startsWith(changed + path.sep)) notify();
+    });
+  }
 
   function consume(bytes) {
     pending = pending.length ? Buffer.concat([pending, bytes]) : bytes;
@@ -105,7 +142,12 @@ export function watchWebTurnCancellation({
   }
 
   async function checkFile() {
-    const stat = await lstat(filePath, { bigint: true });
+    const [root, stat] = await Promise.all([
+      lstat(sessionsPath, { bigint: true }), lstat(filePath, { bigint: true }),
+    ]);
+    if (!root.isDirectory() || root.isSymbolicLink() || identity(root) !== sessionsGeneration) {
+      throw unavailable("rollout_changed");
+    }
     if (!stat.isFile() || stat.isSymbolicLink() || identity(stat) !== generation) {
       throw unavailable("rollout_changed");
     }
@@ -115,16 +157,15 @@ export function watchWebTurnCancellation({
   }
 
   async function readWindow(initial = false) {
-    // The pathname remains the authority even when there is no new data. Avoid
-    // opening an unchanged rollout, but still reject replacement or truncation.
+    // Events only wake this read; pathname and file identity retain authority.
     if (!initial && await checkFile() === offset) return false;
     const file = await open(filePath, "r");
+    let cancelled;
     try {
       const stat = await file.stat({ bigint: true });
       if (!stat.isFile()) throw unavailable("rollout_path");
       if (initial) {
         const canonical = await realpath(filePath);
-        const normalize = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
         if (normalize(canonical) !== normalize(filePath)) throw unavailable("rollout_path");
         generation = identity(stat);
       } else if (identity(stat) !== generation) throw unavailable("rollout_changed");
@@ -138,40 +179,73 @@ export function watchWebTurnCancellation({
           discardInitialPartial = before[0] !== 10;
         }
       }
-      return await readThrough(file, end);
+      cancelled = await readThrough(file, end);
     } finally {
-      // Do not hold a Windows file handle between polls: native archive and
+      // Do not hold a Windows file handle between events: native archive and
       // rollout ownership must not depend on this observer releasing a lock.
       await file.close();
     }
+    // Release the Windows handle before the final authority check, including
+    // archive/replacement racing completion of the dispatched file operation.
+    await checkFile();
+    return cancelled;
   }
 
   async function monitor() {
     try {
-      const deadline = Date.now() + LOOKUP_TIMEOUT_MS;
+      const home = await realpath(codexHome);
+      if (closed) return { state: "closed" };
+      sessionsPath = path.join(home, "sessions");
+      // Subscribe before discovery/read. A nonrecursive parent watcher handles
+      // missing-root creation and root archive/replacement; only sessions needs
+      // recursive notifications, avoiding plugin/cache/log tree subscriptions.
+      subscribe(home, false, (_event, filename) => {
+        if (filename == null || normalize(path.resolve(home, filename.toString())) === normalize(sessionsPath)) notify();
+      });
+      let lookupExpired = false;
+      // This is the existing missing-rollout failure bound, never Stop proof.
+      timer = setTimeout(() => { lookupExpired = true; notify(); }, LOOKUP_TIMEOUT_MS);
       while (!closed && !filePath) {
-        filePath = await findRollout(codexHome, threadId);
+        dirty = false;
+        if (watchError) throw watchError;
+        if (!sessionsGeneration) await subscribeSessions();
+        if (sessionsGeneration) filePath = await findRollout(home, threadId);
         if (closed) break;
         if (!filePath) {
-          if (Date.now() >= deadline) throw unavailable("rollout_missing");
-          await delay();
+          if (watchError) throw watchError;
+          if (lookupExpired) throw unavailable("rollout_missing");
+          await nextChange();
         }
       }
+      clearTimeout(timer);
       if (closed) return { state: "closed" };
-      const cancelled = await readWindow(true);
-      if (cancelled && !closed) return { state: "cancelled" };
-      if (!closed) {
-        state = "watching";
-        readySettled = true; resolveReady();
-      }
+      let initial = true;
       while (!closed) {
-        await delay();
-        if (!closed && await readWindow()) return { state: "cancelled" };
+        // A single dirty bit coalesces bursts, but is cleared before I/O so an
+        // event arriving during that read always leaves another read queued.
+        dirty = false;
+        if (watchError) throw watchError;
+        const cancelled = await readWindow(initial);
+        initial = false;
+        if (watchError) throw watchError;
+        if (cancelled && !closed) return { state: "cancelled" };
+        if (closed) break;
+        if (dirty) continue;
+        if (!readySettled) {
+          state = "watching";
+          readySettled = true; resolveReady();
+        }
+        await nextChange();
       }
       return { state: "closed" };
     } catch (error) {
       return { state: "unavailable", error: error.code === "WEB_TURN_CANCELLATION_UNAVAILABLE"
         ? error : unavailable("rollout_access") };
+    } finally {
+      clearTimeout(timer);
+      stoppingWatchers = true;
+      for (const { watcher } of directoryWatchers) watcher.close();
+      await Promise.all(directoryWatchers.map(({ ended }) => ended));
     }
   }
 
@@ -198,7 +272,7 @@ export function watchWebTurnCancellation({
     async close() {
       closed = true;
       clearTimeout(timer);
-      wake?.();
+      notify();
       await finished;
       state = "closed";
     },
