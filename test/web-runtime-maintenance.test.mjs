@@ -9,8 +9,9 @@ import { prepareWebMaintenance, runWebMaintenance, validateWebMaintenanceAccepta
 
 function fixture({ finalChanged = false } = {}) {
   const options = { expectedCommit: "a".repeat(40), candidateBinary: path.resolve(".tmp", "switchyard-server.exe"), expectedBinarySha256: "d".repeat(64),
-    expectedCandidateSha256: "b".repeat(64), timeoutMs: 60_000, deploymentAcceptancePath: path.resolve(".tmp", "underlying-acceptance.json") };
-  const initial = { candidateSha256: options.expectedCandidateSha256, plan: { changed: true }, adapter: { generation: "old",
+    expectedCandidateSha256: "b".repeat(64), timeoutMs: 60_000, deploymentAcceptancePath: path.resolve(".tmp", "a".repeat(32), "underlying-acceptance.json") };
+  const initial = { candidateSha256: options.expectedCandidateSha256, plan: { changed: true }, adapter: { generation: "a".repeat(64),
+    managedDirectory: path.resolve(".tmp", "adapter", "old"), managedManifestSha256: "e".repeat(64),
     managedEntryPath: path.resolve(".tmp", "adapter", "old", "entry.exe"), currentRuntime: { runtimeModule: path.resolve(".tmp", "old-browser.mjs") },
     candidate: { node: { path: path.resolve(".tmp", "node.exe"), sha256: "1".repeat(64) }, officialCli: { path: path.resolve(".tmp", "codex.exe"), sha256: "2".repeat(64) },
       officialNodeRepl: { path: path.resolve(".tmp", "node_repl.exe"), sha256: "3".repeat(64) }, runtimeModule: path.resolve(".tmp", "new-browser.mjs"), runtimeHash: "4".repeat(64), sdkPackageJson: path.resolve(".tmp", "sdk.json") } } };
@@ -27,13 +28,19 @@ function fixture({ finalChanged = false } = {}) {
     ledger() { events.push("ledger"); return [{ sha256: "c".repeat(64), uncertainSend: true }]; },
     unchanged(value) { assert.equal(value[0].uncertainSend, true); events.push("unchanged"); },
     source() { events.push("source"); },
-    async refresh(value) { assert.deepEqual(value, { apply: true, forceServiceReplacement: true, expectedMaintenance: { plan: initial.plan, adapter: initial.adapter } }); events.push("refresh"); },
-    async deploy() { events.push("guarded-deploy"); return { receipt: deployed, resultPath: path.resolve(".tmp", "deployment-owner", "result.json") }; }, async accept() { events.push("accept"); },
+    async refresh(value) { assert.deepEqual(value, { apply: true, forceServiceReplacement: true, expectedMaintenance: { plan: initial.plan, adapter: initial.adapter },
+      cleanupOperationId: "a".repeat(32) }); events.push("refresh"); },
+    async deploy(value) {
+      assert.deepEqual(value.rollbackAdapter, { generation: initial.adapter.generation, managedDirectory: initial.adapter.managedDirectory,
+        managedManifestSha256: initial.adapter.managedManifestSha256 });
+      events.push("guarded-deploy"); return { receipt: deployed, resultPath: path.resolve(".tmp", "deployment-owner", "result.json") };
+    }, async accept() { events.push("accept"); },
     inspectFinal() { events.push("replan"); return final; },
     async refreshFinal(value) {
       assert.deepEqual({ apply: value.apply, forceServiceReplacement: value.forceServiceReplacement, expectedMaintenance: value.expectedMaintenance },
         { apply: true, forceServiceReplacement: true, expectedMaintenance: final });
       assert.equal(typeof value.dependencies.discover, "function"); events.push("refresh-final");
+      assert.equal(value.cleanupOperationId, "a".repeat(32));
     },
     inspectActual() { return { plan: { changed: false }, adapter: final.adapter }; },
   };
@@ -52,7 +59,9 @@ test("Web maintenance reaches the guarded deployment body through the real Windo
 const options = ${JSON.stringify(options)};
 try {
   await runWebMaintenance(options, {
-    prepare() { return { candidateSha256: options.expectedCandidateSha256, plan: {}, adapter: {} }; },
+    prepare() { return { candidateSha256: options.expectedCandidateSha256, plan: {}, adapter: {
+      generation: "a".repeat(64), managedDirectory: ${JSON.stringify(directory)}, managedManifestSha256: "d".repeat(64),
+      managedEntryPath: ${JSON.stringify(path.join(directory, "entry.exe"))} } }; },
     async wait() {}, absent() {}, ledger() { return []; }, unchanged() {}, source() {},
     async refresh() { console.log("synthetic-refresh-complete"); },
   });
@@ -78,7 +87,7 @@ try {
 test("detached maintenance validates around exit and refreshes before guarded deployment, then only changes a stale final adapter", async t => {
   for (const finalChanged of [false, true]) await t.test(`final changed: ${finalChanged}`, async () => {
     const f = fixture({ finalChanged }), receipt = await runWebMaintenance(f.options, f.dependencies);
-    assert.deepEqual(f.events.slice(0, 4), ["prepare", "exit-handles", "prepare", "absent:old"]);
+    assert.deepEqual(f.events.slice(0, 4), ["prepare", "exit-handles", "prepare", `absent:${f.initial.adapter.generation}`]);
     assert.ok(f.events.indexOf("refresh") < f.events.indexOf("guarded-deploy"));
     assert.ok(f.events.indexOf("guarded-deploy") < f.events.indexOf("replan"));
     assert.equal(f.events.includes("refresh-final"), finalChanged);
@@ -105,6 +114,32 @@ test("changed candidate or source, early reopen, ledger drift and failed deploym
       if (["early-reopen", "ledger-drift", "source-drift"].includes(branch)) assert.equal(f.events.includes("guarded-deploy"), false);
     });
   }
+});
+
+test("refresh-before-deploy retains the original adapter identity instead of refreshed ownership", async () => {
+  const f = fixture(), original = { generation: f.initial.adapter.generation, managedDirectory: f.initial.adapter.managedDirectory,
+    managedManifestSha256: f.initial.adapter.managedManifestSha256 };
+  let installedAdapter = original;
+  const refresh = f.dependencies.refresh, deploy = f.dependencies.deploy;
+  f.dependencies.refresh = async options => {
+    await refresh(options);
+    installedAdapter = { generation: "f".repeat(64), managedDirectory: path.resolve(".tmp", "adapter", "refreshed"), managedManifestSha256: "9".repeat(64) };
+  };
+  f.dependencies.deploy = async options => {
+    assert.notDeepEqual(installedAdapter, original);
+    assert.deepEqual(options.rollbackAdapter, original);
+    return deploy(options);
+  };
+  await runWebMaintenance(f.options, f.dependencies);
+});
+
+test("unknown original adapter identity stops maintenance before refreshing or deploying", async t => {
+  for (const field of ["generation", "managedDirectory", "managedManifestSha256", "managedEntryPath"]) await t.test(field, async () => {
+    const f = fixture(); delete f.initial.adapter[field];
+    await assert.rejects(runWebMaintenance(f.options, f.dependencies), /original adapter rollback identity/u);
+    assert.equal(f.events.includes("refresh"), false);
+    assert.equal(f.events.includes("guarded-deploy"), false);
+  });
 });
 
 test("independent worker acceptance is bound to exact candidate, installation and all required checks", async () => {

@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
-import { installWebStopAdapter, rollbackWebStopAdapter, webStopAdapterStatus, withWebStopAdapterRuntimeRefresh } from "../src/web-stop-adapter-install.mjs";
+import { installWebStopAdapter, rollbackWebStopAdapter, webStopAdapterStatus, withWebStopAdapterRuntimeRefresh,
+  inspectWebStopAdapterRollbackBinding, verifyWebStopAdapterRollbackBinding } from "../src/web-stop-adapter-install.mjs";
 import { createAdapterHook } from "../src/web-stop-contract.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -50,7 +51,7 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
       effects.push("environment"); this.calls.push({ expected: clone(expected), values: clone(values) }); this.values = clone(values);
       return { values: clone(values), broadcast: true };
     } };
-  const dependencies = { sourceDir, environment, isPrivate: () => true,
+  const dependencies = { sourceDir, environment, isPrivate: () => true, readProcessCensus: () => ({ complete: true, processes: [] }),
     inspectSignatures: paths => paths.map(file => ({ path: file, ...signature })),
     compileEntry(source, output) { effects.push("compile"); assert.ok(readFileSync(source, "utf8").includes("class Entry")); writeFileSync(output, "custom unsigned compiled fixture"); },
     writePrivate(file, contents) { if (file === hooksPath) effects.push("hooks"); if (file === receiptPath) effects.push(JSON.parse(contents).state);
@@ -59,6 +60,78 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
   return { root, sourceDir, sources, stateDir, codexHome, hooksPath, receiptPath, manifest, saveManifest, environment, dependencies, options, effects,
     receipt: () => JSON.parse(readFileSync(receiptPath, "utf8")), hooks: () => JSON.parse(readFileSync(hooksPath, "utf8")) };
 }
+
+test("automatic cleanup runs under ownership custody only after committed activation", async t => {
+  const f = fixture(t), observations = [];
+  f.dependencies.cleanupBuilds = (ctx, { previous }) => {
+    assert.equal(existsSync(`${f.receiptPath}.lock`), true);
+    assert.equal(f.receipt().state, "installed");
+    assert.equal(f.environment.values.CODEX_NODE_REPL_PATH, f.receipt().entryPath);
+    observations.push(previous?.generation ?? null);
+    return { status: "completed", removed: [], retained: [] };
+  };
+  const first = installWebStopAdapter(f.options);
+  assert.equal(first.cleanup.status, "completed");
+  const exchange = f.environment.compareExchangePair.bind(f.environment);
+  f.environment.compareExchangePair = (expected, values) => {
+    if (expected.CODEX_NODE_REPL_PATH === first.entryPath && values.CODEX_NODE_REPL_PATH !== first.entryPath) {
+      const custody = JSON.parse(readFileSync(path.join(f.stateDir, "web-stop-adapter", "build-retention.json"), "utf8"));
+      assert.equal(custody.hostPins.some(pin => pin.build.managedDirectory === first.managedDirectory && pin.unknown), true,
+        "outgoing cached launch custody is durable before changing the User selection");
+    }
+    return exchange(expected, values);
+  };
+  writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'next';\n");
+  const committed = await withWebStopAdapterRuntimeRefresh(f.options, async result => {
+    assert.equal(observations.length, 1, "coordinator has not accepted the candidate yet");
+    assert.equal(existsSync(first.entryPath), true);
+    return result;
+  });
+  assert.deepEqual(observations, [null, first.generation]);
+  assert.equal(committed.cleanup.status, "completed");
+  writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'rejected';\n");
+  await assert.rejects(withWebStopAdapterRuntimeRefresh(f.options, async () => { throw new Error("reload rejected"); }), /reload rejected/u);
+  assert.equal(observations.length, 2, "failed refresh must retain all builds");
+  assert.equal(f.receipt().generation, committed.generation);
+  f.dependencies.cleanupBuilds = () => { throw new Error("PRIVATE_CLEANUP_ERROR"); };
+  const accepted = installWebStopAdapter(f.options);
+  assert.equal(accepted.installed, true);
+  assert.deepEqual(accepted.cleanup, { status: "deferred", removed: [], retained: [], reason: "cleanup-failed" });
+  assert.equal(f.receipt().generation, accepted.generation);
+});
+
+test("failed build custody publication stops before global adapter activation", t => {
+  const f = fixture(t), write = f.dependencies.writePrivate;
+  f.dependencies.writePrivate = (file, contents) => {
+    if (path.basename(file) === "build-retention.json") throw new Error("PRIVATE_CUSTODY_FAILURE");
+    write(file, contents);
+  };
+  assert.throws(() => installWebStopAdapter(f.options), error => {
+    assert.equal(error.code, "ERR_ADAPTER_BUILD_CUSTODY");
+    assert.equal(error.message.includes("PRIVATE_CUSTODY_FAILURE"), false);
+    return true;
+  });
+  assert.equal(f.environment.calls.length, 0);
+  assert.equal(existsSync(f.receiptPath), false);
+  assert.equal(existsSync(f.hooksPath), false);
+});
+
+test("rollback binding preserves exact prior artifacts and distinguishes absent from unsettled ownership", t => {
+  const f = fixture(t);
+  assert.equal(inspectWebStopAdapterRollbackBinding(f.options), null);
+  const first = installWebStopAdapter(f.options), original = inspectWebStopAdapterRollbackBinding(f.options);
+  assert.deepEqual(original, { generation: first.generation, managedDirectory: first.managedDirectory,
+    managedManifestSha256: first.managedManifestSha256 });
+  assert.throws(() => verifyWebStopAdapterRollbackBinding(null, f.options), /absence/u);
+  writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'different';\n");
+  installWebStopAdapter(f.options);
+  assert.deepEqual(verifyWebStopAdapterRollbackBinding(original, f.options), original);
+  assert.throws(() => verifyWebStopAdapterRollbackBinding({ ...original, managedDirectory: f.root }, f.options), /Invalid rollback/u);
+  writeFileSync(path.join(original.managedDirectory, "web-browser-state.mjs"), "changed retained content");
+  assert.throws(() => verifyWebStopAdapterRollbackBinding(original, f.options), /identity mismatch/u);
+  const unsettled = f.receipt(); unsettled.state = "prepared"; writeFileSync(f.receiptPath, encode(unsettled));
+  assert.throws(() => inspectWebStopAdapterRollbackBinding(f.options), /not settled/u);
+});
 
 function replaceOfficialRuntime(f) {
   const previousPaths = [f.manifest.node.path, f.manifest.officialCli.path, f.manifest.officialNodeRepl.path,
@@ -451,6 +524,8 @@ test("a verified older snapshot remains readable and upgrades new dependencies a
   writeFileSync(manifestPath, encode(manifest));
   const receipt = f.receipt(); receipt.managedManifestSha256 = hash(readFileSync(manifestPath));
   writeFileSync(f.receiptPath, encode(receipt));
+  // This older installed layout predates the authenticated cleanup index.
+  rmSync(path.join(f.stateDir, "web-stop-adapter", "build-retention.json"));
   assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
   // Ensure candidate staging has a new identity rather than rewriting the
   // deliberately older immutable generation.
@@ -614,6 +689,8 @@ test("a retained hash-only generation remains readable, idempotent, upgradeable 
     managedManifestSha256: hash(readFileSync(manifestPath)) });
   receipt.environment.CODEX_NODE_REPL_PATH = receipt.entryPath;
   f.environment.values.CODEX_NODE_REPL_PATH = receipt.entryPath; writeFileSync(f.receiptPath, encode(receipt));
+  // Reconstruct pre-index custody alongside the legacy hash-only directory.
+  rmSync(path.join(f.stateDir, "web-stop-adapter", "build-retention.json"));
   assert.equal(webStopAdapterStatus(f.options).installed, true);
   const effects = [...f.effects]; assert.equal(installWebStopAdapter(f.options).managedDirectory, legacy); assert.deepEqual(f.effects, effects);
   writeFileSync(path.join(f.sourceDir, "web-browser-state.mjs"), "export const stateFixture = 'updated';\n");

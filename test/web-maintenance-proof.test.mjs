@@ -4,7 +4,7 @@ import test from "node:test";
 import { spawnSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
-import { readWebMaintenanceProcesses, relevantWebMaintenanceProcesses, assertWebMaintenanceAbsent, waitForWebMaintenanceExit, snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } from "../src/web-maintenance-proof.mjs";
+import { readWebProcessCensus, readWebMaintenanceProcesses, relevantWebMaintenanceProcesses, assertWebMaintenanceAbsent, waitForWebMaintenanceExit, snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } from "../src/web-maintenance-proof.mjs";
 import { validWebConversationRisk } from "../src/web-runtime.mjs";
 import { processStartIdentity } from "../src/process-identity.mjs";
 
@@ -22,6 +22,25 @@ const censusRequest = (value = adapter, ownPid = process.pid) => {
   } });
   return request;
 };
+test("adapter cleanup can census exact build roots without the broader maintenance cohorts", () => {
+  let request;
+  const roots = [path.join(base, "one-build"), path.join(base, "another-build")];
+  const result = readWebProcessCensus({ roots, spawn: (_shell, _args, options) => {
+    request = JSON.parse(options.input);
+    return { status: 0, stdout: JSON.stringify(census([])) };
+  } });
+  assert.deepEqual(result, census([]));
+  assert.deepEqual(request, { action: "census", scope: { ownPid: process.pid, roots: roots.map(root => path.resolve(root).toLowerCase()) } });
+  for (const invalid of [[], ["relative-build"], [""], [null]]) {
+    assert.throws(() => readWebProcessCensus({ roots: invalid, spawn: () => assert.fail("invalid scope launched helper") }), /invalid-scope/u);
+  }
+  assert.throws(() => readWebProcessCensus({ roots, spawn: () => ({ status: 1, stderr: "PRIVATE_CENSUS_FAILURE" }) }), error => {
+    assert.equal(error.code, "ERR_WEB_MAINTENANCE_PROOF");
+    assert.equal(error.message.includes("PRIVATE_CENSUS_FAILURE"), false);
+    return true;
+  });
+});
+
 const maintenanceFixture = (prefix, suffix = "", runMain = true) => `
 $fixtureTokens = $null; $fixtureErrors = $null
 $fixtureAst = [Management.Automation.Language.Parser]::ParseFile('${path.resolve(import.meta.dirname, "../src/web-maintenance-processes.ps1").replaceAll("'", "''")}', [ref]$fixtureTokens, [ref]$fixtureErrors)

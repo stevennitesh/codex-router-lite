@@ -15,6 +15,42 @@ test("operational helpers resolve the recorded checkout and refuse missing or re
   assert.throws(() => installedSourceRoot({}), /explicit installation directory/u);
   assert.throws(() => installedSourceRoot({ current: { sourceRoot: "relative" } }), /explicit installation directory/u);
 });
+
+test("ordinary snapshots capture current adapter identity or explicit absence and reject unknown ownership", { skip: process.platform !== "win32" }, () => {
+  for (const mode of ["installed", "absent", "unknown", "original-before-refresh"]) {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "switchyard-adapter-binding-"));
+    try {
+      const managedDirectory = path.join(directory, "adapter-\u00e9-\u{1f680}", "e".repeat(64));
+      const original = { generation: "e".repeat(64), managedDirectory, managedManifestSha256: "f".repeat(64) };
+      const current = { ...original, generation: "a".repeat(64), managedDirectory: path.join(directory, "adapter", "a".repeat(64)) };
+      const maintenance = path.join(directory, "maintenance"); mkdirSync(maintenance);
+      // Replace only the adapter ownership boundary. The production PowerShell
+      // capture, argument handoff and snapshot metadata assignments run intact.
+      writeFileSync(path.join(maintenance, "web-runtime-maintenance.mjs"), `
+const supplied = process.argv[3];
+if (${JSON.stringify(mode)} === "unknown") throw new Error("unknown private ownership");
+const value = supplied === undefined ? ${JSON.stringify(mode === "absent" ? null : current)}
+  : JSON.parse(Buffer.from(supplied, "base64").toString("utf8"));
+process.stdout.write(JSON.stringify(value).replace(/[\\u007f-\\uffff]/g, c => "\\\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")));
+`);
+      const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        path.join(root, "test/fixtures/switchyard-recovery.ps1"), "-CodeRoot", root, "-FixtureRoot", directory, "-Mode", "adapter-binding",
+        ...(mode === "original-before-refresh" ? ["-RollbackAdapterJson", JSON.stringify(original)] : [])], { encoding: "utf8", timeout: 15_000 });
+      assert.equal(result.status, 0, result.stderr);
+      const outcome = JSON.parse(readFileSync(path.join(directory, "outcome.json"), "utf8"));
+      if (mode === "unknown") {
+        assert.equal(outcome.succeeded, false);
+        assert.equal(outcome.snapshotWritten, false);
+        assert.match(outcome.error, /ownership is unknown/u);
+      } else {
+        assert.equal(outcome.succeeded, true, outcome.error);
+        const metadata = JSON.parse(readFileSync(path.join(directory, "snapshot.json"), "utf8"));
+        assert.ok(Object.hasOwn(metadata, "webStopAdapter"));
+        assert.deepEqual(metadata.webStopAdapter, mode === "absent" ? null : mode === "original-before-refresh" ? original : current);
+      }
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
+});
 test("root restart follows the manifest and root deploy rejects checkout overlap before mutation", { skip: process.platform !== "win32" }, () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "router-root-helpers-"));
   try {

@@ -74,6 +74,21 @@ test("accepted recovery preserves Unicode paths and archives without rewriting t
   } finally { f.cleanup(); }
 });
 
+test("recovery archives preserve bound adapter identity, explicit absence and legacy metadata", windows, () => {
+  for (const binding of [undefined, null, { generation: "e".repeat(64), managedDirectory: path.resolve(".tmp", "adapter", "e".repeat(64)),
+    managedManifestSha256: "f".repeat(64) }]) {
+    const f = fixture();
+    try {
+      if (binding !== undefined) f.metadata.webStopAdapter = binding;
+      f.save(); const original = readFileSync(f.metadataFile);
+      const actual = f.run();
+      assert.equal(actual.succeeded, true, actual.error);
+      assert.deepEqual(readFileSync(path.join(f.archive, "rollback.json")), original);
+      assert.equal(Object.hasOwn(JSON.parse(original), "webStopAdapter"), binding !== undefined);
+    } finally { f.cleanup(); }
+  }
+});
+
 test("actual recovery reader retains the recognized underlying deployment owner after successful or failed outer Web maintenance", windows, () => {
   for (const succeeded of [true, false]) {
     const f = fixture();

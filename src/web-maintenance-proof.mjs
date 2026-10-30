@@ -28,7 +28,7 @@ function helperFailure(phase, stderr, fallback) {
   return failure(phase, fallback);
 }
 
-function registeredSystemSandboxBroker(row, rows) {
+export function registeredSystemSandboxBroker(row, rows) {
   const service = row.service, parent = rows.find(item => item.pid === row.parentPid);
   if (row.name.toLowerCase() !== "codex-windows-sandbox-service.exe" || row.sessionId !== 0
       || parent?.name.toLowerCase() !== "services.exe" || parent.sessionId !== 0 || parent.probeState === "absent"
@@ -58,14 +58,20 @@ function webMaintenanceScope(adapter, ownPid = process.pid) {
     path.dirname(plan.officialNodeRepl.path), path.dirname(plan.runtimeModule)]), path.dirname(path.dirname(adapter.managedEntryPath))].map(normalize))] };
 }
 
-export function readWebMaintenanceProcesses(adapter, { spawn = spawnSync, ownPid } = {}) {
+export function readWebProcessCensus({ roots, spawn = spawnSync, ownPid = process.pid } = {}) {
   try {
-    const scope = webMaintenanceScope(adapter, ownPid);
+    if (!Number.isSafeInteger(ownPid) || ownPid < 1 || ownPid > 0x7fffffff || !Array.isArray(roots) || !roots.length
+        || roots.some(root => typeof root !== "string" || !root.trim() || root.includes("\0") || !path.isAbsolute(root))) throw failure("census", "invalid-scope");
+    const scope = { ownPid, roots: [...new Set(roots.map(normalize))] };
     const result = spawn(shell(), args, { input: JSON.stringify({ action: "census", scope }), encoding: "utf8", windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
     if (result.error) throw failure("census", result.error.code === "ETIMEDOUT" ? "timeout" : "launch-failed");
     if (result.status !== 0) throw helperFailure("census", result.stderr, "helper-failed");
     return JSON.parse(result.stdout);
   } catch (error) { if (error?.code === "ERR_WEB_MAINTENANCE_PROOF") throw error; throw failure("census", "invalid-response"); }
+}
+
+export function readWebMaintenanceProcesses(adapter, options = {}) {
+  return readWebProcessCensus({ ...options, ...webMaintenanceScope(adapter, options.ownPid) });
 }
 
 // Old paths come from the protected installed manifest, even if the app updater

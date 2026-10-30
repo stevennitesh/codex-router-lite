@@ -50,7 +50,7 @@ function fixture(t, { threadIds = null } = {}) {
       assert.deepEqual(this.values, expected); effects.push("environment"); this.values = structuredClone(values);
       return { broadcast: true };
     } };
-  const adapter = { sourceDir, environment, isPrivate: () => true,
+  const adapter = { sourceDir, environment, isPrivate: () => true, readProcessCensus: () => ({ complete: true, processes: [] }),
     inspectSignatures: paths => paths.map(file => ({ path: file, ...signature })),
     compileEntry(_source, output) { effects.push("compile"); write(output, "unsigned fixture launcher"); },
     writePrivate(file, contents) { effects.push(`adapter:${path.basename(file)}`); write(file, contents); } };

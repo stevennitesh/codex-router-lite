@@ -1,7 +1,30 @@
-param([string]$CodeRoot, [string]$FixtureRoot, [switch]$Preview, [string]$Mode = "archive", [string]$Case)
+param([string]$CodeRoot, [string]$FixtureRoot, [switch]$Preview, [string]$Mode = "archive", [string]$Case, [string]$RollbackAdapterJson)
 $ErrorActionPreference = "Stop"
 . (Join-Path $CodeRoot "maintenance/deployment-json.ps1")
 . (Join-Path $CodeRoot "maintenance/switchyard-recovery.ps1")
+if ($Mode -eq "adapter-binding") {
+  $tokens = $null; $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $CodeRoot "maintenance/deploy-switchyard-candidate.ps1"), [ref]$tokens, [ref]$errors)
+  if ($errors.Count) { throw "Production deployment parse failed." }
+  $repoRoot = $FixtureRoot
+  $preservingRollback = $false
+  $expectedRollbackCommit = "b" * 40
+  $runningRouterRoot = $rollbackRouterRoot = Join-Path $FixtureRoot "previous"
+  $existing = @("routes.toml")
+  $metadataPath = Join-Path $FixtureRoot "snapshot.json"
+  try {
+    foreach ($variable in @('$rollbackAdapter', '$rollbackMetadata')) {
+      $assignment = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq $variable }, $true)
+      if (-not $assignment) { throw "Production snapshot assignment is missing: $variable" }
+      Invoke-Expression $assignment.Extent.Text
+    }
+    Write-DeploymentJson $metadataPath $rollbackMetadata
+    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $true; metadata = $rollbackMetadata }
+  } catch {
+    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $false; error = $_.Exception.Message; snapshotWritten = (Test-Path -LiteralPath $metadataPath) }
+  }
+  return
+}
 if ($Mode -ne "archive") {
   $tokens = $null; $errors = $null
   $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $CodeRoot "maintenance/deploy-switchyard-candidate.ps1"), [ref]$tokens, [ref]$errors)

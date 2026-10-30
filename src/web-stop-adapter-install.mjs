@@ -9,6 +9,8 @@ import { probeRegularFile } from "./file-probe.mjs";
 import { withAtomicStateLock } from "./atomic-state-lock.mjs";
 import { withDirectoryLock } from "./directory-lock.mjs";
 import { ADAPTER_HOOK_STATUS, createAdapterHook, createAdapterConfig, validAdapterThreadIds } from "./web-stop-contract.mjs";
+import { cleanupWebStopAdapterBuilds, recordWebStopAdapterBuild } from "./web-stop-adapter-cleanup.mjs";
+import { readWebProcessCensus } from "./web-maintenance-proof.mjs";
 
 const OWNER = "codex-router-web-stop-adapter-v1";
 const HOOK_ID = ADAPTER_HOOK_STATUS;
@@ -98,7 +100,10 @@ function context(options = {}) {
     inspectSignatures: dependencies.inspectSignatures ?? (paths => invokeHelper({ action: "signatures", paths })),
     probeRuntimeFile: dependencies.probeRuntimeFile ?? probeRegularFile,
     compileEntry: dependencies.compileEntry ?? compileEntry,
-    write: dependencies.writePrivate ?? writePrivateFile, isPrivate: dependencies.isPrivate ?? privateFileIsProtected };
+    write: dependencies.writePrivate ?? writePrivateFile, isPrivate: dependencies.isPrivate ?? privateFileIsProtected,
+    cleanupBuilds: dependencies.cleanupBuilds ?? cleanupWebStopAdapterBuilds,
+    readProcessCensus: dependencies.readProcessCensus ?? readWebProcessCensus,
+    cleanupOperationId: options.cleanupOperationId };
 }
 
 function inspectManifest(ctx, input) {
@@ -394,6 +399,12 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
     // below must independently pass the full external verification.
     if (previous && previous.state !== "removed") verifyManaged(ctx, previous, { external: false });
     const plan = inspectManifest(ctx, manifest), candidate = stage(ctx, plan, previous), hook = createAdapterHook();
+    // Authenticate completed builds before publication so a later accepted
+    // install can retire candidates left by failed or compensated activation.
+    const custody = recordWebStopAdapterBuild(cleanupContext(ctx), candidate, { previous });
+    if (custody.status !== "recorded") throw Object.assign(new Error(
+      `Adapter build custody could not be recorded (${custody.reason ?? "unavailable"}); no launch selection was changed.`),
+    { code: "ERR_ADAPTER_BUILD_CUSTODY" });
     if (refreshTransaction?.expectedGeneration && refreshTransaction.expectedGeneration !== candidate.generation) throw new Error("Adapter source changed during runtime refresh; retry with current source.");
     regular(ctx.eventsPath, { optional: true });
     if (!existsSync(ctx.eventsPath)) ctx.write(ctx.eventsPath, "");
@@ -437,7 +448,22 @@ function installUnlocked(ctx, manifest, refreshTransaction) {
 export function installWebStopAdapter(options = {}) {
   const ctx = context(options), manifestPath = absolute(options.manifestPath);
   regular(ctx.root, { optional: true, directory: true }); mkdirSync(ctx.root, { recursive: true });
-  return withAtomicStateLock(ctx.receiptPath, () => installUnlocked(ctx, manifestPath));
+  return withAtomicStateLock(ctx.receiptPath, () => {
+    const previous = loadReceipt(ctx);
+    const result = installUnlocked(ctx, manifestPath);
+    return { ...result, cleanup: cleanupAfterSuccess(ctx, previous) };
+  });
+}
+
+function cleanupContext(ctx) {
+  return { ...ctx, verifyManaged: receipt => verifyManaged(ctx, receipt, { external: false }) };
+}
+
+function cleanupAfterSuccess(ctx, previous) {
+  // Cleanup owns its conservative diagnostics. Its failure must never turn an
+  // accepted activation into compensation after obsolete files were released.
+  try { return ctx.cleanupBuilds(cleanupContext(ctx), { previous }); }
+  catch { return { status: "deferred", removed: [], retained: [], reason: "cleanup-failed" }; }
 }
 
 function ownedRefreshState(ctx) {
@@ -451,6 +477,37 @@ function ownedRefreshState(ctx) {
 
 export function ownedWebStopAdapterEntry(options = {}) {
   return ownedRefreshState(context(options)).receipt.entryPath;
+}
+
+const rollbackIdentity = receipt => ({ generation: receipt.generation, managedDirectory: receipt.managedDirectory,
+  managedManifestSha256: receipt.managedManifestSha256 });
+
+export function inspectWebStopAdapterRollbackBinding(options = {}) {
+  const ctx = context(options), receipt = loadReceipt(ctx);
+  if (!receipt || receipt.state === "removed") {
+    const selected = pair(ctx.environment.readPair()).CODEX_NODE_REPL_PATH;
+    if (selected && path.isAbsolute(selected) && path.resolve(selected).toLowerCase().startsWith(`${ctx.root.toLowerCase()}${path.sep}`)) {
+      throw new Error("An adapter is selected without settled installed ownership.");
+    }
+    return null;
+  }
+  if (receipt.state !== "installed") throw new Error("Adapter installation is not settled; preserve its recovery artifacts.");
+  return rollbackIdentity(ownedRefreshState(ctx).receipt);
+}
+
+export function verifyWebStopAdapterRollbackBinding(binding, options = {}) {
+  if (binding === null) {
+    if (inspectWebStopAdapterRollbackBinding(options) !== null) throw new Error("The rollback adapter absence no longer matches installed ownership.");
+    return null;
+  }
+  const ctx = context(options);
+  if (!object(binding) || !same(Object.keys(binding).sort(), ["generation", "managedDirectory", "managedManifestSha256"])
+      || !SHA.test(binding.generation ?? "") || !SHA.test(binding.managedManifestSha256 ?? "") || !managedPath(ctx, binding)) {
+    throw new Error("Invalid rollback adapter binding.");
+  }
+  const receipt = { ...binding, configPath: path.join(binding.managedDirectory, "config.json"), entryPath: path.join(binding.managedDirectory, "entry.exe") };
+  verifyManaged(ctx, receipt, { external: false });
+  return rollbackIdentity(receipt);
 }
 
 function inspectRefresh(ctx, options) {
@@ -478,6 +535,7 @@ function inspectRefresh(ctx, options) {
 export function inspectWebStopAdapterRuntimeRefresh(options = {}) {
   const ctx = context(options), observed = inspectRefresh(ctx, options);
   return { manifest: observed.manifest, candidate: observed.candidate, candidateGeneration: observed.candidateGeneration, generation: observed.receipt.generation,
+    managedDirectory: observed.receipt.managedDirectory, managedManifestSha256: observed.receipt.managedManifestSha256,
     currentRuntime: observed.currentRuntime, managedEntryPath: observed.receipt.entryPath,
     threadIds: observed.receipt.threadIds ?? null, receiptSha256: hash(observed.receipt.text),
     hooksSha256: hash(observed.hooksText ?? ""), environment: observed.environment,
@@ -497,10 +555,11 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
         || options.expected.candidateGeneration !== before.candidateGeneration
         || !same(options.expected.candidate, before.candidate))) throw new Error("Web runtime refresh plan changed; retry before applying.");
     const transaction = { expectedGeneration: before.candidateGeneration, beforeMutation: options.beforeMutation };
+    let completed;
     try {
       options.beforeMutation?.();
       const result = installUnlocked(ctx, options.manifestPath ? absolute(options.manifestPath) : options.manifest, transaction);
-      return await operation(result);
+      completed = await operation(result);
     } catch (cause) {
       if (cause.runtimeRefreshSelectionsUnchanged === true) throw cause;
       // A reloaded Router can already be admitting calls. The coordinator
@@ -535,6 +594,8 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
       if (failures.length) throw new Error(`Web runtime refresh failed; rollback incomplete: ${failures.join(" ")}`, { cause });
       throw cause;
     }
+    const cleanup = cleanupAfterSuccess(ctx, before.receipt);
+    return completed && typeof completed === "object" ? { ...completed, cleanup } : completed;
   }, { target: ctx.receiptPath, waitMs: 2_000, retryMs: 25, heartbeatMs: 10_000,
     defaults: { waitMs: 2_000, retryMs: 25, heartbeatMs: 10_000 },
     lockedError: (_wait, cause) => new Error("Another Web Stop adapter operation is running; retry shortly.", { cause }),
@@ -543,6 +604,7 @@ export async function withWebStopAdapterRuntimeRefresh(options, operation) {
 
 function adapterPaths(ctx, receipt) {
   return { state: receipt.state, generation: receipt.generation, cliPath: receipt.environment.CODEX_CLI_PATH, entryPath: receipt.entryPath,
+    managedManifestSha256: receipt.managedManifestSha256,
     configPath: receipt.configPath, managedDirectory: receipt.managedDirectory, receiptPath: ctx.receiptPath,
     threadIds: receipt.threadIds };
 }

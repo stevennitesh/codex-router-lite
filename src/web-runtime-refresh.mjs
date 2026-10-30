@@ -93,7 +93,7 @@ export function discoverWebRuntimeAnchors(options = {}) {
 function context(options) {
   const dependencies = options.dependencies ?? {}, stateDir = localPath(options.stateDir ?? STATE_DIR);
   return { stateDir, settingsPath: path.join(stateDir, "chatgpt-web.json"),
-    adapterOptions: { stateDir, codexHome: options.codexHome ?? CODEX_HOME,
+    adapterOptions: { stateDir, codexHome: options.codexHome ?? CODEX_HOME, cleanupOperationId: options.cleanupOperationId,
       allowThreadScopeChange: options.replaceAdapter === true,
       dependencies: dependencies.adapter ?? dependencies },
     private: dependencies.isPrivate ?? privateFileIsProtected,
@@ -285,7 +285,7 @@ export async function refreshWebRuntime(options = {}) {
         }
       });
       return { ...prepared.plan, mode: "applied", applied: true, routerRestartRequired: false,
-        routerReloaded: true, adapterGeneration: result.generation,
+        routerReloaded: true, adapterGeneration: result.generation, cleanup: result.cleanup,
         next: result.hookDefinitionChanged
           ? "Fully quit and reopen Codex normally to load the refreshed adapter. Review and trust the modified Router Interrupt hook in Codex, then verify Stop and same-chat continuation."
           : "Fully quit and reopen Codex normally to load the refreshed adapter. Existing hook trust is retained; verify Stop and same-chat continuation." };
