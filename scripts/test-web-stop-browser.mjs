@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { browserDom, createBrowserAllowance, waitForBrowserReadiness, waitForHomeBrowserReadiness, createBrowserNavigationObserver, createHomeBrowserState, createObservationBrowserState, createRecoveryBrowserState, createSendBrowserState, createSendReadyLocator, createStopBrowserState } from "../src/web-browser-state.mjs";
@@ -479,6 +480,48 @@ export async function runWebLifecycleBrowserContract({ tab, fixtureUrl, timeoutM
       "formatted_checkpoint_not_preserved");
     return { logicalLinesPreserved: true, rawTextShorterThanCheckpoint: true };
   });
+  for (const [name, button] of [["recovery-mounted-short-content-event", "Mounted short recovery checkpoint"],
+    ["recovery-permanent-short-content-event", "Permanently short recovery checkpoint"],
+    ["recovery-changed-full-content-event", "Changed full recovery checkpoint"]]) {
+    await record(name, async () => {
+      await click(button);
+      const originalTabId = tab.id, originalUrl = await tab.url(), expected = "Recovered saved answer";
+      const digest = text => createHash("sha256").update(text.slice(0, expected.length), "utf8").digest("hex");
+      const state = createRecoveryBrowserState(tab, { ui: browserDom, proof });
+      const inspect = () => tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)
+        .evaluateAll(readBrowserReplies, { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector, projection: "recovery" }, { timeoutMs });
+      const before = await inspect(), previous = before.replies[0];
+      requireContract(await state.ready.count() === 1 && before.turns.length === 1 && before.turns[0].complete === true
+        && before.replies.length === 1 && previous.messageId === proof.replyId && previous.text === "Recovered", "mounted_short_checkpoint_not_reproduced");
+      const content = state.contentChangedSince(previous.recoveryTextContent), entered = Promise.withResolvers();
+      requireContract(await content.count() === 0, "mounted_short_content_already_ready");
+      const deadline = Date.now() + timeoutMs;
+      let matched = false, finished = false;
+      const waiting = waitForBrowserReadiness({ waitFor: options => {
+        const pending = content.waitFor(options); entered.resolve(); return pending;
+      } }, {
+        nextTimeout: () => Math.floor(deadline - Date.now()),
+        afterWait: ({ error, timedOut }) => { matched = !error; if (error && !timedOut) throw error; },
+        inspect,
+        ready: view => matched || view.replies[0]?.text.length >= expected.length,
+        state: "attached",
+      }).finally(() => { finished = true; });
+      try {
+        requireContract(await Promise.race([entered.promise.then(() => true), waiting.then(() => false, () => false)]) && !finished,
+          "content_readiness_not_subscribed");
+        await click("Reveal recovery text");
+        const after = await waiting, reply = after.replies[0];
+        requireContract(tab.id === originalTabId && await tab.url() === originalUrl && after.turns.length === 1
+          && after.turns[0].turnKey === generationTurnKey && after.turns[0].complete === true
+          && after.replies.length === 1 && reply.messageId === proof.replyId, "content_event_ownership_changed");
+        const verified = reply.text.length >= expected.length && digest(reply.text) === digest(expected);
+        requireContract(name === "recovery-mounted-short-content-event" ? matched && verified
+          : name === "recovery-permanent-short-content-event" ? !matched && !verified && reply.text === previous.text
+            : matched && !verified && reply.text.length >= expected.length, "content_event_digest_proof_failed");
+        return { rendererAlreadyReady: true, contentWaitInitiallyUnready: true, contentEventObserved: matched, checkpointVerified: verified };
+      } finally { await Promise.allSettled([waiting]); }
+    });
+  }
   for (const [name, button] of [["recovery-duplicate-message", "Duplicate recovery message"],
     ["recovery-duplicate-turn", "Duplicate recovery generation"], ["recovery-foreign-latest", "Foreign recovery generation"]]) {
     await record(name, async () => {

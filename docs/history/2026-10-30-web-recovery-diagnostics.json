@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-30",
+  "scope": "Historical diagnosis and source-candidate verification. This record does not establish installed Web readiness or current runtime authority.",
+  "baseline": "d5ae00c15716864c95b876aa826ff0093562d4c7",
+  "exposingDeployment": {
+    "accepted": true,
+    "appReopened": true,
+    "allServiceIdentityHealthAndLedgerChecksPassed": true,
+    "sdk": "1.32.2",
+    "litellm": "1.103.10",
+    "fastapi": "0.162.0",
+    "webRecovery": "Failed before Send. Structural installation acceptance did not establish live saved-chat recovery."
+  },
+  "observedFailure": {
+    "firstReason": "reply-prefix-too-short",
+    "urlMatched": true,
+    "uniqueLatestGenerationMatched": true,
+    "recordedReplyIdentityMatched": true,
+    "expectedPrefixUtf16Length": 50,
+    "actualTextLength": null,
+    "secondReason": "A preceding failed recovery owner remained registered and blocked a new native turn before a fresh proof.",
+    "uncertainSend": false,
+    "unresolvedNativeActions": 0,
+    "causeLimit": "The original short text projection may reflect incomplete rendering, changed saved content or different answer projection. Existing evidence does not distinguish these causes; transient hydration is not established."
+  },
+  "repairs": {
+    "contentReadiness": "A same-identity mounted short reply waits for its captured wrapper text to change, then requires fresh URL, generation, message, normalized prefix digest and composer proof. One deadline bounds failure; a changed full reply or permanently short reply remains rejected. No reload, Send replay or extra Stop is introduced.",
+    "failedOwner": "Release only the exact original-tab registration after a terminal failed read-only recheck with no navigation, allocated tab, interrupted cleanup or uncertain input. Replaced, foreign, navigated and interrupted ownership remains protected.",
+    "diagnostics": "One bounded canonical native recovery marker is projected to fixed operation, phase and reason values plus bounded booleans and counts. Only synthesized source-owned errors receive the existing HTTP safe-error brand; native error text, chat URLs, prompts, replies, tokens and extra fields are discarded.",
+    "deploymentScope": "Fresh outer maintenance acceptance explicitly reports installation-and-runtime-readiness and required-after-reopen Web verification. Its all-true transaction checks and underlying rollback owner remain unchanged. Historical rollback uses the separate existing underlying receipt."
+  },
+  "verification": {
+    "independentReview": "No actionable findings in the 14-path production/test candidate; the later one-line activation fixture correction and this factual evidence were reviewed by the integration owner.",
+    "reviewedSortedPathHashFingerprint": "230c20b293173123108923f55a2409f66c28e09b2d312f4a83f9df91a5275b29",
+    "fullRun": { "tests": 2433, "passed": 2424, "failed": 7, "skipped": 2 },
+    "fullRunFailure": "All seven failures were six positive activation subtests plus their parent. Their shared synthetic accepted receipt lacked the two newly required scope fields.",
+    "correction": "Updated that valid synthetic receipt only; retained invalid-acceptance rejection and did not relax the production validator.",
+    "affectedRerun": { "tests": 28, "passed": 28, "failed": 0 },
+    "coverage": "Unchanged passing full-suite checks were reused. Every failed assertion was covered by the successful activation/maintenance rerun. No unrelated serving input changed after the full run.",
+    "catalog": "Current CLI 0.166.0-alpha.5.1 parsed 18 models and passed retained route compatibility.",
+    "renderedBrowser": {
+      "stop": 10,
+      "observation": 9,
+      "send": 11,
+      "lifecycle": 13,
+      "totalPassed": 43,
+      "newContentCases": "Renderer was already mounted and completed before subscription. An explicit content change restored the correct digest; permanent-short and changed-full twins remained rejected.",
+      "initialLegacyFailure": "The existing home-navigation queue case initially timed out at Page.enable before event subscription. The unchanged lifecycle rerun passed after other protocol work. Initial evidence is retained; no causal new-regression finding or claim that this repair fixes cold Page.enable was made."
+    },
+    "testMaintenance": "Added tests retain continuing error-privacy, ownership, readiness-event and receipt-contract regression purpose. No one-off edit-verification checks were retained."
+  },
+  "activationRequirement": "Changed browser helper and snapshot hashes require a matching adapter rebuild and normal Codex reload before live native tools, Stop and same-chat continuation can be qualified.",
+  "rollback": "Retained Router and Switchyard recovery artifacts were independently checked. Prior adapter files are retained, but its old shared SDK hash differs after the SDK update; standalone live Web rollback qualification is not claimed."
+}

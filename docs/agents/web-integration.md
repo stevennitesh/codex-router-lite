@@ -180,9 +180,27 @@ observation loads its capability guidance before issuing commands or reading
 events. These are enforced SDK prerequisites, including after recovery; a warmed
 diagnostic session does not prove that a fresh runtime can use the capability.
 Observer failures retain a content-free stage and reason for diagnosis.
+Saved-chat recovery failures carry a fixed `web_saved_chat_recovery_failed` code
+and the pending browser stage through the ordinary Responses error path when one
+bounded native diagnostic marker has a recognized reason. Only fixed categories,
+booleans and bounded counts are exposed; native error text, chat URLs, identities,
+tokens, prompts and replies are discarded. Missing, malformed, ambiguous or
+unknown markers retain the generic execution failure. These diagnostics grant
+no ownership, Send retry or checkpoint authority.
 A fresh read still proves the empty composer or saved checkpoint,
 including its normalized text-prefix digest; a locator match is only a wakeup.
 Stable conflicting evidence fails without repeated reads or another action.
+For one exact completed generation and its recorded answer, a mounted reply
+shorter than the recorded prefix may spend the same recovery allowance waiting
+for that message's raw DOM text to change. The initial coherent projection
+captures the private comparison text; a conditional SDK locator excludes that
+unchanged text even when the renderer is already mounted. A fresh full normalized
+digest and ownership proof still decide recovery. A permanently short body or
+a changed full reply fails; this does not identify why the earlier projection
+was short. Terminal read-only recheck failures on the original surviving tab
+release only that attempt's exact active-owner entry, allowing a later attempt
+to prove the checkpoint afresh. Reopened, navigated, interrupted and replaced
+custody retain their existing failure guards.
 
 ### Observation and completion
 
@@ -438,7 +456,10 @@ it does not infer newer host policy from the hook. A separately trusted user
 Interrupt hook calls the adapter's own callback with the host's maximum
 three-second timeout. The shared contract reserves transport and terminal-receipt
 headroom within that deadline and waits on the same inactivity predicate after
-one Stop click. Fast transitions return immediately; a slow provider or browser
+one Stop click. After generation proof, click admission reserves the same minimum
+read and transport headroom as readiness. The click preserves a read allowance,
+and its confirmation must arrive within the original deadline.
+Fast transitions return immediately; a slow provider or browser
 readback remains unconfirmed. A larger configured timeout cannot extend the
 [host limit](https://learn.chatgpt.com/docs/hooks#config-shape).
 Elapsed time never supplies confirmation.
@@ -783,6 +804,28 @@ and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
 compatibility; the adapter does not pin the whole app to that CLI build. Updating
 an older owned installation releases its CLI pin back to the original selection.
 Foreign changes are preserved, and unrelated hooks are untouched.
+
+The launcher retains a separate Windows kill-on-close job for each official
+JavaScript endpoint. Primary native `node_repl` endpoints use the Web Stop bridge.
+A positively recognized nested official Computer Use bootstrap may launch the
+same verified official REPL directly inside that job, avoiding an unnecessary
+Node bridge. This recognition checks the paired runtime, actual parent bootstrap
+and scoped CUA initialization settings. Missing or changed evidence retains the
+full bridge. It does not broaden Stop authority, change the primary Web route,
+patch the official plugin or share a kernel between endpoints.
+
+`model-router.ps1 codex web processes` joins bounded private process receipts
+with one fresh Windows process census. The launcher's native creation times and
+lifetime UUID bind observations to actual process generations; PID alone is not
+ownership. Canonically observed native metadata supplies chat associations
+without retaining prompts, code, tokens, URLs or sandbox payloads. Cancellation
+does not establish idleness until the actual child call reaches a terminal state.
+Missing associations, incomplete receipts, reused PIDs and unknown native
+identities remain protected. These observations diagnose a session; they never
+authorize process termination. A live idle kernel still owns retained JavaScript
+state and closes through its native owner's EOF/transport shutdown. The report
+does not add an idle timer or an external endpoint-release service.
+
 If the saved browser runtime or tunnel configuration changed, also use the
 [guarded Router restart](../INSTALL.md#replacement-and-drain) to reload that
 configuration before live verification. A Codex restart only reloads the adapter;
@@ -903,6 +946,12 @@ adapter plan only if changed. The initial refresh compares its own prepared
 candidate with the reviewed plan before effects; the final plan must retain that
 official runtime cohort. Acceptance records the actual final identities and the
 underlying deployment's acceptance and durable rollback receipts.
+Its fixed `scope: "installation-and-runtime-readiness"` and
+`liveWebVerification: "required-after-reopen"` distinguish this structural
+acceptance from live Web qualification. After reopening Codex, verify a current
+Web turn, native tools, Stop and continuation in the retained saved chat before
+claiming those paths work. An accepted deployment remains accepted if a later
+live Web check fails, with its existing rollback custody preserved.
 The worker retains its verified official-runtime discovery only within that
 maintenance transaction. Final inspection revalidates the original configuration
 and runtime identity alongside current protected adapter ownership. Codex's cached

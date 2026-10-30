@@ -250,17 +250,61 @@ test("the adapter's generated Stop program preserves escaped paths as data", asy
 });
 
 test("the remaining callback budget bounds Stop while preserving the earlier verified retention", async () => {
-  const f = fixture(); f.model.onCall = name => { if (name === "visible") f.model.now = 1251; };
+  const f = fixture(); let proofs = 0;
+  f.model.onCall = name => { if (name === "generation_return" && ++proofs === 2) f.model.now = 1951; };
   const blocked = await f.run({ budgetMs: 2250 });
   assert.equal(blocked.code, "budget_exhausted"); assert.equal(clicked(f).length, 0);
-  assert.equal(blocked.retained, true);
+  assert.equal(blocked.stage, "stop_click"); assert.equal(blocked.clickAttempted, false);
+  assert.equal(blocked.retained, true); assert.equal(blocked.elapsedMs, 1951);
   const g = fixture(); g.first.keepVisible = true;
   const expired = await g.run({ budgetMs: 1200 });
   assert.equal(expired.outcome, "blocked"); assert.equal(expired.stopClicked, true);
   assert.equal(expired.stopHidden, false); assert.equal(expired.retained, true);
   assert(expired.elapsedMs <= 1200); assert.equal(clicked(g).length, 1);
   assert.deepEqual(mutations(g).map(call => call.name), ["handoff", "click"]);
-  const h = fixture(); stopped(await h.run({ budgetMs: 2250 }));
+  const h = fixture(); let minimumProofs = 0;
+  h.model.onCall = name => { if (name === "generation_return" && ++minimumProofs === 2) h.model.now = 1950; };
+  stopped(await h.run({ budgetMs: 2250 }));
+  assert.equal(h.first.clickTimeoutMs, 100, "Exactly 300 ms retains the minimum click and read headroom.");
+});
+
+test("a fresh Stop controller uses its remaining budget for one click and requires timely positive readback", async () => {
+  for (const confirmation of ["fast", "late", "missing"]) {
+    const f = fixture(); f.fresh(f.first);
+    f.first.keepGenerating = true; f.first.idleAfterClick = confirmation !== "missing";
+    f.first.clickAcknowledgementMs = 100; f.first.readinessDelayMs = 80;
+    const beforeClickCost = { setup: 250, browsers: 100, get_browser: 100, tabs: 100,
+      get_tab: 100, handoff: 105, generation_return: 350 };
+    let proofs = 0;
+    f.model.onCall = name => {
+      if (!clicked(f).length) {
+        f.model.now += beforeClickCost[name] ?? 0;
+        if (name === "generation_return") proofs++;
+        if (name === "click_request") {
+          assert.equal(f.model.now, 1455); assert.equal(proofs, 2);
+          assert.equal(f.calls.filter(call => call.name === "handoff").length, 1);
+        }
+      } else if (name === "generation_return") {
+        f.model.now = confirmation === "late" ? Math.max(f.model.now, 2401) : f.model.now + 60;
+      }
+    };
+    const result = await f.run({ budgetMs: STOP_BUDGET.scriptMs });
+    assert.equal(result.freshController, true); assert.equal(result.retained, true);
+    assert.equal(clicked(f).length, 1);
+    assert.equal(f.first.clickTimeoutMs, 745, "The click leaves the final read allowance inside the original budget.");
+    if (confirmation === "fast") {
+      stopped(result); assert.equal(result.inactivityEvidence, "composer_restored");
+      assert.equal(result.readbackComplete, false); assert.equal(result.elapsedMs, 1695);
+    } else {
+      assert.equal(result.outcome, "blocked"); assert.equal(result.generationInactive, false);
+      assert.equal(result.inactivityEvidence, "none");
+      assert.equal(result.code, confirmation === "late" ? "budget_exhausted" : "stop_confirmation_failed");
+    }
+    assert.equal(f.context[f.first.key], undefined, "Fresh cleanup never creates an ordinary continuation binding.");
+    const repeated = await f.run();
+    assert.equal(repeated.outcome, "blocked"); assert.equal(repeated.clickAttempted, false);
+    assert.equal(clicked(f).length, 1, "A later callback cannot repeat the Stop click.");
+  }
 });
 
 test("final owned inactivity proof arriving inside the last reserve is accepted before the actual deadline", async () => {
@@ -819,7 +863,8 @@ test("budget exhaustion during setup or before mutation prohibits later effects"
     if (stage === "setup") f.fresh(f.first);
     f.model.onCall = name => { if (name === stage) f.model.now = 2401; };
   }, "budget_exhausted");
-  const retained = fixture(); retained.model.onCall = name => { if (name === "visible") retained.model.now = 1401; };
+  const retained = fixture(); let proofs = 0;
+  retained.model.onCall = name => { if (name === "generation_return" && ++proofs === 2) retained.model.now = 2101; };
   const beforeClick = await retained.run();
   assert.equal(beforeClick.code, "budget_exhausted"); assert.equal(beforeClick.retained, true); assert.equal(clicked(retained).length, 0);
   const f = fixture(); f.model.onCall = name => { if (name === "click") f.model.now = 2401; };

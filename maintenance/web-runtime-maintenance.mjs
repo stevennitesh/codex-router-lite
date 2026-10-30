@@ -165,6 +165,7 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
   const actual = (dependencies.inspectActual ?? inspectWebRuntimeMaintenance)(finalOptions);
   if (actual.plan.changed || JSON.stringify(cohort(actual.adapter)) !== JSON.stringify(cohort(candidate.adapter))) throw new Error("Final installed adapter did not retain the reviewed official cohort.");
   return { version: 1, accepted: true, routerCommit: expectedCommit.toLowerCase(), candidateSha256: expectedCandidateSha256,
+    scope: "installation-and-runtime-readiness", liveWebVerification: "required-after-reopen",
     sourceRoot: root, candidateBinary: path.resolve(candidateBinary), switchyardBinarySha256: expectedBinarySha256.toLowerCase(), codexReopenRequired: true,
     deployment: deployed, deploymentAcceptancePath, deploymentResultPath: deployment.resultPath,
     configurationPublication,
@@ -181,6 +182,7 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
 export function validateWebMaintenanceAcceptance(value, expectedCommit, expectedCandidateSha256, candidateBinary, expectedBinarySha256) {
   validateUnderlyingDeployment(value?.deployment, expectedCommit, expectedBinarySha256);
   if (value?.version !== 1 || value.accepted !== true || value.routerCommit !== expectedCommit.toLowerCase()
+      || value.scope !== "installation-and-runtime-readiness" || value.liveWebVerification !== "required-after-reopen"
       || value.candidateSha256 !== expectedCandidateSha256 || value.sourceRoot !== root
       || value.candidateBinary !== path.resolve(candidateBinary) || value.switchyardBinarySha256 !== expectedBinarySha256.toLowerCase()
       || !path.isAbsolute(value.deploymentAcceptancePath ?? "") || !path.isAbsolute(value.deploymentResultPath ?? "") || !path.isAbsolute(value.finalAdapter?.managedDirectory ?? "")

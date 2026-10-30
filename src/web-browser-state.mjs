@@ -176,7 +176,15 @@ export function createRecoveryBrowserState(tab, { ui, proof }) {
   // reject a settled short or changed body. Multiple fragments in one unique
   // message remain valid; a second message wrapper never becomes that message.
   if (message) ready = ready.filter({ has: tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`).locator(ui.assistantSelector) });
-  return { ready };
+  return { ready, contentChangedSince(textContent) {
+    // XPath string(.) and the captured wrapper textContent use the same raw
+    // DOM text, independently of normalized paragraph/code boundaries. The
+    // initially mounted renderer cannot satisfy this condition unchanged.
+    const literal = value => !value.includes("'") ? `'${value}'`
+      : `concat(${value.split("'").map(part => `'${part}'`).join(',"\'",')})`;
+    return ready.filter({ has: tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`)
+      .filter({ has: tab.playwright.locator(`xpath=self::*[string(.) != ${literal(textContent)}]`) }) });
+  } };
 }
 
 export const browserDom = Object.freeze({

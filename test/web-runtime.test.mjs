@@ -36,6 +36,7 @@ const { qualifyBrowserCall } = await import("../src/web-stop-adapter.mjs");
 const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs");
 const { decodeCompaction } = await import("../src/compaction-checkpoint.mjs");
 const { privateFileIsProtected } = await import("../src/file-security.mjs");
+const { safeLocalHttpErrorPayload } = await import("../src/http-utils.mjs");
 
 // Runtime policy tests retain real JSON persistence and restart reads. Windows
 // ACL behavior is exercised separately below with the runtime's secure defaults.
@@ -2684,7 +2685,14 @@ test("failed pre-Send recovery preserves its confirmed checkpoint across an unse
   const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
   const failure = await h.executeBrowser(continuation).then(() => assert.fail("The draft must block recovery."), error => error);
   h.append(continuation, outputFor(continuation, { isError: true, content: [{ type: "text", text: failure.message }] }));
-  await assert.rejects(h.request(), { code: "web_browser_execution_failed" });
+  await assert.rejects(h.request(), error => {
+    assert.equal(error.code, "web_saved_chat_recovery_failed");
+    assert.deepEqual(error.diagnostic.stage, "continue");
+    assert.equal(error.diagnostic.reason, "composer-draft-present");
+    assert.match(safeLocalHttpErrorPayload(error).error.message, /stage=continue, reason=composer-draft-present/u);
+    assert.equal(error.message.includes(h.browser.ui.composer), false);
+    return true;
+  });
   await h.restartRuntime();
   const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
   assert.equal(saved.lastTurn.turnId, followupId); assert.equal(saved.lastTurn.sendState, "unsent");

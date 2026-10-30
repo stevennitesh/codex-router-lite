@@ -94,6 +94,11 @@ async function main() {
   }
   if (command === "web") {
     if (action === "status") print(await readWebMaintenanceStatus());
+    else if (action === "processes") {
+      if (args.length !== 2) throw new Error("Usage: control web processes");
+      const { readWebProcessDiagnostics } = await import("./web-process-diagnostics.mjs");
+      print(await readWebProcessDiagnostics());
+    }
     else if (action === "browser") {
       if (!value || args.length !== 3) throw new Error("Usage: control web browser <safe-config-json-file>");
       const config = readJsonFile(value);
@@ -149,7 +154,7 @@ async function main() {
     } else if (action === "disconnect") {
       print({ ...await disconnectWebBridge(), catalogRefreshRequired: true,
         next: "Run model-router.ps1 codex refresh-catalog, then reopen Codex." });
-    } else throw new Error("Usage: control web status|browser <safe-config-json-file>|refresh-runtime [--apply [--force-service-replacement]] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
+    } else throw new Error("Usage: control web status|processes|browser <safe-config-json-file>|refresh-runtime [--apply [--force-service-replacement]] [--manifest <adapter-manifest-json>]|stop install-adapter <adapter-manifest-json>|adapter-status|adapter-rollback|tunnel-key set|status|remove|disconnect");
     return;
   }
   if (command === "subagents") {

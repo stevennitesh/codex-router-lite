@@ -10,6 +10,7 @@ import { readBrowserProgram, parseBrowserOutput, isSavedChatUrl } from './web-br
 import { browserObservationBudget, browserObservationIdleComplete, browserObservationOwnershipLost, isBrowserOwnershipPending } from './web-browser-state.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
 import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_BUDGET, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
+import { WebProcessSnapshot } from './web-process-snapshot.mjs';
 
 export { INTERRUPT_TOOL } from './web-stop-contract.mjs';
 export const ADAPTER_INFO = Object.freeze({ name: 'codex_router_web_stop_adapter', version: '1.0.0' });
@@ -271,14 +272,33 @@ export class AdapterBridge {
     this.cleanupGroup = null; this.builtinWait = null;
     this.builtinTerminals = new Map();
     this.observationChildren = new Map();
+    this.processDiagnostics = new WebProcessSnapshot({ childImage: stopConfig.server });
   }
   event(code, flags = {}) {
-    try { this.receipt({ at: new Date(this.now()).toISOString(), code, generation: this.generation, ...flags }); }
+    try {
+      const base = { at: new Date(this.now()).toISOString(), generation: this.generation };
+      if (code !== 'process_snapshot') this.receipt({ ...base, code, ...flags });
+      const processState = this.processDiagnostics.snapshot(this), serialized = JSON.stringify(processState);
+      // One bounded observation per state transition. Keep existing Stop
+      // receipts content-free and avoid repeated writes during its short budget.
+      if (serialized !== this.lastProcessSnapshot) {
+        this.receipt({ ...base, code: 'process_snapshot', process: processState });
+        this.lastProcessSnapshot = serialized;
+      }
+    }
     catch {
       if (!this.receiptFailed) { this.receiptFailed = true; void this.close().catch(() => {}); }
     }
   }
-  sendDetached(message) { void this.child.send(message).catch(() => this.fail()).catch(() => {}); }
+  sendChild(message) {
+    this.processDiagnostics.childSent(message); this.event('process_snapshot');
+    return this.child.send(message);
+  }
+  sendOuter(message) {
+    this.processDiagnostics.outerSent(message); this.event('process_snapshot');
+    return this.outer.send(message);
+  }
+  sendDetached(message) { void this.sendChild(message).catch(() => this.fail()).catch(() => {}); }
   cancelPending(pending, message) {
     if (!pending.wait) return this.sendDetached(message);
     if (pending.wait.active) this.sendDetached({ ...message, params: { ...message.params, requestId: pending.wait.childId } });
@@ -312,7 +332,14 @@ export class AdapterBridge {
   }
   async fromOuter(message) {
     if (this.closed) return;
-    if (this.injected.has(message.id)) { this.invalidate('request_id_collision'); return this.outer.send({ jsonrpc: '2.0', id: message.id, error: { code: -32600, message: 'Adapter request refused' } }); }
+    this.processDiagnostics.outerReceived(message);
+    if (message.method === 'tools/call') {
+      const meta = message.params?._meta;
+      this.processDiagnostics.observeIdentity(parseIdentity(meta, null), Boolean(meta &&
+        (own(meta, 'callId') || own(meta, 'x-codex-turn-metadata'))));
+    }
+    this.event('process_snapshot');
+    if (this.injected.has(message.id)) { this.invalidate('request_id_collision'); return this.sendOuter({ jsonrpc: '2.0', id: message.id, error: { code: -32600, message: 'Adapter request refused' } }); }
     if (message.method === 'initialize') this.initializeIds.add(message.id);
     if (message.method === 'notifications/cancelled') {
       const pending = this.pending.get(message.params?.requestId);
@@ -349,12 +376,12 @@ export class AdapterBridge {
         this.invalidate('ordinary_cancelled');
         if (pending.wait) return this.cancelPending(pending, message);
       }
-      return this.child.send(message);
+      return this.sendChild(message);
     }
-    if (message.method !== 'tools/call') return this.child.send(message);
+    if (message.method !== 'tools/call') return this.sendChild(message);
     const params = message.params;
     if (params?.name === 'turn_ended' || params?.name === INTERRUPT_TOOL) return this.handleHook(message);
-    if (params?.name !== 'js' && params?.name !== 'js_reset') return this.child.send(message);
+    if (params?.name !== 'js' && params?.name !== 'js_reset') return this.sendChild(message);
     // Policy observation is independent of Router script qualification. A
     // genuine ordinary call may expose a changed current-turn authority even
     // when its code is generic; it may invalidate, never acquire, authority.
@@ -424,7 +451,7 @@ export class AdapterBridge {
       void this.waitForBroker(pending).catch(() => this.wakeObservation(pending, 'broker_error'));
       return this.readObservation(pending);
     }
-    return this.child.send(message);
+    return this.sendChild(message);
   }
   cacheAuthority(guard, nativeMeta, delivery) {
     this.cache = snapshot({ identity: guard.identity,
@@ -485,7 +512,7 @@ export class AdapterBridge {
     const args = state.message.params.arguments;
     const params = Number.isSafeInteger(args.timeout_ms) ? { ...state.message.params, arguments: { ...args,
       timeout_ms: Math.min(args.timeout_ms, Math.max(1, state.executionDeadlineAt - this.now())) } } : state.message.params;
-    await this.child.send({ ...state.message, id: state.childId, params });
+    await this.sendChild({ ...state.message, id: state.childId, params });
   }
   async finishObservation(pending) {
     const state = pending.wait;
@@ -499,12 +526,14 @@ export class AdapterBridge {
     const unavailable = ['broker_error', 'broker_closed'].includes(state.reason)
       ? 'Router browser observation channel is unavailable.' : state.ownershipPending
         ? 'Router browser observation ownership is unavailable.' : null;
-    return this.outer.send(!childFailed && unavailable
+    return this.sendOuter(!childFailed && unavailable
       ? { jsonrpc: '2.0', id: state.outerId, error: { code: -32603, message: unavailable } }
       : { ...state.last, id: state.outerId });
   }
   async fromChild(message) {
     if (this.closed) return;
+    this.processDiagnostics.childReceived(message);
+    this.event('process_snapshot');
     const internal = this.injected.get(message.id);
     if (internal && !message.method) { this.injected.delete(message.id); internal.terminal(message); return; }
     const builtin = this.builtinTerminals.get(message.id);
@@ -621,7 +650,7 @@ export class AdapterBridge {
       this.initializeIds.delete(message.id);
       if (record(message.result)) message = { ...message, result: { ...message.result, serverInfo: { ...ADAPTER_INFO } } };
     }
-    return this.outer.send(message);
+    return this.sendOuter(message);
   }
   async waitFor(promise, ms) {
     let timer;
@@ -663,7 +692,7 @@ export class AdapterBridge {
     // Local timeout or cancellation is not a child terminal. Keep passive
     // ownership until its real result/error or child closure, blocking another
     // adapter cleanup without changing ordinary MCP request forwarding.
-    try { await this.child.send({ jsonrpc: '2.0', id, method: 'tools/call', params }); return await result; }
+    try { await this.sendChild({ jsonrpc: '2.0', id, method: 'tools/call', params }); return await result; }
     finally { clearTimeout(timer); }
   }
   async handleHook(message) {
@@ -675,7 +704,7 @@ export class AdapterBridge {
       if (hookMeta.threadId === this.currentThread && params?.arguments?.turn_id === this.currentTurn) {
         this.authorityDisabled = true; this.invalidate('ordinary_lifecycle_call');
       }
-      return this.child.send(message);
+      return this.sendChild(message);
     }
     if (this.currentTurn !== undefined && this.currentAuthority) this.event('lifecycle_input', {
       eventName: ['Stop', 'Interrupt'].includes(params?.arguments?.hook_event_name) ? params.arguments.hook_event_name : 'other',
@@ -694,7 +723,7 @@ export class AdapterBridge {
         if (matchingCurrent && decision.reason === 'hook_authority_conflict') {
           this.authorityDisabled = true; this.invalidate('hook_authority_invalidated');
         }
-        return owned ? this.replyOwned(message, { ok: false, code: decision.reason }) : this.child.send(message);
+        return owned ? this.replyOwned(message, { ok: false, code: decision.reason }) : this.sendChild(message);
       }
       this.event(owned ? 'cleanup_duplicate_queued' : 'builtin_interrupt_queued');
       this.enqueueHook(active, message, false);
@@ -702,7 +731,7 @@ export class AdapterBridge {
     }
     if (this.retiredTurns.has(turnKey(hookMeta.threadId, params?.arguments?.turn_id))) {
       this.event('retired_hook_forwarded_without_stop');
-      return owned ? this.replyOwned(message, { ok: false, code: 'retired_turn' }) : this.child.send(message);
+      return owned ? this.replyOwned(message, { ok: false, code: 'retired_turn' }) : this.sendChild(message);
     }
     const scopeMatches = this.injected.size === 0 && this.pending.size <= 1
       && [...this.pending.values()].every(value => value.qualified && value.cache === cached)
@@ -712,7 +741,7 @@ export class AdapterBridge {
       if (matchingCurrent && decision.reason === 'hook_authority_conflict') {
         this.authorityDisabled = true; this.invalidate('hook_authority_invalidated');
       } else if (decision.meta && !scopeMatches) this.invalidate('hook_scope_closed');
-      return owned ? this.replyOwned(message, { ok: false, code: !decision.meta ? decision.reason : 'observation_scope_mismatch' }) : this.child.send(message);
+      return owned ? this.replyOwned(message, { ok: false, code: !decision.meta ? decision.reason : 'observation_scope_mismatch' }) : this.sendChild(message);
     }
     // Stock callbacks retain their own one-second budget. They may wait briefly
     // for the separately configured trusted callback, but never start Stop.
@@ -759,16 +788,16 @@ export class AdapterBridge {
     group.entries.push(entry); this.hooks.set(message.id, entry);
   }
   async replyOwned(message, proof) {
-    return this.outer.send({ jsonrpc: '2.0', id: message.id, result: {
+    return this.sendOuter({ jsonrpc: '2.0', id: message.id, result: {
       ...(proof.ok ? {} : { isError: true }),
       content: [{ type: 'text', text: JSON.stringify({ systemMessage: 'ROUTER_WEB_STOP_ADAPTER ' + JSON.stringify(proof) }) }],
     } });
   }
   async forwardBuiltin(entry) {
     this.trackBuiltinTerminal(entry);
-    await this.child.send(entry.message);
+    await this.sendChild(entry.message);
     entry.forwarded = true;
-    if (entry.cancel) await this.child.send(entry.cancel);
+    if (entry.cancel) await this.sendChild(entry.cancel);
     this.hooks.delete(entry.message.id);
   }
   trackBuiltinTerminal(entry) {
@@ -887,7 +916,7 @@ export function readConfig(filename) {
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 2 || args[0] !== '--config') throw new Error('arguments_refused');
+  if (args[0] !== '--config' || !(args.length === 2 || args.length === 4 && args[2] === '--generation' && uuid(args[3]))) throw new Error('arguments_refused');
   const config = readConfig(args[1]);
   // The staged adapter is independent of checkout-relative node_modules. The
   // installer records the SDK package location, whose normal export map resolves
@@ -906,7 +935,8 @@ async function main() {
   // SDK merges its defaults first and this complete current environment last.
   // It is never enumerated for inspection, serialized, or logged by this code.
   const child = new StdioClientTransport({ command: config.server, args: [], env: process.env, stderr: 'ignore' });
-  const bridge = new AdapterBridge({ outer: new StdioServerTransport(), child, stopConfig: config, receipt });
+  const bridge = new AdapterBridge({ outer: new StdioServerTransport(), child, stopConfig: config, receipt,
+    ...(args.length === 4 ? { generation: args[3] } : {}) });
   let closing;
   const close = () => closing ??= bridge.close().finally(() => closeSync(receiptFd));
   const closeQuietly = () => { void close().catch(() => { process.exitCode = 1; }); };
@@ -914,7 +944,7 @@ async function main() {
   process.once('SIGTERM', closeQuietly);
   try {
     await bridge.start();
-    receipt({ at: new Date().toISOString(), code: 'adapter_started', generation: bridge.generation, serverSha256: config.serverSha256 });
+    bridge.event('adapter_started', { serverSha256: config.serverSha256 });
   } catch { await close(); throw new Error('startup_refused'); }
 }
 

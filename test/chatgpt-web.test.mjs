@@ -68,16 +68,20 @@ async function routerFixture(t, handle, options = {}) {
   const directory = mkdtempSync(path.join(state, "http-"));
   const codexHome = path.join(directory, "codex");
   mkdirSync(codexHome);
-  const { realRuntime = false, runtimeStates = [], ...settings } = options;
+  const { realRuntime = false, runtimeStates = [], browserFailure, ...settings } = options;
   saveSettings({ directory, ...settings, ...(realRuntime ? { enabled: false } : {}) });
   // Replace only the in-app runtime dependency. The real Router and settings
   // owner still validate and dispatch the ordinary request. Browser scheduling,
   // native tool execution and compaction have their own real-runtime coverage.
   const runtimeStub = path.join(directory, "runtime-stub.mjs"), preload = path.join(directory, "preload.mjs");
-  writeFileSync(runtimeStub, `let maintenance = {activeTurns:0,uncertainSends:0,unresolvedActions:0};
+  writeFileSync(runtimeStub, `import {parseBrowserOutput} from ${JSON.stringify(pathToFileURL(path.resolve("src/web-browser.mjs")).href)};
+  import {savedChatRecoveryError} from ${JSON.stringify(pathToFileURL(path.resolve("src/web-browser-diagnostics.mjs")).href)};
+  const browserFailure = ${JSON.stringify(browserFailure ?? null)};
+  let maintenance = {activeTurns:0,uncertainSends:0,unresolvedActions:0};
   const states = ${JSON.stringify(runtimeStates)};
   export function inAppWebMaintenanceState() { return {...maintenance}; }
   export function startInAppWebBridge() {}\nexport function closeInAppWebBridge() {}\nexport async function requestInAppWebBridge(payload, {compact, compactV2, signal, headers}) {
+    if (browserFailure) parseBrowserOutput(browserFailure.output, browserFailure.frameToken, browserFailure.stage, savedChatRecoveryError);
     const response = await fetch(${JSON.stringify(bridge.baseUrl)} + (compact ? '/compact' : '/request'), {method:'POST',signal,
       headers:{...headers,'x-fixture-compact-v2':String(compactV2)},body:JSON.stringify(payload)});
     maintenance = states.shift() ?? maintenance;
@@ -106,6 +110,34 @@ async function routerFixture(t, handle, options = {}) {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload), ...fetchOptions,
     }) };
 }
+
+test("Responses preserves a safe recovery diagnosis and withholds malformed native details", async t => {
+  const canary = "PRIVATE_RECOVERY_HTTP_CANARY_627491";
+  for (const recognized of [true, false]) await t.test(`recognized marker: ${recognized}`, async t => {
+    const diagnostic = JSON.stringify({ reason: recognized ? "reply-prefix-too-short" : canary,
+      stage: "send", urlMatches: true, generationTurnCount: 1, reply: canary, token: canary,
+      url: `https://chatgpt.com/c/${canary}` });
+    const output = JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ isError: true,
+      content: [{ type: "text", text: `Error: ${canary} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${diagnostic}\n    at ${canary}:1:1` }] }) }] });
+    const fixture = await routerFixture(t, ({ response }) => json(response, { error: "unexpected bridge request" }, 500),
+      { browserFailure: { output, frameToken: "recovery_http_frame_token_1234", stage: "continue" } });
+    const response = await fixture.post({ model, input: [] });
+    assert.equal(response.status, 409);
+    const body = await response.json();
+    assert.equal(body.error.type, "local_router_error");
+    if (recognized) {
+      assert.equal(body.error.code, "web_saved_chat_recovery_failed");
+      assert.match(body.error.message, /stage=continue, reason=reply-prefix-too-short/u);
+      assert.match(body.error.message, /Keep the saved chat/u);
+    } else {
+      assert.equal(body.error.code, "web_browser_execution_failed");
+      assert.doesNotMatch(body.error.message, /reason=/u);
+    }
+    assert.equal(JSON.stringify(body).includes(canary), false);
+    assert.equal(fixture.bridge.requests.length, 0);
+    assert.equal(fixture.native.requests.length, 0);
+  });
+});
 
 test("Router defers drain for Web work created by an admitted HTTP round and during its native-tool gap", async t => {
   const started = Promise.withResolvers(), released = Promise.withResolvers();

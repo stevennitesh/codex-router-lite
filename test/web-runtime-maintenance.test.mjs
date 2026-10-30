@@ -83,6 +83,9 @@ test("detached maintenance validates around exit and refreshes before guarded de
     assert.ok(f.events.indexOf("guarded-deploy") < f.events.indexOf("replan"));
     assert.equal(f.events.includes("refresh-final"), finalChanged);
     assert.equal(receipt.codexReopenRequired, true);
+    assert.equal(receipt.scope, "installation-and-runtime-readiness");
+    assert.equal(receipt.liveWebVerification, "required-after-reopen");
+    assert.ok(Object.values(receipt.checks).every(value => value === true));
     assert.equal(validateWebMaintenanceAcceptance(receipt, f.options.expectedCommit, f.options.expectedCandidateSha256, f.options.candidateBinary, f.options.expectedBinarySha256), receipt);
   });
 });
@@ -110,7 +113,9 @@ test("independent worker acceptance is bound to exact candidate, installation an
     value => { value.candidateSha256 = "e".repeat(64); }, value => { value.sourceRoot += "-foreign"; },
     value => { delete value.checks.ledgerPreserved; }, value => { value.checks.processAbsence = false; },
     value => { value.configurationPublication = { beforeSha256: "invalid", afterSha256: "a".repeat(64) }; },
-    value => { value.codexReopenRequired = false; }]) {
+    value => { value.codexReopenRequired = false; }, value => { delete value.scope; },
+    value => { value.scope = "live-web-verified"; }, value => { delete value.liveWebVerification; },
+    value => { value.liveWebVerification = "verified"; }]) {
     const changed = structuredClone(receipt); mutate(changed);
     assert.throws(() => validateWebMaintenanceAcceptance(changed, f.options.expectedCommit, f.options.expectedCandidateSha256, f.options.candidateBinary, f.options.expectedBinarySha256), /complete acceptance/u);
   }

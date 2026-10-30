@@ -84,8 +84,10 @@ function frameParts(frameToken) {
   return [`ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n`, `\nROUTER_WEB_BROWSER_${frameToken}_END`];
 }
 
-export function parseBrowserOutput(output, frameToken) {
+export function parseBrowserOutput(output, frameToken, stage, diagnoseExecutionFailure) {
   const [begin, end] = frameParts(frameToken);
+  // The serving owner supplies safe HTTP diagnosis; the standalone browser
+  // adapter keeps its small import closure and ordinary generic failure path.
   const found = [];
   const visit = value => {
     if (typeof value === "string") {
@@ -108,7 +110,7 @@ export function parseBrowserOutput(output, frameToken) {
       }
     } else if (Array.isArray(value)) value.forEach(visit);
     else if (record(value)) {
-      if (value.isError === true) throw failure("Native JavaScript execution failed.", "web_browser_execution_failed");
+      if (value.isError === true) throw diagnoseExecutionFailure?.(output, stage) ?? failure("Native JavaScript execution failed.", "web_browser_execution_failed");
       if (typeof value.text === "string") visit(value.text);
       if (value.content !== undefined) visit(value.content);
       if (value.output !== undefined) visit(value.output);
@@ -269,6 +271,7 @@ export function readBrowserReplies(elements, options) {
       if (options.projection === "identities" || options.projection === "anchor"
           || options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
+      if (options.projection === "recovery") group.reply.recoveryTextContent = group.wrapper?.textContent ?? null;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
       // Only the SDK's exact Regenerate locator supplies these nodes. Text,
@@ -841,8 +844,10 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   const { operation, ui } = options;
   let recovered = false;
   let recoveryEffects, recoveryTabId;
-  let verifyRecoveryTexts;
+  let verifyRecoveryTexts, recoveryFailure;
   let recoverMissingTab = false;
+  let readOnlyRecoveryCustody;
+  try {
   if (operation === "continue" && options.recovery && !state.bindingLost && !state.needsHistory && !options.needsHistory && state.browser && state.tabId) {
     if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
     activeOwner(options.expectedOwnerTurnIds, true);
@@ -860,8 +865,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       if (recoverMissingTab) activeOwner(options.expectedOwnerTurnIds, true);
       else {
         const recoveryOwner = globalThis.routerWebActiveTurns?.get(options.sessionId);
-        if (recoveryOwner?.state === state) throw new Error("The preceding saved-chat recovery did not finish verification; continuation remains blocked.");
-        if (recoveryOwner) throw new Error("A different native turn owns the active browser recovery.");
+        if (recoveryOwner?.state === state) throw new Error(`The preceding saved-chat recovery did not finish verification; continuation remains blocked. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason: "prior-recovery-unverified", phase: "ownership-guard" })}`);
+        if (recoveryOwner) throw new Error(`A different native turn owns the active browser recovery. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason: "foreign-recovery-owner", phase: "ownership-guard" })}`);
       }
     };
     requireRecoveryOwnership();
@@ -898,10 +903,13 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const { createHash } = await import("node:crypto");
     requireRecoveryOwnership();
     let recoveredReplyId, recoveredBaselineIds, recoveredGenerationIds;
-    const unobservedRecovery = () => ({ reason: null, urlMatches: null, temporaryInactive: null,
+    let recoveryPhase = "initial-proof";
+    const unobservedRecovery = () => ({ reason: null, phase: recoveryPhase, urlMatches: null, temporaryInactive: null,
       replyCount: null, replyIdentitiesValid: null, generationTurnCount: null, generationIsLatest: null,
       freshReplyCount: null, freshReplyIsLatest: null, expectedReplyMatches: null, replyTextAvailable: null,
       recordedReplyPresent: null, prefixLongEnough: null, prefixMatches: null,
+      expectedPrefixUtf16Length: Math.min(proof.assistantPrefix.length, 1024),
+      recordedReplyUtf16Length: null, recordedReplyUtf16LengthCapped: null, recordedReplyHasAnswer: null,
       composerCount: null, composerShapeValid: null, composerEmpty: null,
       mountedTurnCount: null, prefixMatchingReplyCount: null, latestReplyPrefixMatches: null,
       checkpointReplyCount: null, checkpointIsLatestReply: null,
@@ -971,6 +979,9 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       if (!(recoveryDiagnostic.replyTextAvailable = typeof text === "string")) return recoveryRejected(fresh.length ? "reply-text-unavailable" : "missing-fresh-reply");
       recoveryDiagnostic.recordedReplyPresent = Boolean(recorded);
       if (recorded) {
+        recoveryDiagnostic.recordedReplyUtf16Length = Math.min(recorded.text.length, 10000);
+        recoveryDiagnostic.recordedReplyUtf16LengthCapped = recorded.text.length > 10000;
+        recoveryDiagnostic.recordedReplyHasAnswer = recorded.answer === true;
         if (!(recoveryDiagnostic.prefixLongEnough = recorded.text.length >= proof.assistantPrefix.length)) return recoveryRejected("reply-prefix-too-short");
         if (!(recoveryDiagnostic.prefixMatches = createHash("sha256").update(recorded.text.slice(0, proof.assistantPrefix.length), "utf8").digest("hex") === proof.assistantPrefix.sha256)) return recoveryRejected("reply-prefix-mismatch");
       } else if (!progressing) return recoveryRejected("recorded-reply-missing");
@@ -1023,7 +1034,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       recoveryView = undefined;
       if (!(recoveryDiagnostic.urlMatches = await tab.url() === proof.url)) return recoveryRejected("saved-url-changed");
       if (!(recoveryDiagnostic.temporaryInactive = await temporaryInactive(tab))) return recoveryRejected("temporary-mode-active");
-      const view = await snapshot(tab), accepted = verifyRecoveryTexts(view);
+      const view = await snapshot(tab, undefined, undefined, "recovery"), accepted = verifyRecoveryTexts(view);
       recoveryView = view;
       if (!navigate && !accepted && recoveryDiagnostic.reason === "generation-turn-not-unique") {
         try { Object.assign(recoveryDiagnostic, await recoveryViewport(view)); }
@@ -1050,8 +1061,15 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       recoveryDiagnostic.composerEmpty = values[0] === null;
       return recoveryDiagnostic.composerEmpty || recoveryRejected(values[0] === "shape" ? "composer-shape-invalid" : "composer-draft-present");
     };
-    const recoveryFailure = message => new Error(`${message} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
-    const waitForRecoveredReply = async (message, registered = false) => {
+    recoveryFailure = message => new Error(`${message} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
+    const shortCompletedReply = () => proof.completed && proof.replyId && proof.assistantPrefix.length > 0
+      && recoveryDiagnostic.reason === "reply-prefix-too-short"
+      && recoveryDiagnostic.urlMatches === true && recoveryDiagnostic.temporaryInactive === true
+      && recoveryDiagnostic.replyIdentitiesValid === true && recoveryDiagnostic.generationTurnCount === 1
+      && recoveryDiagnostic.generationIsLatest === true && recoveryDiagnostic.freshReplyCount === 1
+      && recoveryDiagnostic.expectedReplyMatches === true && recoveryDiagnostic.recordedReplyHasAnswer === true
+      && typeof recoveryView?.replies.find(reply => reply.messageId === proof.replyId)?.recoveryTextContent === "string";
+    const waitForRecoveredReply = async (message, registered = false, contentOnly = false) => {
       const deadline = Date.now() + 10000;
       const allowance = createAllowance(deadline, () => recoveryFailure(message));
       const assertRecoveryOwner = () => {
@@ -1065,20 +1083,26 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       catch { throw recoveryFailure(message); }
       assertRecoveryOwner(); allowance();
       const checkpoint = recoveryState(tab, proof);
-      let matched = false;
-      const result = await browserReadiness(checkpoint.ready, {
-        nextTimeout: () => { assertRecoveryOwner(); return Math.floor(deadline - Date.now() - 1000); },
-        afterWait: ({ error, timedOut }) => {
-          assertRecoveryOwner(); matched = !error;
-          if (error && !timedOut) throw recoveryFailure(message);
-        },
-        inspect: async () => {
-          assertRecoveryOwner(); allowance();
-          const verified = await verifiedReply();
-          assertRecoveryOwner(); allowance();
-          return { verified, settled: matched };
-        }, ready: result => result.verified || result.settled,
-      });
+      const waitForProof = async (locator, contentEvent = false) => {
+        let matched = false;
+        return browserReadiness(locator, {
+          nextTimeout: () => { assertRecoveryOwner(); return Math.floor(deadline - Date.now() - 1000); },
+          afterWait: ({ error, timedOut }) => {
+            assertRecoveryOwner(); matched = !error;
+            if (error && !timedOut) throw recoveryFailure(message);
+          },
+          inspect: async () => {
+            assertRecoveryOwner(); allowance();
+            const verified = await verifiedReply();
+            assertRecoveryOwner(); allowance();
+            return { verified, settled: matched, short: contentEvent && shortCompletedReply() };
+          }, ready: result => result.verified || result.settled || contentEvent && !result.short,
+        });
+      };
+      const waitForContent = () => waitForProof(checkpoint.contentChangedSince(
+        recoveryView.replies.find(reply => reply.messageId === proof.replyId).recoveryTextContent), true);
+      let result = contentOnly ? await waitForContent() : await waitForProof(checkpoint.ready);
+      if (!contentOnly && !result.verified && shortCompletedReply()) result = await waitForContent();
       if (!result.verified) throw recoveryFailure(message);
     };
     const staleCompletedCheckpoint = () => {
@@ -1093,6 +1117,10 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     };
     if (!navigate) {
       let verified = await verifiedReply();
+      if (!verified && shortCompletedReply()) {
+        await waitForRecoveredReply("The saved chat reply or composer changed; recovery cannot reuse it.", false, true);
+        verified = true;
+      }
       if (!verified && staleCompletedCheckpoint()) {
         requireRecoveryOwnership();
         if (await tab.url() !== proof.url || !(await temporaryInactive(tab))) throw recoveryFailure("The saved chat changed before refresh; recovery cannot reload it.");
@@ -1133,6 +1161,13 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     registerActive();
     await tab.markHandoff();
     activeOwner([options.turnId], true);
+    recoveryPhase = "registered-recheck";
+    recoveryDiagnostic.phase = recoveryPhase;
+    if (!recoverMissingTab && matches.length === 1 && tab.id === proof.tabId && !navigate
+        && !recoveryEffects.tabNavigated && proof.completed && options.interruptedTurnId === undefined) {
+      readOnlyRecoveryCustody = { owner: globalThis.routerWebActiveTurns?.get(options.sessionId), tab, browser,
+        savedUrl: proof.url, generationTurnKey: proof.generationTurnKey };
+    }
     if (navigate) {
       if (matches.length && !(await emptyNormalHome(tab)) || await tab.url() !== recoveryTabUrl) throw new Error("The recovery tab changed before saved chat navigation; recovery cannot overwrite it.");
       activeOwner([options.turnId], true);
@@ -1180,7 +1215,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const view = await snapshot(state.tab, undefined, recovered ? undefined : state.generationTurnKey), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
     if (recovered) {
-      if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+      if (!verifyRecoveryTexts(view)) throw recoveryFailure("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
       delete state.bindingLost;
       delete state.recoveryReloadCheckpoint;
     }
@@ -1207,7 +1242,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   if (!view.mutation.emptyComposer) throw new Error("The retained conversation composer has a draft; continuation cannot overwrite it.");
   if (!view.mutation.normal) throw new Error("The retained conversation left its normal saved URL during continuation.");
   if (recovered) {
-    if (!verifyRecoveryTexts(view)) throw new Error("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
+    if (!verifyRecoveryTexts(view)) throw recoveryFailure("The saved chat latest reply changed during continuation; recovery cannot reuse it.");
     delete state.bindingLost;
     delete state.recoveryReloadCheckpoint;
   }
@@ -1234,6 +1269,20 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   registerActive();
   emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
     ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
+  } finally {
+    // Only a terminal, action-free recovery on the original tab may relinquish
+    // its own failed read custody. Navigated, reopened and interrupted paths
+    // retain their guards, as does a replacement owner or uncertain action.
+    const custody = readOnlyRecoveryCustody, active = globalThis.routerWebActiveTurns;
+    if (custody && state.bindingLost === true && active?.get(options.sessionId) === custody.owner
+        && custody.owner?.state === state && custody.owner.turnId === options.turnId
+        && state.tab === custody.tab && state.browser === custody.browser && state.tabId === recoveryTabId
+        && custody.tab.id === recoveryTabId && state.savedUrl === custody.savedUrl
+        && state.generationTurnKey === custody.generationTurnKey && state.sendConfirmed === true
+        && !state.reconciliationStop && !state.recoveryReloadCheckpoint && !state.unsentDraft && !state.needsHistory) {
+      active.delete(options.sessionId);
+    }
+  }
 }
 
 async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, createContext) {

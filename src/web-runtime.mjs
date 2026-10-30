@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { discoverBrowserExecutor, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
+import { savedChatRecoveryError } from "./web-browser-diagnostics.mjs";
 import { webModelSelection } from "./web-models.mjs";
 import { browserObservationIdleComplete, browserObservationOwnershipLost } from "./web-browser-state.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
@@ -942,7 +943,7 @@ export function createInAppWebRuntime({
               if (turn.processed.has(output.call_id)) throw fail("A native Web result was already consumed.");
             }
             if (pending.kind === "browser") {
-              const value = parseBrowserOutput(outputs[0].output, pending.frameToken);
+              const value = parseBrowserOutput(outputs[0].output, pending.frameToken, pending.operation, savedChatRecoveryError);
               if (value.operation !== pending.operation) throw fail("Native browser output belongs to another stage.");
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
               response = await advance(turn, payload, value, pending);
