@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -17,7 +17,8 @@ function compile(source, output, references = [], target = "exe") {
     { windowsHide: true, timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] });
 }
 function fixture(t) {
-  const root = mkdtempSync(path.join(os.tmpdir(), "router-entry-"));
+  // Match native launcher paths when Windows TEMP uses a short name or junction.
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "router-entry-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const official = path.join(root, "node_repl.exe"), officialSource = path.join(root, "official.cs");
   writeFileSync(officialSource, `using System;
