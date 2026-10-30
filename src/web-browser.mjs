@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { browserDom, browserIdleButtonExactName, createStopBrowserState } from "./web-browser-state.mjs";
+import { browserDom, browserIdleButtonExactName, browserObservationBudget, createBrowserAllowance, createObservationBrowserState, createStopBrowserState, createSendBrowserState, createSendReadyLocator, createHomeBrowserState, createRecoveryBrowserState, waitForHomeBrowserReadiness, createBrowserNavigationObserver, waitForBrowserReadiness } from "./web-browser-state.mjs";
 export { browserDom, browserIdleButtonExactName };
 
 const nativeNamespace = "mcp__node_repl";
@@ -57,14 +57,26 @@ export function isSavedChatUrl(value) {
   } catch { return false; }
 }
 
-// Every phase can spend only the remainder of its caller's deadline. In
-// particular paste readiness, saved URL and generation proof share Send's budget.
-async function waitForBrowserState(ready, deadline, message) {
-  while (!(await ready())) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw new Error(message);
-    await new Promise(resolve => setTimeout(resolve, Math.min(100, remaining)));
-  }
+// Query controls (for example model selection) do not change an unsaved normal
+// home. Saved conversations retain exact URL equality after establishment.
+export function isNormalChatHomeUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com" && url.pathname === "/"
+      && !url.searchParams.has("temporary-chat") && !url.hash && !url.username && !url.password;
+  } catch { return false; }
+}
+
+// Eligibility to wait after one first Send, never saved-chat proof or permission
+// to prepare a Send on an unrelated route.
+export function isPendingChatUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com" && !url.searchParams.has("temporary-chat")
+      && !url.hash && !url.username && !url.password;
+  } catch { return false; }
 }
 
 function frameParts(frameToken) {
@@ -122,12 +134,59 @@ const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(brows
 // identity and its text come from the same DOM read.
 export function readBrowserReplies(elements, options) {
   const ui = options.ui, wrapperSelector = ui.messageSelector;
+  const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies.length === 1 ? bodies[0] : null;
+  if ((options.observation || options.indicator || options.dispatch) && (!body || body.ownerDocument?.body !== body)) return null;
   const turns = elements.filter(element => element.matches(ui.turnSelector));
   const selectedElements = elements.filter(element => element.matches(options.assistantSelector));
+  const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
+    && !element.matches(options.assistantSelector));
+  const contentSelector = `${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector},${ui.controlContentSelector}`;
+  const visible = element => {
+    const rect = element.getBoundingClientRect(), style = body.ownerDocument.defaultView.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
+  };
+  if (options.indicator) {
+    const normalized = element => (element.textContent ?? "").replace(/\s+/gu, " ").trim();
+    if (options.indicator === "full") {
+      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
+      const outside = element => visible(element) && !element.closest(excluded) && !element.querySelector(excluded);
+      const banners = controls.filter(element => normalized(element) === ui.conversationFullText);
+      const buttons = controls.filter(element => !banners.includes(element));
+      return { url: body.ownerDocument.URL, conversationFull: banners.some(outside) && buttons.some(outside) };
+    }
+    const owned = turns.filter(turn => turn.getAttribute(ui.turnKeyAttribute) === options.generationTurnKey);
+    const composers = controls.filter(element => element.matches(ui.composerSelector) && visible(element));
+    const errors = controls.filter(element => !composers.includes(element) && normalized(element) === ui.requestErrorText);
+    const retries = controls.filter(element => !composers.includes(element) && !errors.includes(element));
+    const clean = element => !element.closest(contentSelector) && !element.querySelector(contentSelector);
+    const before = (left, right) => elements.indexOf(left) >= 0 && elements.indexOf(left) < elements.indexOf(right);
+    const pairs = [];
+    if (owned.length === 1 && turns.at(-1) === owned[0] && composers.length === 1
+        && typeof options.generationMarker === "string" && options.generationMarker
+        && (owned[0].textContent ?? "").includes(options.generationMarker)
+        && typeof options.submittedComposerText === "string" && options.submittedComposerText.includes(options.generationMarker)
+        && composers[0].innerText === options.submittedComposerText) {
+      for (const error of errors.filter(element => visible(element) && clean(element))) {
+        for (const retry of retries.filter(element => visible(element) && clean(element))) {
+          let region = error;
+          while (region && !region.contains(retry)) region = region.parentElement;
+          if (!region || !clean(region)) continue;
+          const errorTurn = error.closest(ui.turnSelector), retryTurn = retry.closest(ui.turnSelector);
+          const inTurn = errorTurn === owned[0] && retryTurn === owned[0];
+          const afterTurn = !errorTurn && !retryTurn && !region.querySelector(ui.turnSelector)
+            && before(owned[0], error) && before(owned[0], retry)
+            && before(error, composers[0]) && before(retry, composers[0]);
+          if (inTurn || afterTurn) pairs.push(region);
+        }
+      }
+    }
+    return { url: body.ownerDocument.URL, ...(pairs.length === 1 ? { requestError: "unknown_error" } : {}) };
+  }
+  const completionControls = options.mutation ? [] : controls.filter(action => !action.closest(contentSelector));
   const turnOrders = new Map();
   const turnOrder = turn => {
     if (!turnOrders.has(turn)) {
-      const ordered = Array.from(turn.querySelectorAll(`${options.assistantSelector ?? ui.assistantSelector},${ui.streamingStatusSelector},${ui.labelSelector}`));
+      const ordered = Array.from(turn.querySelectorAll(`${options.assistantSelector ?? ui.assistantSelector},${ui.streamingStatusSelector},${ui.buttonSelector}`));
       turnOrders.set(turn, new Map(ordered.map((element, index) => [element, index])));
     }
     return turnOrders.get(turn);
@@ -212,20 +271,27 @@ export function readBrowserReplies(elements, options) {
       group.reply.answer = group.answerRoots.length > 0;
       const finalRoot = group.answerRoots.at(-1);
       const order = turn ? turnOrder(turn) : null;
-      group.reply.completionActionAfter = Boolean(finalRoot && turn && Array.from(turn.querySelectorAll(ui.labelSelector))
-        .some(action => action.getAttribute(ui.labelAttribute) === options.regenerateName
-          && !action.closest(options.assistantSelector) && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
+      // Only the SDK's exact Regenerate locator supplies these nodes. Text,
+      // direct labels, and labelledby all obey the same accessible-name owner.
+      group.reply.completionActionAfter = Boolean(finalRoot && turn && completionControls
+        .some(action => action.closest(ui.turnSelector) === turn
+          && order.has(finalRoot) && order.has(action) && order.get(finalRoot) < order.get(action)));
     }
     const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.projection === "identities" || options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
       if (options.projection === "anchor") return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
-        && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)) };
+        && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)),
+        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)) };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
         complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
+    // The SDK's guarded BODY supplies normal-mode/cardinality evidence. Keep
+    // the URL and prompt-owned turn in this same document read; separate URL
+    // and visibility RPCs can straddle first-chat navigation or hydration.
+    if (options.dispatch) projection.dispatch = { url: body.ownerDocument.URL, temporaryInactive: true };
     if (options.mutation) {
       const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies[0], document = body?.ownerDocument;
       if (bodies.length !== 1 || document?.body !== body) throw new Error("The browser mutation document is unavailable.");
@@ -255,76 +321,11 @@ export function readBrowserReplies(elements, options) {
         chipVisible: chips.length === 1 && visible(chips[0]) };
     }
     if (options.observation) {
-      const bodies = elements.filter(element => element.tagName === "BODY");
-      const body = bodies.length === 1 ? bodies[0] : null, document = body?.ownerDocument;
-      if (!document || document.body !== body) throw new Error("The browser observation document is unavailable.");
-      const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
-        && !element.matches(options.assistantSelector));
-      // The semantic union selected each exact accessible control. Canonical
-      // direct labels or text identify its group without guessing aria-labelledby.
-      const name = element => element.getAttribute("aria-labelledby") ? null
-        : element.getAttribute("aria-label") || (element.textContent ?? "").replace(/\s+/gu, " ").trim();
-      const button = element => element.matches('button,[role="button"]');
-      const heading = element => /^(?:H[1-6])$/u.test(element.tagName) || element.getAttribute("role") === "heading";
-      const visible = element => {
-        const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
-        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
-      };
-      const groups = [
-        ["stop", ui.stopButtonExactName, button], ["regenerate", ui.regenerateButtonExactName, button],
-        ["temporaryToggle", ui.temporaryToggleName, button], ["temporaryHeading", ui.temporaryHeadingName, heading],
-        ["fullButton", ui.startNewChatButtonName, button], ["fullBanner", ui.conversationFullText, () => true],
-        ["requestError", ui.requestErrorText, () => true], ["retry", ui.retryButtonExactName, button],
-        ["composer", ui.composerName, element => element.getAttribute("role") === "textbox" || element.getAttribute("contenteditable") === "true"],
-      ];
-      const recognized = new Set(), values = {};
-      for (const [key, expected, kind] of groups) {
-        const matches = controls.filter(element => kind(element) && (key === "fullBanner"
-          ? (element.textContent ?? "").replace(/\s+/gu, " ").trim() : name(element)) === expected);
-        matches.forEach(element => recognized.add(element));
-        values[key] = { matches, count: matches.length, visible: matches.some(visible) };
-      }
-      if (recognized.size !== controls.length || ["stop", "temporaryToggle", "temporaryHeading"].some(key => values[key].count > 1)) {
-        throw new Error("The browser observation controls are unrecognized or ambiguous.");
-      }
-      const excluded = `${ui.assistantFinalReplySelector},${ui.assistantSelector},${ui.conversationContentSelector}`;
-      const outside = key => values[key].matches.some(element => visible(element)
-        && !element.closest(excluded) && !element.querySelector(excluded));
-      // The site's error pair is evidence only in this new latest generation,
-      // with the exact submitted composer restored. Quoted errors, tool output,
-      // older turns and a restored draft by itself cannot reject a request.
-      const owned = turns.filter(turn => turn.getAttribute(ui.turnKeyAttribute) === options.generationTurnKey);
-      const composers = values.composer.matches.filter(visible);
-      const content = `[data-message-author-role],${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector},pre,code,[contenteditable="true"],[role="textbox"],textarea,input`;
-      const clean = element => !element.closest(content) && !element.querySelector(content);
-      const before = (left, right) => elements.indexOf(left) >= 0 && elements.indexOf(left) < elements.indexOf(right);
-      let requestError = false;
-      if (owned.length === 1 && turns.at(-1) === owned[0] && composers.length === 1
-          && typeof options.generationMarker === "string" && options.generationMarker
-          && (owned[0].textContent ?? "").includes(options.generationMarker)
-          && typeof options.submittedComposerText === "string" && options.submittedComposerText.includes(options.generationMarker)
-          && composers[0].innerText === options.submittedComposerText) {
-        const pairs = [];
-        for (const error of values.requestError.matches.filter(element => visible(element) && clean(element))) {
-          for (const retry of values.retry.matches.filter(element => visible(element) && clean(element))) {
-            let region = error;
-            while (region && !region.contains(retry)) region = region.parentElement;
-            if (!region || !clean(region)) continue;
-            const errorTurn = error.closest(ui.turnSelector), retryTurn = retry.closest(ui.turnSelector);
-            const inTurn = errorTurn === owned[0] && retryTurn === owned[0];
-            const afterTurn = !errorTurn && !retryTurn && !region.querySelector(ui.turnSelector)
-              && before(owned[0], error) && before(owned[0], retry)
-              && before(error, composers[0]) && before(retry, composers[0]);
-            if (inTurn || afterTurn) pairs.push(region);
-          }
-        }
-        requestError = pairs.length === 1;
-      }
-      projection.observation = { url: document.URL, stopVisible: values.stop.visible,
-        regenerateVisible: values.regenerate.visible, regenerateCount: values.regenerate.count,
-        temporaryInactive: !values.temporaryToggle.visible && !values.temporaryHeading.visible,
-        conversationFull: outside("fullBanner") && outside("fullButton"),
-        ...(requestError ? { requestError: "unknown_error" } : {}) };
+      // The guarded BODY proves Stop/cardinality and normal-chat controls in
+      // this same read. The only other controls selected here are Regenerate.
+      projection.observation = { url: body.ownerDocument.URL, stopVisible: options.stopVisible,
+        regenerateVisible: completionControls.some(visible), regenerateCount: completionControls.length,
+        temporaryInactive: true, conversationFull: false };
     }
     return projection;
   };
@@ -344,13 +345,16 @@ export function readBrowserReplies(elements, options) {
 
 // This function is serialized into the active native REPL. It uses only public
 // browser runtime objects; every call finishes inside that native execution.
-function createBrowserView(state, options, replyReader, savedUrl) {
+function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendingUrlEligible, createObservationState, createSendState, navigationObserver) {
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
-  const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-    .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
+  const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => {
+    let selection = tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
+    if (!projection) selection = selection.or(role(ui.regenerateButtonExactName, "button", tab));
+    return selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}),
       ...(projection ? { projection } : {}), ...(baselineTurnKeys ? { baselineTurnKeys } : {}) }, { timeoutMs: 1000 });
+  };
   const replies = async (tab = state.tab) => (await snapshot(tab)).replies;
   const replyIdentityIssue = values => values.some(value => value.messageId === null || value.messageId === undefined) ? "missing-message-identity"
     : values.some(value => typeof value.messageId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(value.messageId)) ? "invalid-message-identity"
@@ -386,18 +390,16 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     ]);
     return banner && button;
   };
-  const temporaryInactive = async (tab = state.tab) => {
-    const [toggle, heading] = await Promise.all([
-      role(ui.temporaryToggleName, "button", tab).isVisible(),
-      role(ui.temporaryHeadingName, "heading", tab).isVisible(),
-    ]);
-    return !toggle && !heading;
-  };
+  const normalSnapshot = async (tab = state.tab) => createObservationState(tab, { ui, generationTurnKey: state.generationTurnKey ?? "pending" })
+    .indicatorBody.evaluateAll(elements => {
+      const body = elements[0];
+      return elements.length === 1 && body.ownerDocument?.body === body ? { url: body.ownerDocument.URL } : null;
+    }, { normalMode: true }, { timeoutMs: 1000 });
+  const temporaryInactive = async (tab = state.tab) => (await normalSnapshot(tab)) !== null;
   const normal = async (value) => {
-    value ??= await state.tab.url();
-    const url = new URL(value);
-    if (url.origin !== "https://chatgpt.com" || url.searchParams.has("temporary-chat") || !(await temporaryInactive())) return false;
-    return state.hasSentMessage ? savedUrl(value) && value === state.savedUrl : url.pathname === "/";
+    const observed = await normalSnapshot();
+    if (!observed || value !== undefined && value !== observed.url) return false;
+    return state.hasSentMessage ? savedUrl(observed.url) && observed.url === state.savedUrl : homeUrl(observed.url);
   };
   const ensureOwned = async (reacquired = false) => {
     if (!state?.browser || !state.tab || !state.tabId || state.sessionId !== options.sessionId || !reacquired && options.tabId && options.tabId !== state.tabId) throw new Error("Owned browser binding is unavailable.");
@@ -412,28 +414,157 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     if ((requireActive && !current) || current && (!turnIds.includes(current.turnId) || current.state !== state)) throw new Error("A different native turn owns the active browser cleanup.");
     return current;
   };
-  const observeGeneration = async (ownedUrl) => {
-    activeOwner([options.turnId], true);
-    const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === state.savedUrl;
+  const anchorState = () => createSendState(state.tab, { ui, generationMarker: state.generationMarker, baselineTurnKeys: state.baselineTurnKeys });
+  const anchorProof = async (controls = anchorState(), timeoutMs = 1000) => {
+    const value = await createObservationState(state.tab, { ui, generationTurnKey: "pending" }).indicatorBody
+      .or(state.tab.playwright.locator(ui.turnSelector)).evaluateAll(replyReader,
+        { ui, assistantSelector: ui.assistantFinalReplySelector, projection: "anchor", dispatch: true,
+          generationMarker: state.generationMarker, baselineTurnKeys: state.baselineTurnKeys }, { timeoutMs });
+    if (!value) throw Object.assign(new Error("The Send normal-mode controls are unrecognized or ambiguous; its effect is uncertain. ROUTER_WEB_SEND_DIAGNOSTIC normal-controls-unavailable"), { routerSendFailure: "saved-url", routerSendDiagnostic: "normal-controls-unavailable" });
+    return { ...controls.classify(value), url: value.dispatch.url };
+  };
+  const confirmAnchor = anchor => {
+    state.generationTurnKey = anchor;
+    state.sendConfirmed = true;
+    delete state.unsentDraft; delete state.unsentComposerText;
+    for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
+  };
+  const observeGeneration = async (ownedUrl, allowance) => {
+    if (!state.generationTurnKey) {
+      activeOwner([options.turnId], true);
+      if (!state.sendClicked || !state.hasSentMessage || !state.generationMarker || (state.savedUrl ? ownedUrl !== state.savedUrl : !pendingUrlEligible(ownedUrl))
+          || options.operation !== "observe" || options.inputAcknowledgementPending !== true || options.observationWait === undefined) {
+        throw new Error(`The observed Send has no verified generation identity. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
+          reason: "pending-state-invalid", sdkUrlClass: homeUrl(ownedUrl) ? "normal-home" : savedUrl(ownedUrl) ? "saved-chat" : "other",
+          savedUrlEstablished: Boolean(state.savedUrl), savedUrlMatches: state.savedUrl ? ownedUrl === state.savedUrl : null,
+          sendClicked: state.sendClicked === true, hasSentMessage: state.hasSentMessage === true, markerPresent: Boolean(state.generationMarker),
+          observe: options.operation === "observe", acknowledgementPending: options.inputAcknowledgementPending === true,
+          heldObservation: options.observationWait !== undefined })}`);
+      }
+      const controls = anchorState(), pendingTab = state.tab, pendingTabId = state.tabId, pendingBrowser = state.browser, pendingUrl = state.savedUrl;
+      const assertPendingOwner = () => {
+        activeOwner([options.turnId], true);
+        if (state.tab !== pendingTab || state.tabId !== pendingTabId || pendingTab.id !== pendingTabId
+            || state.browser !== pendingBrowser || state.savedUrl !== pendingUrl || state.generationTurnKey) throw new Error("The pending browser Send changed during observation.");
+      };
+      assertPendingOwner();
+      let proof = await anchorProof(controls, allowance(0, 1000));
+      allowance(); assertPendingOwner();
+      const pendingNavigation = value => !pendingUrl && !value.blocked && pendingUrlEligible(value.url) && !savedUrl(value.url)
+        && (Boolean(value.anchor) || !homeUrl(value.url));
+      if (pendingNavigation(proof)) {
+        // A ready marker cannot wake a URL transition. Capture navigation before
+        // a fresh read; this read's allowance bounds its one event wait, while
+        // the existing held queue retains the total confirmation deadline.
+        const navigation = await navigationObserver(pendingTab, { allowance, assertCurrent: assertPendingOwner });
+        if (!navigation) throw new Error("The pending Send navigation observer is unavailable.");
+        proof = await anchorProof(controls, allowance(0, 1000));
+        allowance(); assertPendingOwner();
+        if (pendingNavigation(proof)) {
+          const advanced = await navigation.next(allowance(1000, 1000));
+          if (advanced === null) throw new Error("The pending Send navigation evidence is unavailable.");
+          if (advanced) proof = await anchorProof(controls, allowance(0, 1000));
+          allowance(); assertPendingOwner();
+        }
+      } else if (!proof.anchor && !proof.blocked && (pendingUrl ? proof.url === pendingUrl : pendingUrlEligible(proof.url))) {
+        // A native SDK semantic wait yields to the existing held observation.
+        // It never clicks, acknowledges input or grants a new Send allowance.
+        try { await controls.ready.waitFor({ state: "attached", timeoutMs: allowance(1000, 1000) }); }
+        catch (error) {
+          if (!(typeof error?.message === "string" && /^(?:Error: )?(?:Playwright selector deadline exceeded(?:\r?\n|$)|Timed out after \d+ms waiting for selector )/u.test(error.message))) throw new Error("The pending Send selector wait failed.");
+        }
+        assertPendingOwner(); allowance();
+        proof = await anchorProof(controls, allowance(0, 1000));
+        allowance(); assertPendingOwner();
+      }
+      if (proof.blocked) throw new Error("The pending Send generation is ambiguous or behind another generation.");
+      const currentUrl = proof.url;
+      if (pendingUrl ? currentUrl !== pendingUrl : !pendingUrlEligible(currentUrl)) throw new Error(`The pending Send left its owned saved conversation. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
+            reason: "url-class-mismatch", sdkUrlClass: homeUrl(ownedUrl) ? "normal-home" : savedUrl(ownedUrl) ? "saved-chat" : "other",
+            domUrlClass: homeUrl(currentUrl) ? "normal-home" : savedUrl(currentUrl) ? "saved-chat" : "other",
+            savedUrlEstablished: Boolean(pendingUrl), sdkDomUrlMatches: ownedUrl === currentUrl })}`);
+      allowance(); assertPendingOwner();
+      if (!proof.anchor || !savedUrl(currentUrl)) return { ownershipPending: true };
+      state.savedUrl = currentUrl;
+      ownedUrl = currentUrl;
+      confirmAnchor(proof.anchor);
+    }
+    const generationTurnKey = state.generationTurnKey, generationUrl = state.savedUrl,
+      generationTab = state.tab, generationTabId = state.tabId, generationBrowser = state.browser;
+    const assertCurrent = () => {
+      activeOwner([options.turnId], true);
+      if (state.generationTurnKey !== generationTurnKey || state.savedUrl !== generationUrl || state.tab !== generationTab
+          || state.tabId !== generationTabId || generationTab.id !== generationTabId || state.browser !== generationBrowser) throw new Error("The observed browser generation changed during observation.");
+    };
+    assertCurrent();
+    const normalUrl = value => state.hasSentMessage && savedUrl(value) && value === generationUrl;
     if (!normalUrl(ownedUrl)) throw new Error("The observed conversation left its normal saved URL.");
-    const generation = state.tab.playwright.locator(`[${ui.turnKeyAttribute}="${state.generationTurnKey}"]`);
-    const view = await state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)
-      .or(state.tab.playwright.locator("body"))
-      .or(role(ui.stopButtonExactName)).or(role(ui.temporaryToggleName)).or(role(ui.temporaryHeadingName, "heading"))
-      .or(generation.getByRole("button", { name: ui.regenerateButtonExactName, exact: true }))
-      .or(state.tab.playwright.getByText(ui.conversationFullText, { exact: true }).filter({ visible: true }))
-      .or(role(ui.startNewChatButtonName).filter({ visible: true }))
-      .or(state.tab.playwright.getByText(ui.requestErrorText, { exact: true }).filter({ visible: true }))
-      .or(role(ui.retryButtonExactName).filter({ visible: true })).or(role(ui.composerName, "textbox"))
-      .evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector, regenerateName: ui.regenerateButtonExactName,
-        generationTurnKey: state.generationTurnKey, generationMarker: state.generationMarker,
-        submittedComposerText: state.submittedComposerText, observation: true }, { timeoutMs: 1000 });
-    activeOwner([options.turnId], true);
-    const { url, stopVisible, temporaryInactive, conversationFull: full } = view.observation;
-    if (!normalUrl(url) || !temporaryInactive) throw new Error("The observed conversation left its normal saved URL.");
+    const controls = createObservationState(state.tab, { ui, generationTurnKey });
+    const profiles = [state.observedStopVisible !== false, state.observedStopVisible === false];
+    const unavailable = () => new Error("The browser observation controls are unrecognized or ambiguous, or the conversation left its normal saved URL.");
+    const ownershipOf = value => ({ anchorCount: value.turns.filter(turn => turn.turnKey === generationTurnKey).length,
+      turnCount: value.turns.length, latestMatches: value.turns.at(-1)?.turnKey === generationTurnKey });
+    const read = async (selection, projection) => {
+      assertCurrent();
+      const value = await selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
+        generationTurnKey, ...projection }, { timeoutMs: allowance(0, 1000) });
+      assertCurrent();
+      allowance();
+      if (projection.indicator && !value) throw unavailable();
+      if (value && !normalUrl(value.observation?.url ?? value.url)) throw new Error("The observed conversation left its normal saved URL.");
+      return value;
+    };
+    const readProfiles = async quiet => {
+      for (const stopVisible of profiles) {
+        const value = await read(controls.profile(stopVisible, quiet)
+          .or(state.tab.playwright.locator(`${ui.turnSelector},${ui.assistantFinalReplySelector}`)).or(controls.regenerate),
+        { observation: true, stopVisible });
+        if (value) return value;
+      }
+      return null;
+    };
+    const readView = async () => {
+      let value = await readProfiles(true);
+      if (!value) {
+        // Stop is irrelevant to site indicator facts and can change during
+        // these reads. Their BODY guard retains cardinality and normal mode.
+        const indicatorOptions = { generationMarker: state.generationMarker, submittedComposerText: state.submittedComposerText };
+        const full = await read(controls.indicatorBody.or(controls.fullBanner).or(controls.fullButton),
+          { ...indicatorOptions, indicator: "full" });
+        const error = await read(controls.indicatorBody.or(state.tab.playwright.locator(ui.turnSelector)).or(controls.requestError)
+          .or(controls.retry).or(controls.composer), { ...indicatorOptions, indicator: "error" });
+        // Return a fresh Stop/answer frame after the indicator reads. A prior
+        // active or completed frame cannot survive a renderer transition here.
+        value = await readProfiles(false);
+        if (value) {
+          const ownership = ownershipOf(value);
+          if (ownership.anchorCount === 1 && ownership.latestMatches) Object.assign(value.observation,
+            { conversationFull: full.conversationFull }, error.requestError ? { requestError: error.requestError } : {});
+        }
+      }
+      if (!value) throw unavailable();
+      state.observedStopVisible = value.observation.stopVisible;
+      return value;
+    };
+    const view = await readView();
+    const ownership = ownershipOf(view);
+    const pendingAcceptance = options.operation === "observe" && options.inputAcknowledgementPending === true;
+    const baselineTurns = new Set(state.baselineTurnKeys ?? []);
+    const foreignTurnCount = pendingAcceptance ? view.turns.filter(turn => turn.turnKey !== generationTurnKey
+      && !baselineTurns.has(turn.turnKey) && typeof turn.turnKey === "string"
+      && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(turn.turnKey)).length : 0;
+    const owned = ownership.anchorCount === 1 && ownership.latestMatches;
+    // A renderer may briefly unmount the anchor after any short read. Only the
+    // original identity can settle this; an unowned new UUID or duplicate is
+    // terminal. Older mounted turns cannot displace a unique latest anchor.
+    // The adapter consumes this content-free frame inside its existing deadline.
+    if (!owned && pendingAcceptance && options.observationWait !== undefined
+        && ownership.anchorCount < 2 && !foreignTurnCount) return { ownershipPending: true };
+    const { url, stopVisible, temporaryInactive: normalMode, conversationFull: full } = view.observation;
+    if (!normalUrl(url) || !normalMode) throw new Error("The observed conversation left its normal saved URL.");
     const texts = view.replies;
-    const anchorCount = view.turns.filter(turn => turn.turnKey === state.generationTurnKey).length;
-    const current = anchorCount !== 1 || view.turns.at(-1)?.turnKey !== state.generationTurnKey
+    const anchorCount = ownership.anchorCount;
+    const current = !owned
       ? { replyUnavailableReason: anchorCount > 1 ? "duplicate-generation-turn" : "generation-turn-not-latest" } : currentReply(texts);
     const { reply, replyUnavailableReason } = current, assistantText = reply?.text ?? "";
     if (reply) state.replyId = reply.messageId;
@@ -441,22 +572,23 @@ function createBrowserView(state, options, replyReader, savedUrl) {
     const regenerateVisible = Boolean(reply?.completionActionAfter) && view.observation.regenerateVisible;
     const statusComplete = anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete;
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
-    activeOwner([options.turnId], true);
+    assertCurrent();
     return { completed, assistantText, replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
+      ...(!owned ? { ownershipDiagnostic: { ...ownership, foreignTurnCount } } : {}),
       baselineReplyIds: state.baselineReplyIds,
       generationTurnKey: state.generationTurnKey, generationReplyIds: state.generationReplyIds ?? [],
       stopVisible, statusComplete, regenerateVisible, tabId: state.tabId, url, normal: true, conversationFull: full,
       ...(view.observation.requestError ? { requestError: view.observation.requestError } : {}) };
   };
-  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, temporaryInactive, normal, ensureOwned, activeOwner, observeGeneration };
+  return { role, snapshot, replies, validReplies, identityError, currentReply, conversationFull, savedUrl, homeUrl, pendingUrlEligible, temporaryInactive, normalSnapshot, normal, ensureOwned, activeOwner, observeGeneration, anchorState, anchorProof, confirmAnchor };
 }
 
-function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory) {
+function createBrowserOperationContext(state, options, nodeRepl, replyReader, viewFactory, lifecycle) {
   const { operation, ui } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
   const view = viewFactory(state, options, replyReader);
-  const { role, replies, temporaryInactive, activeOwner } = view;
+  const { role, replies, normalSnapshot, activeOwner, homeUrl } = view;
   // Native Interrupt runs in a new JS invocation. Retained tab ownership must
   // remain available there without looking for tabs by URL or replaying Send.
   const registerActive = () => {
@@ -479,7 +611,8 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
   const mutationSnapshot = async ({ includeReplies = false, generationTurnKey, projection = "identities" } = {}) => {
     const forbidden = [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
     let selection = state.tab.playwright.locator("body");
-    // Preserve each semantic control's cardinality even when mounted hidden.
+    // Preserve the public SDK's semantic control cardinality. Its role queries
+    // omit accessibility-hidden controls, whose presence is not active mode.
     // A missing guarded body makes the coherent read fail closed.
     for (const control of forbidden) selection = selection.filter({ hasNot: control.nth(1) });
     selection = selection.or(role(ui.composerName, "textbox"));
@@ -490,19 +623,35 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
       regenerateName: ui.regenerateButtonExactName, mutation: true, projection,
       ...(generationTurnKey ? { generationTurnKey } : {}),
       ...(options.pluginAppId ? { pluginChipSelector: options.pluginChipSelector } : {}) }, { timeoutMs: 1000 });
-    const current = result.mutation, url = new URL(current.url);
-    current.normal = current.idle && url.origin === "https://chatgpt.com" && !url.searchParams.has("temporary-chat")
-      && (state.hasSentMessage ? view.savedUrl(current.url) && current.url === state.savedUrl : url.pathname === "/");
+    const current = result.mutation;
+    current.normal = current.idle && (state.hasSentMessage
+      ? view.savedUrl(current.url) && current.url === state.savedUrl : homeUrl(current.url));
     return result;
   };
-  const normalHomeMode = async (tab = state.tab) => await tab.url() === "https://chatgpt.com/" && await temporaryInactive(tab);
-  const emptyNormalHome = async (tab = state.tab) => {
-    if (!(await normalHomeMode(tab))) return false;
-    const composer = role(ui.composerName, "textbox", tab), model = role(ui.modelButtonName, "button", tab), toggle = role(ui.temporaryButtonName, "button", tab);
-    return await composer.isVisible() && await model.isVisible() && await model.isEnabled()
-      && await toggle.isVisible() && await toggle.isEnabled()
-      && !(await role(ui.stopButtonExactName, "button", tab).isVisible()) && (await replies(tab)).length === 0 && await emptyComposer(tab);
+  const normalHomeMode = async (tab = state.tab) => homeUrl((await normalSnapshot(tab))?.url);
+  const homeState = tab => lifecycle.homeState(tab, { ui, pluginChipSelector: options.pluginChipSelector, homeUrl });
+  const emptyNormalHome = async (tab = state.tab, includeUrl = false) => homeState(tab).inspect(1000, includeUrl);
+  const waitForHome = async (owners, message) => {
+    const tab = state.tab, tabId = state.tabId, browser = state.browser;
+    const allowance = lifecycle.createAllowance(Date.now() + 10000, () => new Error(message));
+    const assertCurrent = () => {
+      activeOwner(owners, true);
+      if (state.tab !== tab || state.tabId !== tabId || tab.id !== tabId || state.browser !== browser) throw new Error("The owned tab changed while waiting for normal home readiness.");
+    };
+    assertCurrent();
+    const home = homeState(tab);
+    const transitional = value => {
+      try {
+        const url = new URL(value);
+        return url.origin === "https://chatgpt.com" && !url.username && !url.password && !url.hash
+          && !url.searchParams.has("temporary-chat") && !homeUrl(value)
+          && (!view.savedUrl(value) || value === state.rolloverFromUrl);
+      } catch { return false; }
+    };
+    const proof = await lifecycle.homeReadiness(tab, { home, browserReadiness: lifecycle.browserReadiness, allowance, assertCurrent, transitional }, lifecycle.navigationObserver);
+    if (proof?.normal !== true) throw new Error(message);
   };
+  const recoveryState = (tab, proof) => lifecycle.recoveryState(tab, { ui, proof });
   const clearUnsentDraft = async () => {
     const composer = role(ui.composerName, "textbox");
     if (typeof state.unsentDraft !== "string" || typeof state.unsentComposerText !== "string"
@@ -514,22 +663,25 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
   const resetChat = () => {
     Object.assign(state, { hasSentMessage: false, baselineReplyIds: [], sendAttempted: false, sendClicked: false,
       sendConfirmed: false, completed: false, retained: false });
-    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds", "reconciliationStop"]) delete state[key];
+    for (const key of ["savedUrl", "unsentDraft", "unsentComposerText", "replyId", "generationTurnKey", "generationReplyIds", "baselineTurnKeys", "reconciliationStop"]) delete state[key];
   };
 
   const requireBinding = () => {
     if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
     if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   };
-  return { ...view, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding };
+  return { ...view, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, waitForHome, recoveryState, clearUnsentDraft, resetChat, requireBinding };
 }
 
 // Selection belongs to the mutation cache. These reads share a stable picker phase;
 // mutations and their required readback remain sequential.
-async function selectBrowserModel(state, options, role) {
+async function selectBrowserModel(state, options, role, allowance) {
   const { ui } = options;
+  const read = async action => { allowance(); const value = await action(); allowance(); return value; };
+  const click = async locator => { await locator.click({ timeoutMs: allowance() }); allowance(); };
+  const press = async (locator, key) => { allowance(); await locator.press(key); allowance(); };
   const menu = role(ui.modelMenuName, "menu");
-  if (!(await menu.isVisible())) await role(ui.modelButtonName).click();
+  if (!(await read(() => menu.isVisible()))) await click(role(ui.modelButtonName));
   // The current picker renders the family as generic text inside an unnamed
   // radio menu item. Match its observed DOM text, then verify the full text.
   const familyLocator = () => menu.locator(ui.familySelector).filter({ hasText: options.modelFamily });
@@ -537,26 +689,26 @@ async function selectBrowserModel(state, options, role) {
   const power = menu.getByRole("menuitem", { name: ui.powerMenuItemName, exact: true });
   let family = familyLocator();
   const [familyCount, familyText, familyChecked] = await Promise.all([
-    family.count(), family.textContent(), family.getAttribute(ui.checkedAttribute),
+    read(() => family.count()), read(() => family.textContent()), read(() => family.getAttribute(ui.checkedAttribute)),
   ]);
   if (familyCount !== 1 || familyText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
   // Read the actual checked row before changing the picker. Collapsed rows
   // are readable but clipped over Power, so only click after expanding.
   if (familyChecked !== "true") {
-    if (await expand.isVisible()) await expand.click();
-    if (await expand.isVisible() || await power.isVisible()) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
-    await family.click();
-  } else if (!(await power.isVisible())) {
+    if (await read(() => expand.isVisible())) await click(expand);
+    if (await read(() => expand.isVisible()) || await read(() => power.isVisible())) throw new Error("The model family list did not expand; its clipped row cannot be selected.");
+    await click(family);
+  } else if (!(await read(() => power.isVisible()))) {
     // An already-expanded list returns to Power when its selected row is clicked.
-    if (await expand.isVisible()) throw new Error("The selected model Power view is unavailable.");
-    await family.click();
+    if (await read(() => expand.isVisible())) throw new Error("The selected model Power view is unavailable.");
+    await click(family);
   }
   family = familyLocator();
-  const [selectedCount, selectedText] = await Promise.all([family.count(), family.textContent()]);
+  const [selectedCount, selectedText] = await Promise.all([read(() => family.count()), read(() => family.textContent())]);
   if (selectedCount !== 1 || selectedText?.trim() !== options.modelFamily) throw new Error("Expected one exact observed model family.");
   const slider = menu.locator(ui.powerSliderSelector);
   const readPower = async attribute => {
-    const value = await slider.getAttribute(attribute);
+    const value = await read(() => slider.getAttribute(attribute));
     if (typeof value !== "string" || !/^[0-4]$/.test(value)) throw new Error("Observed Power attributes are unavailable.");
     return Number(value);
   };
@@ -567,17 +719,17 @@ async function selectBrowserModel(state, options, role) {
   if (minimum !== 0 || maximum !== 4 || !Number.isInteger(value) || value < 0 || value > 4) throw new Error("Observed Power range changed.");
   for (let move = 0; value !== options.power && move < 4; move += 1) {
     const direction = value > options.power ? -1 : 1;
-    await power.press(direction === -1 ? "ArrowLeft" : "ArrowRight");
+    await press(power, direction === -1 ? "ArrowLeft" : "ArrowRight");
     const after = await readPower(ui.powerValueAttribute);
     if (after !== value + direction) throw new Error("Power did not move exactly one step.");
     value = after;
   }
-  const [checked, text] = await Promise.all([family.getAttribute(ui.checkedAttribute), family.textContent()]);
+  const [checked, text] = await Promise.all([read(() => family.getAttribute(ui.checkedAttribute)), read(() => family.textContent())]);
   if (checked !== "true" || text?.trim() !== options.modelFamily || value !== options.power) throw new Error("Requested model and Power were not verified.");
-  await power.press("Escape");
+  await press(power, "Escape");
 }
 
-async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
+async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFactory, createContext) {
   const { emit } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   if (state.sessionId && (state.sessionId !== options.sessionId || state.runtimeModule !== options.runtimeModule)) throw new Error("Browser binding belongs to another session or runtime.");
   if (!state.agent) state.agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
@@ -585,29 +737,37 @@ async function runBrowserBootstrap(state, options, nodeRepl, replyReader, viewFa
   if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("Expected exactly one same-session in-app browser.");
   if (state.browser && state.browser.browserId !== own[0].id) throw new Error("Owned browser identity changed.");
   state.browser ??= await state.agent.browsers.get(own[0].id);
+  // Browser guidance includes the SDK's enforced confirmations prerequisite for
+  // capability use. A bare browser handle does not mark that guidance as read.
+  await state.browser.documentation();
   state.sessionId = options.sessionId;
   state.runtimeModule = options.runtimeModule;
   emit({});
   return;
 }
 
-async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
-  const { emit, registerActive, emptyNormalHome, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserOpen(state, options, nodeRepl, replyReader, viewFactory, createContext) {
+  const { emit, registerActive, waitForHome, emptyNormalHome, activeOwner, requireBinding, homeUrl } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   requireBinding();
   if (state.tab) throw new Error("This browser binding already owns a tab.");
   state.tab = await state.browser.tabs.new();
   state.tabId = state.tab.id;
+  const tab = state.tab, tabId = state.tabId;
   registerActive();
   await state.tab.goto("https://chatgpt.com/");
-  await waitForState(emptyNormalHome, Date.now() + 10000, "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
-  await state.tab.markHandoff();
-  emit({ tabId: state.tabId, url: await state.tab.url(), normal: true });
+  await waitForHome([options.turnId], "Empty normal ChatGPT home controls did not become ready within 10 seconds.");
+  await tab.markHandoff();
+  activeOwner([options.turnId], true);
+  const home = await emptyNormalHome(tab, true);
+  activeOwner([options.turnId], true);
+  if (state.tab !== tab || state.tabId !== tabId || tab.id !== tabId || home?.normal !== true || !homeUrl(home.url)) throw new Error("The initial normal home changed during retention.");
+  emit({ tabId, url: home.url, normal: true });
   return;
 }
 
 // Interrupted continuation uses the same retained cancellation policy and shared
 // semantic state factory; ordinary continuation retains its lifecycle guards.
-async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState) {
+async function reconcileInterruptedBrowserGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness, createAllowance, homeUrl) {
   const { ui } = options;
   const owner = activeOwner(owners, true), tab = state.tab, tabId = state.tabId, browser = state.browser,
     savedUrl = state.savedUrl, generationTurnKey = state.generationTurnKey;
@@ -629,52 +789,58 @@ async function reconcileInterruptedBrowserGeneration(state, options, owners, act
     if (generating || idleCount !== 1) throw new Error("The unsent browser turn is not idle; continuation cannot stop an unowned generation.");
     const currentUrl = await tab.url();
     assertCurrent();
-    if (currentUrl !== (savedUrl ?? "https://chatgpt.com/")) throw new Error("The unsent browser turn left its owned saved URL or normal home; continuation cannot clear its draft.");
+    if (savedUrl ? currentUrl !== savedUrl : !homeUrl(currentUrl)) throw new Error("The unsent browser turn left its owned saved URL or normal home; continuation cannot clear its draft.");
     return;
   }
   if (!state.hasSentMessage || !state.sendAttempted || !state.sendClicked || !savedUrl
       || typeof generationTurnKey !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(generationTurnKey)) throw new Error("Interrupted continuation requires the exact confirmed browser generation.");
   const browserState = createStopState(tab, { ui, generationTurnKey, stopName: owner.stopButtonName,
-    idleName: options.recoveryIdleButtonExactName });
+    idleName: options.recoveryIdleButtonExactName }, browserReadiness);
+  const confirmationDeadline = Date.now() + 10000;
+  const allowance = createAllowance(confirmationDeadline, () => new Error("The interrupted generation confirmation deadline expired."));
   let receipt = state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
   const composerRestored = () => receipt?.acknowledged === true && receipt.idleAbsent === true;
   const inspect = async () => {
     const view = await browserState.inspect({ allowComposerRestored: composerRestored(), preferInactive: Boolean(receipt),
-      beforeRead: () => { assertCurrent(); return 1000; }, afterRead: assertCurrent });
+      beforeRead: () => {
+        assertCurrent();
+        allowance(199);
+        return allowance(0, 1000);
+      }, afterRead: () => { assertCurrent(); allowance(); } });
     if (view?.url !== savedUrl) throw new Error("The owned saved chat URL changed; cleanup cannot stop another conversation.");
     if (view.matchingCount !== 1 || view.latestTurnKey !== generationTurnKey) throw new Error("The confirmed browser generation is no longer unique and latest; continuation cannot stop another generation.");
     if (!view.controlsRecognized || typeof view.stopVisible !== "boolean") throw new Error("The interrupted generation controls are unrecognized or ambiguous.");
     return view;
   };
-  const waitForReadiness = async locator => {
-    assertCurrent();
-    try { await locator.waitFor({ state: "visible", timeoutMs: 10000 }); }
-    catch { /* Readiness alone never proves generation inactivity. */ }
-    assertCurrent();
-  };
+  const waitForReadiness = (locator, ready) => browserState.waitForReadiness(locator, {
+    nextTimeout: () => { assertCurrent(); return Math.floor(confirmationDeadline - Date.now() - 300); },
+    afterWait: assertCurrent, inspect, ready,
+  });
   let view = await inspect();
   if (!view.inactive && !view.stopVisible && !receipt) {
-    await waitForReadiness(browserState.ready(false).or(browserState.stop));
-    view = await inspect();
+    view = await waitForReadiness(browserState.ready(false).or(browserState.stop), value => value.inactive || value.stopVisible);
   }
   if (!view.inactive && view.stopVisible && !receipt) {
     // Record dispatch before awaiting it. Reconciliation retries may read
     // the result, but must never repeat a click whose outcome is uncertain.
-    receipt = state.reconciliationStop = { generationTurnKey, idleAbsent: view.idleAbsent === true, acknowledged: false };
     assertCurrent();
-    try { await browserState.stop.click({ timeoutMs: 10000 }); receipt.acknowledged = true; }
+    const timeoutMs = allowance(300);
+    receipt = state.reconciliationStop = { generationTurnKey, idleAbsent: view.idleAbsent === true, acknowledged: false };
+    try { await browserState.stop.click({ timeoutMs }); receipt.acknowledged = true; }
     catch { /* Only explicit completion may reconcile a rejected click. */ }
     assertCurrent();
-    if (receipt.acknowledged) await waitForReadiness(browserState.ready(composerRestored()));
-    view = await inspect();
+    view = receipt.acknowledged
+      ? await waitForReadiness(browserState.ready(composerRestored()), value => value.inactive)
+      : await inspect();
   }
   if (!view.inactive) throw new Error("The interrupted browser generation has no affirmative inactivity proof; continuation remains blocked.");
 }
 
-async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, reconcileGeneration, createStopState) {
-  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, clearUnsentDraft, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserContinuation(state, options, nodeRepl, replyReader, viewFactory, createContext, reconcileGeneration, createStopState, browserReadiness, createAllowance) {
+  const { role, snapshot, validReplies, identityError, currentReply, conversationFull, temporaryInactive, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, mutationSnapshot, normalHomeMode, emptyNormalHome, recoveryState, clearUnsentDraft, resetChat, requireBinding, homeUrl } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { operation, ui } = options;
   let recovered = false;
+  let recoveryEffects, recoveryTabId;
   let verifyRecoveryTexts;
   let recoverMissingTab = false;
   if (operation === "continue" && options.recovery && !state.bindingLost && !state.needsHistory && !options.needsHistory && state.browser && state.tabId) {
@@ -709,6 +875,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const browser = await agent.browsers.get(own[0].id);
     requireRecoveryOwnership();
     if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
+    await browser.documentation();
+    requireRecoveryOwnership();
     const tabs = await browser.tabs.list();
     requireRecoveryOwnership();
     const hinted = tabs.filter(tab => tab.id === proof.tabId);
@@ -718,6 +886,11 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const tab = matches.length ? await browser.tabs.get(matches[0].id) : await browser.tabs.new();
     requireRecoveryOwnership();
     if (!tab?.id || matches.length && tab.id !== matches[0].id) throw new Error("The current tab identity changed during recovery.");
+    recoveryTabId = tab.id;
+    // A dispatched refresh remains part of recovery even if its checkpoint
+    // becomes readable only on a later continuation attempt.
+    recoveryEffects = { bindingRestored: true, tabReopened: !matches.length || tab.id !== proof.tabId,
+      tabNavigated: state.recoveryReloadCheckpoint !== undefined };
     const recoveryTabUrl = await tab.url();
     const navigate = recoveryTabUrl !== proof.url;
     requireRecoveryOwnership();
@@ -742,6 +915,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     const recoveryRejected = reason => { recoveryDiagnostic.reason = reason; return false; };
     const boundedCount = values => Math.min(values.length, 10000);
     verifyRecoveryTexts = view => {
+      if (tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
       const texts = view.replies;
       const fresh = texts.filter(value => !proof.baselineReplyIds.includes(value.messageId) && value.turnKey === proof.generationTurnKey);
       const latest = fresh.filter(value => value.answer).at(-1) ?? fresh.at(-1), text = latest?.text;
@@ -781,6 +955,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
         return recoveryRejected("generation-turn-not-unique");
       }
       if (!(recoveryDiagnostic.generationIsLatest = view.turns.at(-1)?.turnKey === proof.generationTurnKey)) return recoveryRejected("generation-turn-not-latest");
+      if (proof.completed && generationTurns[0].complete !== true) return recoveryRejected("generation-turn-incomplete");
       recoveryDiagnostic.freshReplyCount = boundedCount(fresh);
       const progressing = !proof.completed;
       if (proof.retainedTabOnly) {
@@ -876,6 +1051,36 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       return recoveryDiagnostic.composerEmpty || recoveryRejected(values[0] === "shape" ? "composer-shape-invalid" : "composer-draft-present");
     };
     const recoveryFailure = message => new Error(`${message} ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify(recoveryDiagnostic)}`);
+    const waitForRecoveredReply = async (message, registered = false) => {
+      const deadline = Date.now() + 10000;
+      const allowance = createAllowance(deadline, () => recoveryFailure(message));
+      const assertRecoveryOwner = () => {
+        if (!registered) return requireRecoveryOwnership();
+        activeOwner([options.turnId], true);
+        if (state.tab !== tab || state.browser !== browser || state.tabId !== recoveryTabId || tab.id !== recoveryTabId
+            || state.savedUrl !== proof.url || state.generationTurnKey !== proof.generationTurnKey) throw recoveryFailure("The owned recovery target changed while waiting for its checkpoint.");
+      };
+      assertRecoveryOwner();
+      try { await tab.playwright.waitForURL(proof.url, { timeoutMs: allowance(1000) }); }
+      catch { throw recoveryFailure(message); }
+      assertRecoveryOwner(); allowance();
+      const checkpoint = recoveryState(tab, proof);
+      let matched = false;
+      const result = await browserReadiness(checkpoint.ready, {
+        nextTimeout: () => { assertRecoveryOwner(); return Math.floor(deadline - Date.now() - 1000); },
+        afterWait: ({ error, timedOut }) => {
+          assertRecoveryOwner(); matched = !error;
+          if (error && !timedOut) throw recoveryFailure(message);
+        },
+        inspect: async () => {
+          assertRecoveryOwner(); allowance();
+          const verified = await verifiedReply();
+          assertRecoveryOwner(); allowance();
+          return { verified, settled: matched };
+        }, ready: result => result.verified || result.settled,
+      });
+      if (!result.verified) throw recoveryFailure(message);
+    };
     const staleCompletedCheckpoint = () => {
       const texts = recoveryView?.replies, latest = texts?.at(-1), baseline = proof.baselineReplyIds;
       return state.bindingLost === true && proof.completed && proof.replyId && proof.assistantPrefix.length > 0
@@ -906,21 +1111,20 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
           // Refresh only this proven stale predecessor. A failed attempt cannot
           // repeat the action for the same checkpoint or acquire cleanup ownership.
           state.recoveryReloadCheckpoint = checkpoint;
+          recoveryEffects.tabNavigated = true;
           try { await tab.reload(); }
           catch { throw recoveryFailure("The saved chat reload failed; recovery remains unverified."); }
           requireRecoveryOwnership();
           if (await tab.url() !== proof.url) throw recoveryFailure("The saved chat left its saved URL after refresh; recovery remains unverified.");
-          try { await tab.playwright.locator(`[${ui.messageIdAttribute}="${proof.replyId}"]`).waitFor({ state: "attached", timeoutMs: 10000 }); }
-          catch { throw recoveryFailure("The saved chat completed reply did not attach within 10 seconds after refresh; recovery remains unverified."); }
-          requireRecoveryOwnership();
-          verified = await verifiedReply();
-          if (!verified) throw recoveryFailure("The saved chat refresh did not restore the completed checkpoint; recovery remains unverified.");
+          await waitForRecoveredReply("The saved chat completed reply did not become ready within 10 seconds after refresh; recovery remains unverified.");
+          verified = true;
           if (await role(ui.stopButtonExactName, "button", tab).isVisible()) throw recoveryFailure("The saved chat is generating after refresh; recovery remains unverified.");
         }
       }
       if (!verified || !(await emptyRecoveryComposer())) throw recoveryFailure("The saved chat reply or composer changed; recovery cannot reuse it.");
     }
     requireRecoveryOwnership();
+    if (tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
     Object.assign(state, { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule, bindingLost: true,
       hasSentMessage: true, savedUrl: proof.url,
       baselineReplyIds: [...proof.baselineReplyIds], replyId: proof.replyId,
@@ -932,9 +1136,9 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     if (navigate) {
       if (matches.length && !(await emptyNormalHome(tab)) || await tab.url() !== recoveryTabUrl) throw new Error("The recovery tab changed before saved chat navigation; recovery cannot overwrite it.");
       activeOwner([options.turnId], true);
+      recoveryEffects.tabNavigated = true;
       await tab.goto(proof.url);
-      await waitForState(verifiedReply, Date.now() + 10000,
-        "The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.");
+      await waitForRecoveredReply("The saved chat URL and reply did not become available within 10 seconds; recovery cannot start a new chat.", true);
       if (!(await emptyComposer())) throw new Error("The saved chat composer has a draft; recovery cannot overwrite it.");
     }
     state.baselineReplyIds = [...recoveredBaselineIds];
@@ -961,15 +1165,17 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     }
     if (!(await emptyNormalHome())) throw new Error("The pending full-history successor is not a proven empty normal home.");
     await state.tab.markHandoff();
-    if (!(await emptyNormalHome())) throw new Error("The pending full-history successor left its proven empty normal home.");
+    const home = await emptyNormalHome(state.tab, true);
+    if (home?.normal !== true) throw new Error("The pending full-history successor left its proven empty normal home.");
     activeOwner(owners, true);
     resetChat();
     registerActive();
-    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, needsHistory: true, assistantText: "", conversationFull: false,
+    emit({ tabId: state.tabId, url: home.url, normal: true, needsHistory: true, assistantText: "", conversationFull: false,
       ...(interrupted ? { interrupted: true } : {}) });
     return;
   }
   if (!(await normal())) throw new Error("The retained conversation is not ready for continuation.");
+  activeOwner(owners, true);
   if (await conversationFull()) {
     const view = await snapshot(state.tab, undefined, recovered ? undefined : state.generationTurnKey), texts = view.replies;
     if (!(await normal())) throw new Error("The retained conversation left its normal saved URL during continuation.");
@@ -980,14 +1186,16 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     }
     const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
     await state.tab.markHandoff();
+    const continuationUrl = await state.tab.url();
     activeOwner(owners, true);
-    emit({ tabId: state.tabId, url: await state.tab.url(), normal: true, assistantText, conversationFull: true,
-      ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+    if (recovered && state.tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
+    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: true,
+      ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
     return;
   }
   await state.tab.markHandoff();
   if (interrupted) {
-    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState);
+    await reconcileGeneration(state, options, owners, activeOwner, role, createStopState, browserReadiness, createAllowance, homeUrl);
     if (state.sendAttempted && !state.sendConfirmed) await clearUnsentDraft();
     state.retained = true;
   } else if (!state.completed || !state.retained) throw new Error("The retained conversation is not ready for continuation.");
@@ -1009,6 +1217,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
   activeOwner(owners, true);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...texts.map(value => value.messageId)])];
+  state.baselineTurnKeys = [...new Set([...(state.baselineTurnKeys ?? []),
+    ...(state.sendConfirmed && state.generationTurnKey ? [state.generationTurnKey] : []), ...view.turns.map(value => value.turnKey)])];
   delete state.replyId;
   delete state.generationTurnKey;
   delete state.generationReplyIds;
@@ -1023,15 +1233,16 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   state.retained = false;
   registerActive();
   emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
-    ...(recovered ? { recovered: true } : {}), ...(interrupted ? { interrupted: true } : {}) });
+    ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
 }
 
-async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext) {
-  const { role, conversationFull, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, emptyNormalHome, resetChat, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFactory, createContext) {
+  const { role, conversationFull, normal, ensureOwned, activeOwner, emit, registerActive, emptyComposer, emptyNormalHome, waitForHome, resetChat, requireBinding, homeUrl } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   requireBinding();
   await ensureOwned();
   activeOwner(options.expectedOwnerTurnIds, true);
+  const rolloverTab = state.tab, rolloverTabId = state.tabId, rolloverBrowser = state.browser;
   if (state.sendClicked && !state.sendConfirmed) throw new Error("The saved chat cannot roll over with an uncertain Send.");
   if (state.rolloverAttempted) {
     if (!state.needsHistory || state.rolloverFromUrl !== options.previousChatUrl || !(await emptyNormalHome())) throw new Error("The preceding rollover is not a proven empty normal home; Start new chat cannot be clicked again.");
@@ -1046,17 +1257,21 @@ async function runBrowserRollover(state, options, nodeRepl, replyReader, viewFac
     activeOwner(options.expectedOwnerTurnIds, true);
     Object.assign(state, { needsHistory: true, rolloverAttempted: true, rolloverFromUrl: options.previousChatUrl });
     await start.click();
-    await waitForState(emptyNormalHome, Date.now() + 10000, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
+    await waitForHome(options.expectedOwnerTurnIds, "Rollover did not reach an empty normal home within 10 seconds; Start new chat cannot be clicked again.");
   }
-  if (!(await emptyNormalHome())) throw new Error("The rollover successor is no longer a proven empty normal home.");
+  const home = await emptyNormalHome(state.tab, true);
+  if (home?.normal !== true) throw new Error("The rollover successor is no longer a proven empty normal home.");
+  const url = home.url;
   activeOwner(options.expectedOwnerTurnIds, true);
+  if (state.tab !== rolloverTab || state.tabId !== rolloverTabId || rolloverTab.id !== rolloverTabId || state.browser !== rolloverBrowser
+      || !homeUrl(url)) throw new Error("The rollover successor changed before ownership transfer.");
   resetChat();
   registerActive();
-  emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url: await state.tab.url(), normal: true });
+  emit({ rolledOver: true, needsHistory: true, previousChatUrl: options.previousChatUrl, tabId: state.tabId, url, normal: true });
 }
 
-async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, waitForState, createContext, selectModel) {
-  const { role, snapshot, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding } = createContext(state, options, nodeRepl, replyReader, viewFactory);
+async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory, createContext, selectModel, createStopState, browserReadiness, createAllowance, sendReadyLocator) {
+  const { role, validReplies, identityError, conversationFull, savedUrl, normal, ensureOwned, activeOwner, emit, emptyComposer, mutationSnapshot, requireBinding, anchorState, anchorProof, confirmAnchor, homeUrl, pendingUrlEligible } = createContext(state, options, nodeRepl, replyReader, viewFactory);
   const { ui } = options;
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
   requireBinding();
@@ -1082,6 +1297,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (!beforeSend.mutation.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
+  state.baselineTurnKeys = [...new Set([...(state.baselineTurnKeys ?? []), ...beforeSend.turns.map(value => value.turnKey)])];
   delete state.replyId;
   delete state.generationTurnKey;
   state.generationReplyIds = [];
@@ -1096,11 +1312,18 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   if (options.pluginAppId && !(await chip().isVisible())) throw new Error("Typing removed the plugin chip; nothing sent.");
   const send = role(ui.sendButtonExactName);
   const sendDeadline = Date.now() + 10000;
-  const waitForSend = () => waitForState(() => send.isEnabled(), sendDeadline, "Send did not become ready within 10 seconds; nothing sent.");
+  const allowance = createAllowance(sendDeadline, () => new Error("The Send deadline expired before dispatch; nothing sent."));
+  const waitForSend = async () => {
+    const ready = await browserReadiness(sendReadyLocator(state.tab, ui), { nextTimeout: () => Math.floor(sendDeadline - Date.now()),
+      inspect: () => send.isEnabled(), ready: value => value });
+    if (!ready) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
+    allowance();
+  };
   // A large paste can become an attachment. Keep the current private tool
   // directive and nonsecret generation marker outside that payload so tools
   // use this turn's authority and Send owns one observable turn.
   await waitForSend();
+  allowance(1500);
   const settled = (await mutationSnapshot()).mutation;
   if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
@@ -1111,14 +1334,16 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const generationMarker = `\nRouter generation: ${options.turnId}`;
   const visibleSuffix = generationMarker + currentDirective;
   state.unsentDraft += visibleSuffix;
+  allowance(1500);
   await composer.press('End');
+  allowance(1500);
   await composer.type(visibleSuffix);
   state.unsentComposerText = await composer.innerText();
   if (state.unsentComposerText !== settledComposerText + visibleSuffix) throw new Error("The composer current-turn directive or generation marker changed or was transformed; nothing sent.");
   await waitForSend();
   // Attachment and paste can alter the picker. Select and verify the exact
   // requested family and Power once, using the current DOM before Send.
-  await selectModel(state, options, role);
+  await selectModel(state, options, role, () => allowance(1500));
   const verifyDraft = async () => {
     const current = (await mutationSnapshot()).mutation;
     if (current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
@@ -1126,59 +1351,61 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     if (!current.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   };
   await verifyDraft();
+  allowance(1500);
   activeOwner([options.turnId], true);
   await state.tab.markHandoff();
   activeOwner([options.turnId], true);
   await verifyDraft();
+  const sendTimeoutMs = allowance(1500);
+  const sentTab = state.tab, sentTabId = state.tabId, sentBrowser = state.browser, priorUrl = state.savedUrl;
+  const assertSendOwner = () => {
+    activeOwner([options.turnId], true);
+    if (state.tab !== sentTab || state.tabId !== sentTabId || sentTab.id !== sentTabId || state.browser !== sentBrowser || state.savedUrl !== priorUrl
+        || !state.sendAttempted || !state.sendClicked || state.sendConfirmed) throw new Error("The active browser Send changed while confirming its turn; its effect is uncertain.");
+  };
   state.generationMarker = generationMarker.trim();
   state.submittedComposerText = state.unsentComposerText;
   state.sendClicked = true;
-  await send.click();
+  await send.click({ timeoutMs: sendTimeoutMs });
+  assertSendOwner();
   state.hasSentMessage = true;
-  await waitForState(async () => savedUrl(await state.tab.url()), sendDeadline,
-    "The Send has no verified saved conversation URL within 10 seconds; its effect is uncertain.");
-  const confirmedUrl = await state.tab.url();
-  if (state.savedUrl && state.savedUrl !== confirmedUrl) throw new Error("The Send changed the owned saved conversation URL; its effect is uncertain.");
-  state.savedUrl = confirmedUrl;
-  if (!(await normal())) throw new Error("The Send did not remain in the normal saved conversation; its effect is uncertain.");
-  const baselineTurns = new Set(beforeSend.turns.map(value => value.turnKey));
-  let markerTurn = state.tab.playwright.locator(ui.turnSelector).filter({ hasText: generationMarker.trim() });
-  // Readiness waits run in the supported locator service. A renderer may mount
-  // the marker before settling its UUID; require that identity in the locator,
-  // then independently prove global cardinality, order and ownership below.
-  const attribute = `@${ui.turnKeyAttribute}`;
-  const precedingIdentities = [...baselineTurns].filter(key => typeof key === "string"
-    && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(key));
-  if (precedingIdentities.length) markerTurn = markerTurn.filter({ hasNot: state.tab.playwright.locator(
-    `xpath=self::*[${precedingIdentities.map(key => `${attribute}='${key}'`).join(" or ")}]`) });
-  const validIdentity = `string-length(${attribute})=36 and substring(${attribute},9,1)='-' and substring(${attribute},14,1)='-' and substring(${attribute},19,1)='-' and substring(${attribute},24,1)='-' and string-length(translate(${attribute},'-',''))=32 and translate(${attribute},'0123456789abcdefABCDEF-','')=''`;
-  const readyTurn = markerTurn.filter({ has: state.tab.playwright.locator(`xpath=self::*[${validIdentity}]`) });
-  activeOwner([options.turnId], true);
-  const remaining = sendDeadline - Date.now();
-  if (remaining <= 0) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-  try { await readyTurn.waitFor({ state: "attached", timeoutMs: remaining }); }
-  catch { throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain."); }
-  activeOwner([options.turnId], true);
-  const afterSend = await snapshot(state.tab, generationMarker.trim(), undefined, "anchor", [...baselineTurns]);
-  const candidates = afterSend.turns.filter(value => !baselineTurns.has(value.turnKey) && value.matchesGenerationMarker);
-  const latestTurn = afterSend.turns.at(-1);
-  const anchor = candidates.length === 1 && candidates[0] === latestTurn
-      && typeof latestTurn.turnKey === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(latestTurn.turnKey)
-      && afterSend.turns.filter(value => value.turnKey === latestTurn.turnKey).length === 1 ? latestTurn.turnKey : null;
-  activeOwner([options.turnId], true);
-  if (!(await normal())) throw new Error("The Send left its saved conversation while confirming its turn; its effect is uncertain.");
-  activeOwner([options.turnId], true);
-  if (!anchor) throw new Error("The Send has no unique prompt-owned turn within 10 seconds; its effect is uncertain.");
-  state.generationTurnKey = anchor;
-  state.sendConfirmed = true;
-  delete state.unsentDraft;
-  delete state.unsentComposerText;
-  for (const key of ["needsHistory", "rolloverAttempted", "rolloverFromUrl"]) delete state[key];
-  emit({ sent: true, tabId: state.tabId, url: state.savedUrl, normal: true, conversationFull: false,
-    baselineReplyIds: state.baselineReplyIds, generationTurnKey: state.generationTurnKey });
+  const proof = await anchorProof(anchorState());
+  assertSendOwner();
+  const confirmedUrl = proof.url;
+  if (priorUrl && priorUrl !== confirmedUrl) throw new Error(`The Send changed the owned saved conversation URL; its effect is uncertain. ROUTER_WEB_SEND_DIAGNOSTIC ${JSON.stringify({
+    reason: "saved-url-changed", priorUrlClass: "saved-chat", domUrlClass: homeUrl(confirmedUrl) ? "normal-home" : savedUrl(confirmedUrl) ? "saved-chat" : "other" })}`);
+  if (!(savedUrl(confirmedUrl) || !priorUrl && pendingUrlEligible(confirmedUrl))) {
+    // Retain URL structure only. The rejected value may contain private chat
+    // identities, query values, credentials or text, none of which may escape.
+    const diagnostic = { input: typeof confirmedUrl === "string" ? "unparseable" : "non-string",
+      protocolValid: null, originValid: null, pathClass: null,
+      temporaryChatPresent: null, hashPresent: null, credentialsPresent: null };
+    if (typeof confirmedUrl === "string") {
+      try {
+        const url = new URL(confirmedUrl);
+        Object.assign(diagnostic, { input: "parsed", protocolValid: url.protocol === "https:",
+          originValid: url.origin === "https://chatgpt.com",
+          pathClass: url.pathname === "/" ? "home" : /^\/c\/[A-Za-z0-9-]+$/u.test(url.pathname) ? "saved-chat" : "other",
+          temporaryChatPresent: url.searchParams.has("temporary-chat"), hashPresent: Boolean(url.hash),
+          credentialsPresent: Boolean(url.username || url.password) });
+      } catch { /* Non-URL input retains no part of its value. */ }
+    }
+    throw Object.assign(new Error("The Send left its normal conversation."), { routerSendFailure: "saved-url",
+      routerSendDiagnostic: "url-class-mismatch", routerSendUrlDiagnostic: diagnostic });
+  }
+  if (proof.blocked) throw Object.assign(new Error("The Send generation is ambiguous or behind another generation."), { routerSendFailure: "anchor-conflict" });
+  if (proof.anchor && savedUrl(confirmedUrl)) { state.savedUrl = confirmedUrl; confirmAnchor(proof.anchor); }
+  const anchored = state.sendConfirmed;
+  const urlPending = !priorUrl && !savedUrl(confirmedUrl) && !homeUrl(confirmedUrl);
+  // Dispatch is a one-time effect. Anchor readiness belongs to the held
+  // observation queue and never consumes the remaining preparation deadline.
+  emit({ sent: anchored, ...(anchored ? {} : { dispatched: true, generationPending: true }),
+    tabId: state.tabId, url: urlPending ? null : confirmedUrl, normal: !urlPending, ...(urlPending ? { urlPending: true } : {}), conversationFull: false,
+    baselineReplyIds: state.baselineReplyIds, ...(anchored ? { generationTurnKey: state.generationTurnKey } : {}) });
 }
 
-async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory, defaultUi) {
+async function runBrowserObservation(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) {
+  const allowance = createAllowance(Date.now() + shortReadMs, () => new Error("The browser observation read deadline expired."));
   options = { ...options, ui: { ...defaultUi, ...options.ui } };
   const { operation } = options;
   const emit = value => nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation, ...value } }) + options.frameEnd);
@@ -1186,19 +1413,21 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
   if (!state?.browser) throw new Error("Active native browser binding was lost; bootstrap is required for a new conversation.");
   if (state.sessionId !== options.sessionId) throw new Error("Owned browser binding belongs to another native session.");
   const ownedUrl = await ensureOwned();
+  allowance();
   if (operation === "observe") {
     if (!state.sendAttempted) throw new Error("No message was issued for this browser binding.");
-    // Return after one page read so native Interrupt and queued tools can run.
-    const observation = await observeGeneration(ownedUrl);
-    state.completed = observation.completed;
+    // Return after one bounded observation so native Interrupt and queued tools can run.
+    const observation = await observeGeneration(ownedUrl, allowance);
+    if (observation.ownershipPending !== true) state.completed = observation.completed;
     emit(observation);
   } else if (operation === "retain") {
     if (!state.completed) throw new Error("Only a successfully completed conversation can be retained.");
-    const observation = await observeGeneration(ownedUrl);
+    const observation = await observeGeneration(ownedUrl, allowance);
     state.completed = observation.completed;
     if (!observation.completed) throw new Error("Only a currently completed generation can be retained.");
     await state.tab.markHandoff();
     activeOwner([options.turnId], true);
+    allowance();
     state.retained = true;
     // Broker activity can reject this retention and resume the same generation.
     // Keep its rejection evidence until continuation resets the generation.
@@ -1213,7 +1442,7 @@ async function runBrowserObservation(state, options, nodeRepl, replyReader, view
 // Native modules share this controller through one binding; browser page code has
 // no access to its captured state or helper references.
 export const browserHelperVersion = createHash("sha256")
-  .update([JSON.stringify(residentBrowserDom), ...[isSavedChatUrl, waitForBrowserState, readBrowserReplies, createBrowserView, runBrowserObservation]
+  .update([JSON.stringify(residentBrowserDom), browserObservationBudget.shortReadMs, ...[isSavedChatUrl, isNormalChatHomeUrl, isPendingChatUrl, readBrowserReplies, createBrowserAllowance, createObservationBrowserState, createSendBrowserState, createBrowserNavigationObserver, createBrowserView, runBrowserObservation]
     .map(fn => fn.toString())].join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 // Use only the cache's public, source-checked dependencies: a closure could hide
@@ -1223,13 +1452,21 @@ async function runBrowserMutation(cache, options, nodeRepl) {
   const state = cache.state, helper = cache.helper;
   const config = { ...options, ui: { ...cache.ui, ...options.ui } };
   const runner = options.operation === "continue" ? cache.continuation : cache.send;
-  return runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext,
-    options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState);
+  const context = (...args) => cache.createContext(...args, cache);
+  try {
+    return await runner(state, config, nodeRepl, helper.replyReader, helper.viewFactory, context,
+      options.operation === "send" ? cache.selectModel : cache.reconcile, cache.createStopState, cache.browserReadiness, cache.createAllowance, cache.sendReadyLocator);
+  } catch (error) {
+    if (options.operation !== "send" || !["anchor-conflict", "saved-url"].includes(error?.routerSendFailure)) throw error;
+    nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation: "send", sendFailure: error.routerSendFailure,
+      ...(error.routerSendDiagnostic ? { sendDiagnostic: error.routerSendDiagnostic } : {}),
+      ...(error.routerSendUrlDiagnostic ? { sendUrlDiagnostic: error.routerSendUrlDiagnostic } : {}) } }) + options.frameEnd);
+  }
 }
 
 const mutationFunctions = Object.freeze({ run: runBrowserMutation, continuation: runBrowserContinuation, send: runBrowserSend,
   createContext: createBrowserOperationContext, selectModel: selectBrowserModel, reconcile: reconcileInterruptedBrowserGeneration,
-  createStopState: createStopBrowserState });
+  createStopState: createStopBrowserState, browserReadiness: waitForBrowserReadiness, createAllowance: createBrowserAllowance, sendReadyLocator: createSendReadyLocator, homeState: createHomeBrowserState, homeReadiness: waitForHomeBrowserReadiness, navigationObserver: createBrowserNavigationObserver, recoveryState: createRecoveryBrowserState });
 export const browserMutationVersion = createHash("sha256")
   .update([JSON.stringify(browserDom), ...Object.values(mutationFunctions).map(fn => fn.toString())]
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
@@ -1275,11 +1512,16 @@ export function browserScript(options) {
   }
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const compact = ["observe", "retain"].includes(options.operation);
-  const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd,
-    modelFamily: options.modelFamily ?? "GPT-6", power: options.power ?? 0 };
+  const config = { ...options, ui: { ...browserDom, ...options.ui }, frameBegin, frameEnd };
   if (options.operation === "continue" && (options.recovery || options.interruptedTurnId !== undefined)) config.recoveryIdleButtonExactName = browserIdleButtonExactName;
   else delete config.recoveryIdleButtonExactName;
-  if (!Number.isInteger(config.power) || config.power < 0 || config.power > 4 || typeof config.modelFamily !== "string" || !config.modelFamily.trim()) throw failure("Invalid bounded browser selection arguments.");
+  const sending = options.operation === "send";
+  if ((sending || config.power !== undefined) && (!Number.isInteger(config.power) || config.power < 0 || config.power > 4)
+      || (sending || config.modelFamily !== undefined) && (typeof config.modelFamily !== "string" || !config.modelFamily.trim())) {
+    throw failure(sending ? "Send requires explicit bounded model family and Power." : "Invalid bounded browser selection arguments.");
+  }
+  // Only Send selects a model. Other operations carry no implied selection.
+  if (!sending) { delete config.modelFamily; delete config.power; }
   if (options.operation === "bootstrap" && (typeof options.runtimeModule !== "string" || !options.runtimeModule || typeof options.sessionId !== "string" || !options.sessionId)) throw failure("Bootstrap requires the validated runtime module and current session identity.");
   if (options.operation === "send" && (typeof options.prompt !== "string" || !options.prompt.trim())) throw failure("Send requires the exact prompt.");
   for (const value of Object.values(config.ui)) if (typeof value !== "string" || !value || value.length > 512) throw failure("Invalid observed browser control name.");
@@ -1310,7 +1552,7 @@ export function browserScript(options) {
   const incompatible = `!${helper} || !Object.isFrozen(${helper}) || ${helper}.version !== ${JSON.stringify(browserHelperVersion)} || ${helper}.state !== ${binding} || typeof ${helper}.observe !== "function"`;
   const fullInstall = options.operation === "bootstrap" || options.operation === "continue" && options.fullContinuation === true;
   const resident = fullInstall
-    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, waitForState, defaultUi) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, waitForState, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${waitForBrowserState.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}));`
+    ? `if (${incompatible}) ${helper} = ((state, replyReader, createView, observer, savedUrl, homeUrl, pendingUrlEligible, defaultUi, createObservationState, createSendState, navigationObserver, createAllowance, shortReadMs) => { const viewFactory = (state, options, reader) => createView(state, options, reader, savedUrl, homeUrl, pendingUrlEligible, createObservationState, createSendState, navigationObserver); return Object.freeze({ version: ${JSON.stringify(browserHelperVersion)}, state, replyReader, viewFactory, observe: (options, nodeRepl) => observer(state, options, nodeRepl, replyReader, viewFactory, defaultUi, createAllowance, shortReadMs) }); })(${binding}, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${runBrowserObservation.toString()}, ${isSavedChatUrl.toString()}, ${isNormalChatHomeUrl.toString()}, ${isPendingChatUrl.toString()}, Object.freeze(${JSON.stringify(residentBrowserDom)}), ${createObservationBrowserState.toString()}, ${createSendBrowserState.toString()}, ${createBrowserNavigationObserver.toString()}, ${createBrowserAllowance.toString()}, ${browserObservationBudget.shortReadMs});`
     : `if (${incompatible}) throw new Error("Active native browser helper was lost or changed; bootstrap or continuation is required.");`;
   if (["observe", "retain"].includes(options.operation)) return `${initialize}\n${resident}\nawait ${helper}.observe(${JSON.stringify(config)}, nodeRepl);`;
   const sourceList = Object.keys(mutationFunctions).map(key => `cache.${key}`);
@@ -1329,8 +1571,14 @@ export function browserScript(options) {
   }
   const runner = { bootstrap: runBrowserBootstrap, open: runBrowserOpen, rollover: runBrowserRollover }[options.operation];
   // Bootstrap reuses the installed context instead of repeating its source.
-  if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, helper.waitForState, cache.createContext);\n})(${binding}, ${JSON.stringify(config)});`;
-  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, ${helper}.waitForState, ${createBrowserOperationContext.toString()});`;
+  if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, (...args) => cache.createContext(...args, cache));\n})(${binding}, ${JSON.stringify(config)});`;
+  return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, homeReadiness: ${waitForHomeBrowserReadiness.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
+}
+
+export function isBrowserContinuationCacheMiss(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === 3 && value.operation === "continue"
+    && value.needsFullContinuation === true && value.noActions === true;
 }
 
 // This is a codec for our own producer, not a permissive JavaScript parser.

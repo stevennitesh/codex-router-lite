@@ -3,7 +3,7 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -98,25 +98,43 @@ test("failed hardening preserves the old target and removes only its empty stagi
   assert.equal(existsSync(target), true);
 });
 
-test("real ACL verification works without inheriting ambient credentials", windows, t => {
+test("real ACL helpers retain supplied AppData paths without inheriting ambient credentials", windows, async t => {
   const root = fixture(t), target = path.join(root, "fixture.secret");
   writeFileSync(target, "synthetic fixture");
-  const names = ["OPENROUTER_API_KEY", "CODEX_ROUTER_CALLER_KEY", "MODEL_ROUTER_INTERNAL_KEY"];
+  const runtime = { APPDATA: path.join(root, "Roaming"), LOCALAPPDATA: path.join(root, "Local") };
+  for (const directory of Object.values(runtime)) mkdirSync(directory);
+  const secrets = ["OPENROUTER_API_KEY", "CODEX_ROUTER_CALLER_KEY", "MODEL_ROUTER_INTERNAL_KEY", "PROBE_API_KEY", "NODE_OPTIONS"];
+  const names = [...Object.keys(runtime), ...secrets];
   const saved = names.map(name => process.env[name]);
-  for (const name of names) process.env[name] = "synthetic-environment-canary";
+  Object.assign(process.env, runtime);
+  for (const name of secrets) process.env[name] = "synthetic-environment-canary";
   t.after(() => names.forEach((name, i) => { if (saved[i] === undefined) delete process.env[name]; else process.env[name] = saved[i]; }));
   let verifications = 0;
+  const launches = new Set();
+  function inspect(options, mode) {
+    for (const [name, value] of Object.entries(runtime)) assert.equal(options.env[name], value);
+    for (const name of secrets) assert.equal(options.env[name], undefined);
+    if (options.env.CODEX_ROUTER_PRIVATE_FILES) launches.add(mode);
+  }
   t.mock.method(childProcess, "execFileSync", (command, args, options) => {
-    for (const name of names) assert.equal(options.env[name], undefined);
+    inspect(options, "sync");
     if (options.env.CODEX_ROUTER_PRIVATE_FILE) verifications++;
     return exec(command, args, options);
+  });
+  t.mock.method(childProcess, "spawn", (command, args, options) => {
+    inspect(options, "async");
+    return spawn(command, args, options);
   });
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   assert.equal(privateFileIsProtected(target), false);
   protectPrivateFile(target);
   assert.equal(privateFileIsProtected(target), true);
-  assert.equal(verifications, 2);
+  const asyncTarget = path.join(root, "async.json");
+  await writePrivateJsonAsync(asyncTarget, { synthetic: true });
+  assert.equal(privateFileIsProtected(asyncTarget), true);
+  assert.deepEqual([...launches].sort(), ["async", "sync"]);
+  assert.equal(verifications, 3);
 });
 
 // These paths exist only in the mocked filesystem. Each writer reaches its

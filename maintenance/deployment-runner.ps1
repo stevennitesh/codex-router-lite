@@ -1,6 +1,10 @@
 # A WMI-created process is parented by the Windows provider, independently of
 # the desktop tool's process tree. Closing the app/tool cannot kill recovery.
-function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters, [string]$RepoRoot, [switch]$RequireAcceptance) {
+function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters, [string]$RepoRoot, [switch]$RequireAcceptance,
+    [ValidateSet('switchyard', 'web-runtime-maintenance')][string]$AcceptanceKind = 'switchyard', [object]$ReopenCodex) {
+  if ($null -ne $ReopenCodex -and (-not $RequireAcceptance -or $AcceptanceKind -ne 'web-runtime-maintenance')) {
+    throw 'Codex reopen is restricted to accepted Web runtime maintenance.'
+  }
   . (Join-Path $PSScriptRoot "deployment-json.ps1")
   $deploymentHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }
   $operationRoot = Join-Path $deploymentHome "codex-router\deployments\$([Guid]::NewGuid().ToString('N'))"
@@ -18,7 +22,7 @@ function Start-IndependentDeployment([string]$ScriptPath, [hashtable]$Parameters
   foreach ($name in @("MODEL_ROUTER_STATE_DIR", "CODEX_ROUTER_STATE_DIR", "CODEX_ROUTER_SWITCHYARD_ROOT", "CODEX_ROUTER_SWITCHYARD_BIN", "CODEX_ROUTER_SWITCHYARD_CONFIG", "CODEX_ROUTER_SWITCHYARD_BASE_URL", "CODEX_ROUTER_OPERATION_DEADLINE_MS", "NODE_USE_ENV_PROXY")) {
     if (Test-Path -LiteralPath "Env:\$name") { $environment[$name] = [Environment]::GetEnvironmentVariable($name) }
   }
-  Write-DeploymentJson $requestPath @{ script = $ScriptPath; parameters = $Parameters; environment = $environment; requireAcceptance = [bool]$RequireAcceptance }
+  Write-DeploymentJson $requestPath @{ script = $ScriptPath; parameters = $Parameters; environment = $environment; requireAcceptance = [bool]$RequireAcceptance; acceptanceKind = $AcceptanceKind; reopenCodex = $ReopenCodex }
   Write-DeploymentJson $resultPath @{ state = "starting" }
   New-Item -ItemType File -Path $logPath | Out-Null
   $privatePaths = @($requestPath, $resultPath, $logPath)

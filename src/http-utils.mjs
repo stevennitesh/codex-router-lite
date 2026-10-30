@@ -209,7 +209,9 @@ function abortReason(signal) {
   return error;
 }
 
-function readWithAbort(reader, signal) {
+// A stream's producer need not implement AbortSignal or acknowledge cancellation.
+// Own the read wait so a departing caller can release its lifecycle promptly.
+export function readWithAbort(reader, signal) {
   if (!signal) return reader.read();
   if (signal.aborted) return Promise.reject(abortReason(signal));
   return new Promise((resolve, reject) => {

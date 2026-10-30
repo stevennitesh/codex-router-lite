@@ -90,7 +90,10 @@ function New-Object { param($ComObject) if($ComObject -ne 'Schedule.Service'){th
  }
  return $scheduler
 }
-function Get-CimInstance { param($ClassName) if($ClassName -ne 'Win32_Process'){throw 'wrong process census'}; ${census} }
+function Get-CimInstance { param($ClassName, $Filter)
+ if($ClassName -ne 'Win32_Process' -or $Filter -cne "Name = 'wscript.exe'"){throw 'wrong launcher query'}
+ @(${census}) | Where-Object { $_.Name -ieq 'wscript.exe' }
+}
 `;
     const result = await windowsScheduledTaskState({ platform: "win32", taskName: "Fixture Task",
       execFile: (executable, args, options, callback) => {

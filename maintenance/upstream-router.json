@@ -3,7 +3,7 @@
   "repository": "https://github.com/duolahypercho/codex-router.git",
   "branch": "main",
   "remoteRef": "upstream/main",
-  "lastReviewedCommit": "9945d74354ab07942f171be329cf81c9478fc5e2",
+  "lastReviewedCommit": "2e3fd008a130d5adf3e2a4b690780abcdb3e4602",
   "deferredCandidates": [
     "799a7196: duplicate inline/stored reasoning reference handling; preserve existing opaque replay until a retained-route reproduction warrants mutation",
     "d51196e3: visible foreign reasoning replay as assistant text changes native history semantics; no demonstrated loss on retained routes",
@@ -14,9 +14,13 @@
     "3cea80e9, 3f31f9fe and 84cd25a5: image-history elision changes preserved input; retain current bounds until retained-endpoint evidence requires it",
     "042a6d70: pre-TLS reset recovery expands safe retry eligibility; defer without a retained-route incident",
     "627357eb and 36f1578d: separate fixture process-start and HTTP-readiness instrumentation; existing bounded headers/body and exited-child coverage remains sufficient absent a retained cold-start incident",
-    "1eb8e468: optional persistent compatibility-layer opt-out changes policy; current GLM routes require the gateway, so retain the existing mandatory integration"
+    "1eb8e468: optional persistent compatibility-layer opt-out changes policy; current GLM routes require the gateway, so retain the existing mandatory integration",
+    "2385edfa: reject completed empty tool arguments and remove exact EOF-error history pairs only after a retained-endpoint reproduction; preserve current raw arguments and diagnostic-only behavior",
+    "e56da02b: bounded supervisor teardown needs a retained shutdown-hang reproduction and must preserve positive process-exit proof and cleanup custody",
+    "9a86be40 and f9b26c89: additional native encrypted-relay affinity filtering and delta consistency checks remain conditional on current representation evidence; existing strict authoritative terminal validation is retained",
+    "a8238b4c: upstream multi-account pool and same-workspace identity hardening needs retained identity-switch evidence; preserve same-account bearer-renewal semantics"
   ],
-  "reviewedAt": "2026-10-24",
+  "reviewedAt": "2026-10-29",
   "disposition": {
     "integrated": [
       "a973995d: context overflow reports the complete requested token count",
@@ -86,7 +90,8 @@
       "9593a75a and 4d4eb5f: fixture isolation for retired subagent-explanation and support-bundle owners",
       "e9c86594: expanded test port allocation is unnecessary for current bounded Lite consumers",
       "8c470693, 3d190c98, 292c833b and 0a0fdce1: topology-only merges; all nine commits in eb5acc9c..0a0fdce1 are dispositioned in docs/history/2026-10-21-app-compatibility-review.json",
-      "All 30 commits in 0a0fdce1..9945d743 are dispositioned individually in docs/history/2026-10-24-app-compatibility-review.json, including topology-only merges; no wholesale upstream merge"
+      "All 30 commits in 0a0fdce1..9945d743 are dispositioned individually in docs/history/2026-10-24-app-compatibility-review.json, including topology-only merges; no wholesale upstream merge",
+      "All 112 commits in 9945d743..2e3fd008 have grouped full-SHA dispositions in docs/history/2026-10-29-app-compatibility-review.json: 19 already covered, 46 excluded, five deferred, ten resolution-bearing merges reviewed and 32 topology-only merges; no new serving port or wholesale upstream merge"
     ]
   }
 }

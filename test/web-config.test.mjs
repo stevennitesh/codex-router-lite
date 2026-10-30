@@ -6,6 +6,8 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { WEB_ACCOUNT_CAPABILITY_KEYS } from "../src/web-models.mjs";
+
 const root = mkdtempSync(path.join(os.tmpdir(), "router-web-config-"));
 const home = path.join(root, "codex");
 mkdirSync(home);
@@ -65,6 +67,40 @@ test("in-app setup stores only the explicit safe configuration and advertises na
   await web.disconnectWebBridge();
   assert.equal(savedSettings().enabled, false);
   assert.deepEqual(web.webBridgeModels(), []);
+});
+
+test("configuration and catalog share the account capability contract for every observed profile", async () => {
+  for (let mask = 0; mask < 2 ** WEB_ACCOUNT_CAPABILITY_KEYS.length; mask += 1) {
+    const observed = Object.fromEntries(WEB_ACCOUNT_CAPABILITY_KEYS.map((key, index) => [key, Boolean(mask & 2 ** index)]));
+    const catalog = web.buildWebBridgeModels(observed);
+    const status = await web.configureInAppWebBridge({ ...config, capabilities: observed });
+    assert.deepEqual(savedSettings().capabilities, observed);
+    assert.deepEqual(web.readWebBridgeSettings().models, catalog);
+    assert.deepEqual(web.webBridgeModels(), catalog);
+    assert.deepEqual(status.models, catalog.map(({ slug, displayName, supported_reasoning_levels, multiAgentVersion }) =>
+      ({ slug, displayName, efforts: supported_reasoning_levels, multiAgentVersion })));
+    assert.equal(catalog.length, observed.solAvailable ? observed.proAvailable ? 6 : 4 : 0);
+    for (const row of catalog) {
+      assert.equal(row.supported_reasoning_levels.some(level => level.effort === "xhigh"),
+        observed.extraHighAvailable && row.defaultEffort === "medium");
+    }
+  }
+  const before = readFileSync(settingsPath, "utf8");
+  const message = "Web bridge account capabilities are missing or invalid; reconfigure the in-app browser with observed account capabilities.";
+  for (const key of WEB_ACCOUNT_CAPABILITY_KEYS) {
+    const missing = { ...capabilities };
+    delete missing[key];
+    for (const observed of [missing, { ...capabilities, [key]: "true" }]) {
+      assert.throws(() => web.buildWebBridgeModels(observed), { message });
+      await assert.rejects(web.configureInAppWebBridge({ ...config, capabilities: observed }), { message });
+      assert.equal(readFileSync(settingsPath, "utf8"), before);
+    }
+  }
+  const extra = { ...capabilities, token: "synthetic-undocumented-field" };
+  assert.deepEqual(web.buildWebBridgeModels(extra), web.buildWebBridgeModels(capabilities));
+  await assert.rejects(web.configureInAppWebBridge({ ...config, capabilities: extra }),
+    { message: "Invalid Web account capabilities; only the documented safe fields are accepted." });
+  assert.equal(readFileSync(settingsPath, "utf8"), before);
 });
 
 test("invalid in-app configuration cannot overwrite a previously valid setup", async () => {

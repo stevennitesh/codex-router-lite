@@ -56,7 +56,7 @@ export async function windowsScheduledTaskState({
     "  $launcherPath = if ($launcherMatch.Success) { $launcherMatch.Groups[1].Value } else { $null }",
     "  $launcher = $null",
     "  if ($launcherPath -and [IO.Path]::GetFileName([string]$action.Path) -ieq 'wscript.exe') {",
-    "    $launcher = Get-CimInstance Win32_Process -ErrorAction Stop |",
+    "    $launcher = Get-CimInstance Win32_Process -Filter \"Name = 'wscript.exe'\" -ErrorAction Stop |",
     "      Where-Object { $_.ProcessId -ne $PID -and $_.Name -ieq 'wscript.exe' -and $_.CommandLine -and $_.CommandLine.IndexOf($launcherPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |",
     "      Select-Object -First 1",
     "  }",
