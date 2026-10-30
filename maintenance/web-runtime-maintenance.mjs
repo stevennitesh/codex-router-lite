@@ -9,6 +9,7 @@ import { STATE_DIR } from "../src/paths.mjs";
 import { writePrivateFile, privateFileIsProtected } from "../src/file-security.mjs";
 import { assertDeploymentRuntime } from "../src/deployment-acceptance.mjs";
 import { readInstallManifest } from "../src/install-manifest.mjs";
+import { inspectWebStopAdapterRollbackBinding, verifyWebStopAdapterRollbackBinding } from "../src/web-stop-adapter-install.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -41,7 +42,7 @@ export function prepareWebMaintenance(expectedCommit, candidateBinary, expectedB
   return { ...prepared, candidateSha256 };
 }
 
-async function deploy({ expectedCommit, candidateBinary, expectedBinarySha256, deploymentAcceptancePath }) {
+async function deploy({ expectedCommit, candidateBinary, expectedBinarySha256, deploymentAcceptancePath, rollbackAdapter }) {
   if (!deploymentAcceptancePath) throw new Error("Independent maintenance requires a protected underlying deployment receipt path.");
   writePrivateFile(deploymentAcceptancePath, "");
   const executable = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -50,7 +51,8 @@ async function deploy({ expectedCommit, candidateBinary, expectedBinarySha256, d
     // drain strict so earlier maintenance approval cannot interrupt new work.
     const child = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", path.join(root, "maintenance", "deploy-switchyard-candidate.ps1"),
       "-InProcess", "-CandidateBinary", candidateBinary, "-ExpectedBinarySha256", expectedBinarySha256,
-      "-ExpectedRouterCommit", expectedCommit, "-AcceptancePath", deploymentAcceptancePath], { stdio: "inherit", windowsHide: true });
+      "-ExpectedRouterCommit", expectedCommit, "-AcceptancePath", deploymentAcceptancePath,
+      "-RollbackAdapterJson", JSON.stringify(rollbackAdapter)], { stdio: "inherit", windowsHide: true });
     child.once("error", reject); child.once("close", resolve);
   });
   if (status !== 0) throw new Error(`Guarded Router deployment failed with status ${status ?? "unknown"}.`);
@@ -128,13 +130,24 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
   } } };
   const candidate = prepareCandidate();
   if (candidate.candidateSha256 !== expectedCandidateSha256) throw new Error("Prepared Web maintenance candidate changed before its worker started.");
+  // Retain the inspected original adapter before the first refresh replaces
+  // ownership.json. A later deployment must bind its backup to these bytes.
+  const rollbackAdapter = { generation: candidate.adapter.generation, managedDirectory: candidate.adapter.managedDirectory,
+    managedManifestSha256: candidate.adapter.managedManifestSha256 };
+  if (!/^[a-f0-9]{64}$/u.test(rollbackAdapter.generation ?? "") || !path.isAbsolute(rollbackAdapter.managedDirectory ?? "")
+      || !/^[a-f0-9]{64}$/u.test(rollbackAdapter.managedManifestSha256 ?? "")
+      || path.join(rollbackAdapter.managedDirectory, "entry.exe") !== candidate.adapter.managedEntryPath) {
+    throw new Error("Prepared Web maintenance has no verified original adapter rollback identity.");
+  }
+  const operationId = path.basename(path.dirname(deploymentAcceptancePath ?? ""));
+  const cleanupOperationId = /^[a-f0-9]{32}$/u.test(operationId) ? operationId : undefined;
   await dependencies.onWaiting?.();
   await (dependencies.wait ?? waitForWebMaintenanceExit)(candidate.adapter, { timeoutMs });
   const after = prepareCandidate();
   if (after.candidateSha256 !== expectedCandidateSha256) throw new Error("Prepared Web maintenance candidate changed while awaiting Codex exit.");
   absent(candidate.adapter);
   const snapshot = ledger();
-  await refresh({ apply: true, forceServiceReplacement: true, expectedMaintenance: binding(candidate) });
+  await refresh({ apply: true, forceServiceReplacement: true, expectedMaintenance: binding(candidate), cleanupOperationId });
   unchanged(snapshot); source(expectedCommit); absent(candidate.adapter);
   // The deployment's config-manager enable owns canonical managed-block
   // upgrades. Bind its recorded exact output to the unchanged discovery input
@@ -146,7 +159,7 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
       throw new Error("Managed configuration publication plan differs from the retained discovery input.");
     }
   }
-  const deployment = await (dependencies.deploy ?? deploy)({ expectedCommit, candidateBinary, expectedBinarySha256, deploymentAcceptancePath });
+  const deployment = await (dependencies.deploy ?? deploy)({ expectedCommit, candidateBinary, expectedBinarySha256, deploymentAcceptancePath, rollbackAdapter });
   const deployed = deployment.receipt;
   validateUnderlyingDeployment(deployed, expectedCommit, expectedBinarySha256);
   if (configurationPublication) runtimeDiscovery.acceptConfigurationPublication(configurationPublication);
@@ -158,7 +171,7 @@ export async function runWebMaintenance({ expectedCommit, candidateBinary, expec
   if (JSON.stringify(cohort(final.adapter)) !== JSON.stringify(cohort(candidate.adapter))) throw new Error("Final adapter runtime differs from the reviewed official cohort.");
   if (final.plan.changed) {
     absent(final.adapter);
-    await (dependencies.refreshFinal ?? refreshWebRuntime)({ ...finalOptions, apply: true, forceServiceReplacement: true, expectedMaintenance: binding(final) });
+    await (dependencies.refreshFinal ?? refreshWebRuntime)({ ...finalOptions, apply: true, forceServiceReplacement: true, expectedMaintenance: binding(final), cleanupOperationId });
   }
   unchanged(snapshot); source(expectedCommit); absent(final.adapter);
   await (dependencies.accept ?? assertDeploymentRuntime)(root);
@@ -200,7 +213,13 @@ export function validateWebMaintenanceAcceptance(value, expectedCommit, expected
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [command, expectedCommit, candidateBinary, expectedBinarySha256, fingerprint, seconds, receiptPath] = process.argv.slice(2);
-    if (command === "plan") {
+    if (command === "rollback-adapter") {
+      const identity = expectedCommit === undefined ? inspectWebStopAdapterRollbackBinding()
+        : verifyWebStopAdapterRollbackBinding(JSON.parse(Buffer.from(expectedCommit, "base64").toString("utf8")));
+      // Keep Windows PowerShell's native stdout decoding independent of the
+      // path's Unicode characters; JSON parsing restores the exact path.
+      process.stdout.write(`${JSON.stringify(identity).replace(/[\u007f-\uffff]/g, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`)}\n`);
+    } else if (command === "plan") {
       const candidate = prepareWebMaintenance(expectedCommit, candidateBinary, expectedBinarySha256);
       process.stdout.write(`${JSON.stringify({ candidateSha256: candidate.candidateSha256, plan: candidate.plan, next: "Worker will wait for a full normal Codex quit, then refresh and deploy. Reopen Codex only after its protected result reports success." })}\n`);
     } else if (command === "run") {

@@ -1,5 +1,19 @@
 $SwitchyardManagedRuntimeFiles = @("switchyard-server.exe", "routes.toml", "SOURCE_COMMIT", "provenance.json")
 
+function Get-SwitchyardRollbackAdapterBinding {
+  param([string]$RepoRoot, [string]$BindingJson)
+  $arguments = @((Join-Path $RepoRoot "maintenance\web-runtime-maintenance.mjs"), "rollback-adapter")
+  if ($PSBoundParameters.ContainsKey("BindingJson")) {
+    # Windows PowerShell's legacy native-argument binding strips JSON quotes.
+    $arguments += [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($BindingJson))
+  }
+  $output = (& node @arguments | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($output)) {
+    throw "Rollback Web Stop adapter ownership is unknown; deployment preflight stopped."
+  }
+  return ($output | ConvertFrom-Json)
+}
+
 function Get-SwitchyardRuntimeMembership([string]$Root) {
   $directory = Get-Item -LiteralPath $Root -Force -ErrorAction Stop
   if (-not $directory.PSIsContainer -or $directory.Attributes -band [IO.FileAttributes]::ReparsePoint) {

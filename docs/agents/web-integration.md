@@ -797,13 +797,38 @@ The installer builds its code and launcher at a unique final path in private
 durable Router state, avoiding a directory rename while Windows may hold the
 compiled executable open. The path contains the content generation plus a unique
 suffix; the verified ownership receipt selects it only after the complete build
-passes validation. Interrupted unselected builds are preserved and ignored.
-Existing hash-only generations remain valid for reuse and rollback. It
+passes validation. Completed builds are authenticated in the private
+`web-stop-adapter/build-retention.json` index before activation, so a later
+successful install can retire a completed candidate left by a failed refresh.
+Outgoing cached-launch custody is recorded before changing either User selection;
+failure to publish that custody stops activation before global changes.
+Unknown or incomplete directories remain preserved. Existing hash-only generations
+remain valid for reuse and rollback. It
 preserves the original User `CODEX_CLI_PATH` selection, including an unset value,
 and overrides only `CODEX_NODE_REPL_PATH`. The inspected CLI identity records
 compatibility; the adapter does not pin the whole app to that CLI build. Updating
 an older owned installation releases its CLI pin back to the original selection.
 Foreign changes are preserved, and unrelated hooks are untouched.
+
+After a successful installation or coordinated refresh, the installer automatically
+removes obsolete authenticated builds while holding the same ownership lock.
+It keeps the selected build, the immediately previous build, and every adapter
+bound to a physically retained runtime rollback set, including archived recovery.
+New runtime snapshots record the original adapter identity before refresh;
+legacy snapshots resolve through accepted Web receipts for their exact source
+commit. Missing or conflicting custody defers cleanup rather than guessing by age.
+Rollback source checkouts, runtime snapshots, deployment records and conversation
+state are never cleanup targets.
+
+A fresh native process census protects live launchers, bridges and descendants.
+Native Codex host generations that may cache an older launch selection also retain
+that build until those hosts exit, even if their JavaScript kernel has closed.
+Current and baseline environment selections remain protected. Incomplete process
+proof, changed files, foreign files, linked paths or pending deployments retain
+their builds. Cleanup uses no idle timer and never terminates a process.
+The install/refresh result reports `cleanup.status`, removed and retained builds,
+and a reason when cleanup is deferred. Cleanup failure preserves the accepted
+installation; rejected or compensated refreshes never run deletion.
 
 The launcher retains a separate Windows kill-on-close job for each official
 JavaScript endpoint. Primary native `node_repl` endpoints use the Web Stop bridge.

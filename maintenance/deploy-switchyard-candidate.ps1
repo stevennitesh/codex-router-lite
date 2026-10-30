@@ -11,6 +11,7 @@ param(
   [string]$PreservedRuntimeRollbackRoot,
   [string]$RollbackRouterRoot,
   [string]$ExpectedRollbackRouterCommit,
+  [string]$RollbackAdapterJson,
   [switch]$RecoverInterruptedDeployment,
   [switch]$ForceServiceReplacement,
   [switch]$InProcess,
@@ -511,6 +512,15 @@ if ($preservingRollback) {
   $recoveryArchive = Get-SwitchyardRecoveryArchivePlan $runtimeRoot $stateRoot $installedRouterCommit
 }
 $originalRuntimeMembers = if (-not $preservingRollback) { Get-SwitchyardRuntimeMembership $runtimeRoot } else { $null }
+$rollbackAdapter = if (-not $preservingRollback) {
+  # Web maintenance supplies its verified pre-refresh identity. Ordinary
+  # deployments capture current ownership before archiving or creating backups.
+  if ($PSBoundParameters.ContainsKey("RollbackAdapterJson")) {
+    Get-SwitchyardRollbackAdapterBinding $repoRoot -BindingJson $RollbackAdapterJson
+  } else {
+    Get-SwitchyardRollbackAdapterBinding $repoRoot
+  }
+} else { $null }
 
 $lock = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "config\switchyard\source.lock") -Encoding UTF8 | ConvertFrom-Json
 $upstreamContribution = $lock.upstreamContribution
@@ -610,6 +620,7 @@ try {
       previousRouterCommit = $expectedRollbackCommit
       previousRouterRoot = $runningRouterRoot
       rollbackRouterRoot = $rollbackRouterRoot
+      webStopAdapter = $rollbackAdapter
       files = @($existing)
       createdAt = (Get-Date).ToUniversalTime().ToString("o")
     }

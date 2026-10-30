@@ -160,6 +160,15 @@ Missing, incomplete, mismatched or ambiguous acceptance stops deployment before
 the service changes. `-WhatIf` never moves recovery files, and an explicitly
 preserved rollback stays in place for repair or interrupted-deployment recovery.
 
+New rollback metadata also binds `webStopAdapter` to the verified adapter identity
+for the previous Router source, or records explicit absence. Web maintenance
+captures this identity before its first adapter refresh and passes it through
+checkout deployment. Ordinary deployment verifies the current owned selection.
+Unknown adapter ownership stops preflight. Archive and recovery preserve this
+field unchanged; older snapshots without it remain readable. Automatic adapter
+build cleanup retains every adapter selected by a physically retained rollback
+set, resolving older snapshots through accepted Web receipts when possible.
+
 Its preflight report names the candidate, running, and
 rollback Router commits plus the v2 agents allowed by local subagent settings.
 If it reports no expected v2 agents, repair the allowlist before certification.

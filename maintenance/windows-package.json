@@ -161,6 +161,7 @@
     "src/web-stop-contract.mjs",
     "src/web-stop-adapter.mjs",
     "src/web-stop-adapter-install.mjs",
+    "src/web-stop-adapter-cleanup.mjs",
     "src/web-runtime-refresh.mjs",
     "src/web-maintenance-proof.mjs",
     "src/web-maintenance-processes.ps1",

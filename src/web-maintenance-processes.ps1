@@ -79,7 +79,7 @@ try {
         try { $executable = [IO.Path]::GetFullPath($executable).ToLowerInvariant() }
         catch { $identified = $false }
       }
-      $matches = $candidate.ProcessId -eq $scope.ownPid -or $candidate.Name -match '^(?:codex(?:[-_].*)?|chatgpt|node_repl|node|entry)\.exe$' -or -not $identified
+      $matches = $candidate.ProcessId -eq $scope.ownPid -or $candidate.Name -match '^(?:codex(?:[-_].*)?|chatgpt|node_repl|node|entry|powershell|pwsh|cmd)\.exe$' -or -not $identified
       if (-not $matches) {
         $command = $command.ToLowerInvariant().Replace('/', '\')
         foreach ($root in $roots) {
