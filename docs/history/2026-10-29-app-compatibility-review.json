@@ -1,9 +1,12 @@
 {
   "version": 1,
   "reviewedAt": "2026-10-29",
+  "recordScope": "Historical compatibility review, initial runtime refresh, pre-repair failure and accepted deadline-repair deployment. Initial snapshots retain their then-observed state; postDeploymentAcceptance records the later bounded live acceptance and is not current runtime authority.",
+  "timestampConvention": "Review date is America/Chicago local date; observation and receipt timestamps ending in Z are UTC.",
   "sourceBase": "b4375681d6e0c4d4503e9ff7ce55011b0b382379",
   "branch": "codex/web-generation-lifecycle-repair",
   "repository": {
+    "snapshotScope": "Initial review snapshot before the later deadline-repair commit and deployment.",
     "originMain": "be98a6105cc867221c9f17f79306068dc219f2d7",
     "headAheadOfOriginMain": 17,
     "headBehindOriginMain": 0,
@@ -33,6 +36,7 @@
     }
   },
   "webRuntime": {
+    "snapshotScope": "Initial coordinated refresh, before the subsequent app reopen and deadline repair.",
     "before": "refresh-required",
     "action": "model-router.ps1 codex web refresh-runtime --apply",
     "applied": true,
@@ -56,13 +60,13 @@
       "adapterOwnershipVerified": true,
       "adapterConflicts": 0
     },
-    "pendingAppReload": {
+    "initialPendingAppReload": {
       "codexRestartRequired": true,
-      "observed": "The open app's saved MCP command still names the previous adapter; the protected installed receipt and User CODEX_NODE_REPL_PATH both name the new adapter.",
-      "statusWarning": "The planner reports manifest-required while that cached command remains selected. A complete normal Codex quit/reopen is the next activation step; no explicit-manifest replacement or config edit was attempted.",
-      "acceptance": "Runtime selection and Router reload succeeded; loading by the restarted app is not yet observed."
+      "observed": "At this initial snapshot, the open app's saved MCP command still named the previous adapter; the protected installed receipt and User CODEX_NODE_REPL_PATH both named the new adapter.",
+      "statusWarning": "The planner then reported manifest-required while that cached command remained selected. A complete normal Codex quit/reopen was the next activation step; no explicit-manifest replacement or config edit was attempted.",
+      "acceptance": "Runtime selection and Router reload had succeeded; loading by the restarted app had not yet been observed. Later reopen and deployment outcomes are recorded below."
     },
-    "liveVerification": "Browser session, native tools, Stop and same-chat continuation are unverified for this installed candidate. The current chat exposes no supported browser JavaScript tool, so rendered SDK fixtures were not run.",
+    "liveVerification": "At this initial snapshot, browser session, native tools, Stop and same-chat continuation had not been verified for this adapter. The chat then exposed no supported browser JavaScript tool, so rendered SDK fixtures had not been run. Later pre-repair and accepted-candidate observations are recorded below.",
     "recovery": "Prior owned adapter retained by the normal coordinated installer; no live rollback qualification claimed."
   },
   "switchyardUpstream": {
@@ -136,10 +140,10 @@
       "execution": "Normal Windows user context; real protected-file/process fixtures where applicable."
     },
     "totalScopedTestsPassed": 982,
-    "renderedBrowserSdkFixtures": "not run: supported browser JavaScript tool unavailable in this chat",
-    "exactRouteProviderExecution": "not requalified; no serving, endpoint, classifier, patch or exact-route contract changed",
+    "renderedBrowserSdkFixtures": "Not run at the initial review snapshot because a supported browser JavaScript tool was unavailable; the later 40 passing rendered cases are recorded in postRestartVerification.",
+    "exactRouteProviderExecution": "Not requalified at the initial review snapshot; the later live acceptance covers one exact Instant sequence recorded in postDeploymentAcceptance.",
     "testMaintenance": "No tests added or modified.",
-    "gitEffects": "Upstream refs fetched. Review evidence and baseline changes remain local; no commit or push."
+    "gitEffects": "At the initial review snapshot, upstream refs had been fetched and review evidence and baseline changes were local with no commit or push. The deadline-repair candidate was subsequently committed and deployed as recorded below."
   },
   "routerUpstream": {
     "repository": "https://github.com/duolahypercho/codex-router.git",
@@ -523,6 +527,7 @@
     ]
   },
   "postRestartVerification": {
+    "snapshotScope": "Historical pre-deadline-repair observations on adapter6c34eb3647720e6c9d19aaff2f3e363853ee665085770de3d9914bff6cb56209; the failed Stop and withheld continuation are preserved as observed.",
     "observedAt": "2026-10-30T02:48:44.222Z",
     "appAndAdapter": "App26.1027.3384.0 / CLI0.166.0-alpha.5.1 / adapter6c34eb3647720e6c9d19aaff2f3e363853ee665085770de3d9914bff6cb56209",
     "runtimeStatus": "current; ready; no restart required; adapter installed and owned without conflicts; Router HTTP200 and no degraded providers",
@@ -572,10 +577,12 @@
       "officialSource": "https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/hooks/src/engine/discovery.rs#L946-L968",
       "scope": "Public0.165.0 and0.166.0 both clamp Interrupt command/MCP hooks to3s. Earlier passing alpha probes do not establish10s authority. The local budget must fit the real host deadline; this is not evidence of a newly introduced0.166 cap."
     },
-    "acceptance": "Live native tools and recall pass. Native Stop and post-Stop continuation remain unqualified until the deadline repair is installed and independently verified."
+    "acceptance": "Live native tools and recall passed at this pre-repair snapshot. Native Stop and post-Stop continuation were then unqualified; later repaired-candidate acceptance is recorded in postDeploymentAcceptance."
   },
   "interruptDeadlineCandidate": {
-    "status": "source verified; not committed or deployed; live Stop acceptance pending",
+    "status": "Committed, deployed and accepted for the bounded live sequence recorded in postDeploymentAcceptance.",
+    "acceptedCommit": "af50c8f2501723e870c5df87fc4299134984f720",
+    "initialSourceVerificationStatus": "Before commit and deployment, source verification had passed while live Stop acceptance was pending.",
     "baseline": "b4375681d6e0c4d4503e9ff7ce55011b0b382379",
     "sourceDiffSha256": "0f32483589edcdb33d44fd74f9303ab345e41788b2de12e866d8bed76c636c45",
     "sourceDiffBytes": 20637,
@@ -584,12 +591,12 @@
     "nativeCleanupAllowanceMs": 2500,
     "browserScriptAllowanceMs": 2400,
     "hookMigration": "Exact owned10s definition migrates to3s; old3s definitions remain current. Historical prepared3-to10 and new10-to3 endpoints remain recoverable; arbitrary hooks are refused.",
-    "eventDrivenDesign": "Retain actual native terminal callbacks and conditional SDK state waits. The measured observation drained in57ms and cleanup dispatched in58ms; the remaining bottleneck is after native cleanup dispatch. A deadline is a failure bound, never success evidence. No supported public generation-cancel acknowledgement or lifecycle registration extends the trusted Interrupt lifetime.",
-    "liveNextStep": "Install the reviewed candidate, review changed hook trust and reload the app, then perform one native Stop sequence using the actual terminal stage and positive inactivity proof. If no stage survives a native reset, collect bounded protected in-owner stage evidence before changing sequencing.",
+    "eventDrivenDesign": "Retain actual native terminal callbacks and conditional SDK state waits. The pre-repair observation drained in57ms and cleanup dispatched in58ms; that measurement located the then-observed bottleneck after native cleanup dispatch. A deadline is a failure bound, never success evidence. No supported public generation-cancel acknowledgement or lifecycle registration extends the trusted Interrupt lifetime.",
+    "historicalPlannedLiveStep": "The planned acceptance step was to install the reviewed candidate, review changed hook trust and reload the app, then perform one native Stop sequence using the actual terminal stage and positive inactivity proof. The accepted deployment and live result are recorded below.",
     "independentReview": {
       "outcome": "No actionable findings",
       "coverage": "Exact3s/10s ownership, both prepared migration directions, rollback, deadline propagation, positive terminal custody, duplicate callbacks and no-repeat input",
-      "limits": "Source and fixture review; repaired installed behavior remains unverified"
+      "limits": "This review covered source and fixtures; repaired installed behavior had not yet been verified at that review stage."
     },
     "verification": {
       "command": "npm run verify:codex",
@@ -600,7 +607,132 @@
       "catalogModelsParsed": 18,
       "catalogCompatibility": "passed",
       "sourceChecks": "passed",
-      "testMaintenance": "All changed tests retain continuing deadline, ownership, rollback or historical receipt regression purpose."
+      "testMaintenance": "All changed tests retain continuing deadline, ownership, rollback or historical receipt regression purpose.",
+      "reuseForAcceptedCandidate": "Reused for af50c8f2501723e870c5df87fc4299134984f720 because no source runtime inputs changed after these checks. The later evidence-only update added or modified no tests."
     }
+  },
+  "postDeploymentAcceptance": {
+    "snapshotScope": "Historical acceptance of one deployed candidate and one exact Instant live sequence after normal app reopen; no broader route or repeated-reliability qualification.",
+    "candidateCommit": "af50c8f2501723e870c5df87fc4299134984f720",
+    "deployment": {
+      "independentUpdaterRun": "ff2919ae344e44d0ab641888241c225a",
+      "acceptedAt": "2026-10-30T03:20:52.5335568Z",
+      "acceptanceChecks": "all passed",
+      "appReopened": true,
+      "ledgerPreservation": "accepted",
+      "rollbackArtifacts": "retained",
+      "liveRollbackTested": false
+    },
+    "runtime": {
+      "appVersion": "26.1027.3384.0",
+      "cliVersion": "0.166.0-alpha.5.1",
+      "browserRuntimeVersion": "26.1027.30824",
+      "adapterGeneration": "1d7a05bafb3e67ce1be1a1847b914a84dbee0366fd5b6ce2123e9b70f7ea1367",
+      "browserRuntimeStatus": "current",
+      "routerHealth": "ready",
+      "routerHttpStatus": 200,
+      "degraded": [],
+      "codexRestartRequired": false,
+      "adapterConflicts": 0,
+      "switchyardPinAndBinary": "unchanged",
+      "appLoaded": null,
+      "hookTrusted": null,
+      "diagnosticLimits": "Static appLoaded and hookTrusted diagnostics remained unknown; the actual native Interrupt subsequently succeeded."
+    },
+    "reusedVerification": {
+      "sourceTestsPassed": 2421,
+      "sourceTestsFailed": 0,
+      "sourceTestsSkipped": 2,
+      "renderedBrowserCasesPassed": 40,
+      "scope": "Existing source checks and rendered cases were reused; no source runtime inputs changed after them. The fresh live sequence below supplies installed-runtime acceptance."
+    },
+    "liveRoute": {
+      "model": "chatgpt-web/gpt-6-sol-instant",
+      "effort": "low",
+      "family": "GPT-6",
+      "power": 0,
+      "receiptPhases": [
+        "native",
+        "recall",
+        "ready",
+        "stop",
+        "continuation"
+      ],
+      "allReceiptsPassed": true,
+      "savedContextRecovery": "Before the fresh sequence, the prior exact marker was recalled without supplying it.",
+      "nativeTool": {
+        "result": "passed",
+        "tool": "exec_command",
+        "completedExecutions": 1,
+        "permissions": "default",
+        "exactSyntheticMarkerReturned": true,
+        "delivery": "completed"
+      },
+      "recall": {
+        "result": "passed",
+        "toolExecutions": 0,
+        "markerSupplied": false,
+        "exactMarkerReturned": true,
+        "sameNativeBinding": true
+      },
+      "ready": {
+        "result": "passed",
+        "acceptedSend": true,
+        "currentGeneration": true,
+        "stopVisible": true
+      },
+      "stop": {
+        "result": "passed",
+        "nativeCodexStopPresses": 1,
+        "receiptObservedAt": "2026-10-30T03:27:08.220Z",
+        "receiptCode": "native_interruption_and_adapter_stop_confirmed",
+        "nativeInterrupted": true,
+        "adapterStopConfirmed": true,
+        "childTerminalObserved": true,
+        "confirmedStage": {
+          "observedAt": "2026-10-30T03:27:02.738Z",
+          "code": "stop_confirmed",
+          "hookCompletedAt": "2026-10-30T03:27:02.738Z",
+          "callbackElapsedMs": 1290,
+          "nativeElapsedMs": 1289,
+          "stage": "complete",
+          "clickAttempted": true,
+          "clickError": false,
+          "stopClicked": true,
+          "stopHidden": true,
+          "generationInactive": true,
+          "inactivityEvidence": "composer_restored",
+          "retained": true,
+          "freshController": false,
+          "readbackState": "inactive_readback",
+          "readbackControlsRecognized": true,
+          "readbackComplete": false,
+          "interpretation": "The restored composer positively established inactivity after cancellation; readbackComplete false does not claim that the interrupted answer naturally completed."
+        }
+      },
+      "continuation": {
+        "result": "passed",
+        "observedAt": "2026-10-30T03:27:22.901Z",
+        "toolExecutions": 0,
+        "markerSupplied": false,
+        "exactMarkerReturned": true,
+        "sameSavedUrl": true,
+        "sameTab": true,
+        "sameNativeBinding": true,
+        "retention": "completed",
+        "cacheMiss": false,
+        "recoveryBranch": false
+      }
+    },
+    "finalLedger": {
+      "sameSavedUrl": true,
+      "sameTab": true,
+      "sameNativeBinding": true,
+      "uncertainSend": false,
+      "unresolvedCodingCount": 0,
+      "lastTurnCompleted": true,
+      "generationCompleted": true
+    },
+    "acceptance": "The deployed candidate passed one exact Instant sequence covering saved-context recovery, one native tool call, recall, actual native Codex Stop with positive adapter inactivity proof, and same-chat continuation. This does not qualify every route or establish repeated reliability; rollback artifacts were retained but live rollback was not tested."
   }
 }
