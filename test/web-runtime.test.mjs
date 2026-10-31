@@ -1534,6 +1534,27 @@ test("verified missing-browser recovery releases its opening guard before capaci
   });
 });
 
+test("a pending opener requires full recovery even when its failed turn left a warm browser binding", async t => {
+  const { h, continuation, restore } = await missingTaskBrowser(t);
+  const opener = (await h.answerBrowser(continuation)).output[0];
+  h.append(opener, outputFor(opener, { queued: true }));
+  const proofCall = (await h.request()).output[0];
+  await assert.rejects(h.answerBrowser(proofCall), { code: "web_browser_open_pending" });
+  restore();
+  // The delayed app opening finishes and a read-only proof warms the kernel,
+  // but its result has not yet been accepted by the native scheduler.
+  const proof = parseBrowserOutput(await h.executeBrowser(proofCall), readBrowserProgram(JSON.parse(proofCall.arguments).code).frameToken);
+  assert.equal(proof.recovered, true);
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Verify the now-visible saved browser.");
+  const retry = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(retry.arguments).code).fullContinuation, true);
+  const send = (await h.answerBrowser(retry)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, undefined);
+  assert.equal(h.input().filter(item => item.name === "open_in_codex").length, 1);
+  assert.equal(h.browser.ui.sends.length, 1, "Recovery alone must not send the new prompt.");
+});
+
 test("a queued browser opener stays guarded across errors, new turns and restart without another open", async t => {
   const { h, continuation, restore } = await missingTaskBrowser(t);
   const opener = (await h.answerBrowser(continuation)).output[0];
@@ -1543,7 +1564,8 @@ test("a queued browser opener stays guarded across errors, new turns and restart
   const guard = JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen;
   await h.restartRuntime(); h.loseKernel();
   h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Verify the queued browser without opening it twice.");
-  const retry = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+  const retry = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(retry.arguments).code).fullContinuation, true);
   await assert.rejects(h.answerBrowser(retry), { code: "web_browser_open_pending" });
   assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, guard);
   assert.equal(h.input().filter(item => item.name === "open_in_codex").length, 1);
@@ -1551,7 +1573,8 @@ test("a queued browser opener stays guarded across errors, new turns and restart
     { compact: true, headers: headers() }), { code: "web_browser_open_pending" });
   restore(); await h.restartRuntime(); h.loseKernel();
   h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "The task is now visible; verify its existing browser.");
-  const verified = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+  const verified = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(verified.arguments).code).fullContinuation, true);
   const send = (await h.answerBrowser(verified)).output[0];
   assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
   assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, undefined);

@@ -714,6 +714,10 @@ export function createInAppWebRuntime({
     turn.executor = discoverBrowserExecutor(turn.tools);
     const frameToken = randomBytes(24).toString("hex");
     const conversation = turn.conversation;
+    // A queued app opening can finish after its original turn failed. The
+    // retained kernel may already be warm, but releasing this durable guard
+    // still requires the full saved-chat proof on every later attempt.
+    if (operation === "continue" && conversation.pendingBrowserOpen) fullContinuation = true;
     const observed = conversation.observation;
     const recoveryReply = typeof observed?.replyId === "string" && uuid.test(observed.replyId)
       && messageIds(conversation.sendBaselineReplyIds) && !conversation.sendBaselineReplyIds.includes(observed.replyId);
@@ -734,6 +738,7 @@ export function createInAppWebRuntime({
       name: turn.executor.name, arguments: turn.executor.argumentsFor(browserScript({
         operation, bindingId: turn.conversation.bindingId, frameToken,
         ...(fullContinuation ? { fullContinuation: true } : {}),
+        ...(operation === "continue" && conversation.pendingBrowserOpen ? { requireSavedRecovery: true } : {}),
         ...turn.settings.browser, ...turn.selection,
         sessionId: turn.threadId, turnId: turn.turnId, runtimeModule: turn.settings.browser.runtimeModule,
         ...(turn.conversation.tabId ? { tabId: turn.conversation.tabId } : {}),

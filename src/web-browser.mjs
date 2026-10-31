@@ -961,6 +961,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   let recoveryEffects, recoveryTabId;
   let verifyRecoveryTexts, recoveryFailure;
   let recoverMissingTab = false;
+  let revalidateOwnedBinding = false;
   let readOnlyRecoveryCustody;
   try {
   if (operation === "continue" && options.recovery && !state.bindingLost && !state.needsHistory && !options.needsHistory && state.browser && state.tabId) {
@@ -969,15 +970,16 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     if (state.sendClicked && !state.sendConfirmed) throw new Error("The preceding Send is uncertain; it cannot be replayed.");
     const owned = (await state.browser.tabs.list()).filter(tab => tab.id === state.tabId);
     recoverMissingTab = owned.length === 0;
+    revalidateOwnedBinding = options.requireSavedRecovery === true && !recoverMissingTab;
     if (recoverMissingTab && state.savedUrl !== options.recovery.url) throw new Error("The missing tab recovery URL differs from the owned saved conversation.");
   }
-  if (operation === "continue" && (state.bindingLost || recoverMissingTab)) {
+  if (operation === "continue" && (state.bindingLost || recoverMissingTab || revalidateOwnedBinding)) {
     // A confirmed saved URL and generation anchor can recover a lost kernel.
     // A browser/tab ID is only a hint after restart; the exact saved URL and
     // rendered generation remain authoritative. Never replace a surviving owner.
     const proof = options.recovery;
     const requireRecoveryOwnership = () => {
-      if (recoverMissingTab) activeOwner(options.expectedOwnerTurnIds, true);
+      if (recoverMissingTab || revalidateOwnedBinding) activeOwner(options.expectedOwnerTurnIds, true);
       else {
         const recoveryOwner = globalThis.routerWebActiveTurns?.get(options.sessionId);
         if (recoveryOwner?.state === state) throw new Error(`The preceding saved-chat recovery did not finish verification; continuation remains blocked. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason: "prior-recovery-unverified", phase: "ownership-guard" })}`);
@@ -1656,6 +1658,8 @@ export function browserScript(options) {
   if (options.inputAcknowledgementPending !== undefined && (options.operation !== "observe" || typeof options.inputAcknowledgementPending !== "boolean")) throw failure("Input acknowledgement requires a boolean observation hint.");
   if (options.turnToken !== undefined && (options.operation !== "send" || typeof options.turnToken !== "string" || !/^web_turn_[a-f0-9]{32}$/u.test(options.turnToken))) throw failure("A current private turn token is supported only for Send and must match the broker token format.");
   if (options.fullContinuation !== undefined && (options.operation !== "continue" || options.fullContinuation !== true)) throw failure("A full browser continuation requires its explicit Continue-only install flag.");
+  if (options.requireSavedRecovery !== undefined && (options.requireSavedRecovery !== true || options.operation !== "continue"
+      || options.fullContinuation !== true || !options.recovery)) throw failure("Saved-chat revalidation requires a full continuation with its recovery proof.");
   const transfersOwnership = ["continue", "rollover"].includes(options.operation);
   if (transfersOwnership && (!Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.length
       || options.expectedOwnerTurnIds.some(value => typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(value))
