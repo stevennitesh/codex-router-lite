@@ -127,6 +127,19 @@ function addModelSwitchPrefix(input, { hostSkills = false } = {}) {
   return prefix;
 }
 
+function addAppContextPrefix(input) {
+  const shapes = [['user', 'environments.environment_context'], ['developer', 'additional_content.codex_apps_client_time_context']];
+  const prefix = shapes.map(([role, kind], index) => row('response_item', {
+    type: 'message', id: `app-context-${index}`, role,
+    content: [{ type: 'input_text', text: 'PRIVATE_CONTEXT_CANARY' }],
+    internal_chat_message_metadata_passthrough: { turn_id: turnId, create_time: Date.parse(at) / 1000,
+      content_item_kinds: [kind], content_item_metadata: [{ provenance: {} }] },
+  }));
+  const ingressIndex = input.sessionRows.findIndex(entry => entry.payload?.name === 'send_message_to_thread');
+  input.sessionRows.splice(ingressIndex, 0, ...prefix);
+  return prefix;
+}
+
 test('readiness requires accepted Send, the current generation, and canonical paired browser evidence', () => {
   const input = evidence();
   assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
@@ -252,6 +265,61 @@ test('a model-switch prefix permits the exact following ingress and rejects chan
   const duplicate = withModelIdentity(evidence('native')); addModelSwitchPrefix(duplicate);
   duplicate.sessionRows.push(structuredClone(duplicate.sessionRows.find(entry => entry.payload?.name === 'send_message_to_thread')));
   assert.equal(evaluateWebPhase(duplicate).receipt.code, 'unsupported_app_prompt_ingress');
+});
+
+test('current app environment and client-time contexts preserve only the following exact ingress authority', () => {
+  for (const modelSwitch of [false, true]) for (const phase of ['native', 'recall', 'ready', 'stop', 'continuation']) {
+    const input = withModelIdentity(evidence(phase));
+    if (modelSwitch) addModelSwitchPrefix(input, { hostSkills: true });
+    addAppContextPrefix(input);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.status, 'passed', `${phase}, switch=${modelSwitch}: ${receipt.code}`);
+    assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE_CONTEXT_CANARY/u);
+  }
+  for (const mutate of [
+    prefix => { prefix[0].payload.role = 'developer'; },
+    prefix => { prefix[1].payload.role = 'user'; },
+    prefix => { prefix[0].payload.id = ''; },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.turn_id = generation; },
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.create_time = null; },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.create_time = '123'; },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.content_item_kinds = ['PRIVATE_UNKNOWN_CONTEXT_KIND']; },
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.content_item_kinds.push('additional_content.codex_apps_client_time_context'); },
+    prefix => { prefix[0].payload.internal_chat_message_metadata_passthrough.content_item_metadata = []; },
+    prefix => { prefix[1].payload.internal_chat_message_metadata_passthrough.content_item_metadata = [null]; },
+    prefix => { prefix[0].payload.content[0].type = 'output_text'; },
+    prefix => { prefix[1].payload.content[0].text = 7; },
+    prefix => { prefix[0].payload.content.push({ type: 'input_text', text: 'PRIVATE_EXTRA_CONTEXT' }); },
+    prefix => { prefix[1].payload.content[0] = null; },
+    prefix => { prefix[0].payload.type = 'function_call_output'; },
+  ]) {
+    const input = evidence('native'), prefix = addAppContextPrefix(input); mutate(prefix);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.code, 'unsupported_app_context_prefix');
+    assert.doesNotMatch(JSON.stringify(receipt), /PRIVATE/u);
+  }
+});
+
+test('app context prefixes reject missing, duplicate, reversed or late envelopes and never authorize orphan outputs', () => {
+  for (const [mutate, code] of [
+    [(input, prefix) => { input.sessionRows = input.sessionRows.filter(entry => entry !== prefix[1]); }, 'unsupported_app_prompt_ingress'],
+    [(input, prefix) => { input.sessionRows = input.sessionRows.filter(entry => entry !== prefix[0]); }, 'unsupported_app_context_prefix'],
+    [(input, prefix) => { const index = input.sessionRows.indexOf(prefix[0]); input.sessionRows.splice(index, 2, prefix[1], prefix[0]); }, 'unsupported_app_context_prefix'],
+    [(input, prefix) => { input.sessionRows.splice(input.sessionRows.indexOf(prefix[1]), 0, structuredClone(prefix[0])); }, 'unsupported_app_context_prefix'],
+    [(input, prefix) => { input.sessionRows.push(structuredClone(prefix[1])); }, 'unsupported_app_context_prefix'],
+    [(input, prefix) => { input.sessionRows.splice(input.sessionRows.indexOf(prefix[1]) + 1, 0, row('response_item', { type: 'message', role: 'assistant', content: [] })); }, 'unsupported_app_context_prefix'],
+    [input => { input.sessionRows.find(entry => entry.payload?.name === 'send_message_to_thread').payload.namespace = 'foreign'; }, 'unsupported_app_prompt_ingress'],
+    [input => { input.sessionRows.push(row('response_item', { type: 'function_call_output', call_id: 'orphan', output: marker })); }, 'unpaired_output'],
+    [input => { input.sessionRows.push(structuredClone(input.sessionRows.find(entry => entry.payload?.name === 'send_message_to_thread'))); }, 'unsupported_app_prompt_ingress'],
+  ]) {
+    const input = evidence('native'), prefix = addAppContextPrefix(input); mutate(input, prefix);
+    assert.equal(evaluateWebPhase(input).receipt.code, code);
+  }
+  const interleaved = evidence('native'), modelPrefix = addModelSwitchPrefix(interleaved);
+  const contexts = addAppContextPrefix(interleaved);
+  interleaved.sessionRows.splice(interleaved.sessionRows.indexOf(modelPrefix[1]), 1);
+  interleaved.sessionRows.splice(interleaved.sessionRows.indexOf(contexts[0]) + 1, 0, modelPrefix[1]);
+  assert.equal(evaluateWebPhase(interleaved).receipt.code, 'unsupported_app_context_prefix');
 });
 
 test('every phase with an expected route proves the selected native model, effort and pre-Send browser selection', () => {

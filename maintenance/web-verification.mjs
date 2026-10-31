@@ -32,6 +32,17 @@ const identity = ledger => ({ chatUrl: ledger.chatUrl, tabId: String(ledger.tabI
 const sameIdentity = (a, b) => a.chatUrl === b.chatUrl && a.tabId === b.tabId && a.bindingId === b.bindingId;
 const successfulToolOutputEnvelope = output => output.isError !== true
   && (!Object.hasOwn(output, 'status') || output.status === 'completed');
+const appMessageEnvelope = (message, turnId, role, kinds) => {
+  const metadata = message.internal_chat_message_metadata_passthrough;
+  return message.type === 'message' && message.role === role && typeof message.id === 'string' && message.id.length > 0
+    && object(metadata) && metadata.turn_id === turnId && Number.isFinite(metadata.create_time)
+    && Array.isArray(metadata.content_item_kinds) && metadata.content_item_kinds.length === kinds.length
+    && kinds.every((kind, index) => metadata.content_item_kinds[index] === kind)
+    && Array.isArray(metadata.content_item_metadata) && metadata.content_item_metadata.length === kinds.length
+    && metadata.content_item_metadata.every(object)
+    && Array.isArray(message.content) && message.content.length === kinds.length
+    && message.content.every(block => object(block) && block.type === 'input_text' && typeof block.text === 'string');
+};
 const callKinds = new Map(Object.entries(webToolKinds).map(([kind, contract]) => [contract.callType, kind]));
 const outputKinds = new Set(Object.values(webToolKinds).map(contract => contract.outputType));
 // Runtime calls retain an explicit namespace. Desktop rollout records may
@@ -278,31 +289,43 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       [['model_switch.instructions']],
       [['collaboration_mode.instructions'], ['host_skills.instructions', 'collaboration_mode.instructions']],
     ];
-    let prefixLength = 0;
+    const contextPrefix = [
+      { role: 'user', kinds: ['environments.environment_context'] },
+      { role: 'developer', kinds: ['additional_content.codex_apps_client_time_context'] },
+    ];
+    let prefixLength = 0, contextLength = 0;
     for (const row of rows) {
       if (row.type !== 'response_item') continue;
       const p = row.payload;
+      const contextKinds = p?.internal_chat_message_metadata_passthrough?.content_item_kinds;
+      const appContext = Array.isArray(contextKinds) && contextKinds.some(kind => contextPrefix.some(entry => entry.kinds.includes(kind)));
+      if (appContext || firstResponseItem && p?.type === 'message' && (p.role === 'user' || contextLength > 0)) {
+        // The current app may refresh environment and client-time context
+        // before its incoming tool envelope. Only this exact ordered pair can
+        // extend the prefix; its private text grants no tool-result authority.
+        const expectedContext = contextPrefix[contextLength];
+        requireValue(firstResponseItem && (prefixLength === 0 || prefixLength === switchPrefix.length)
+          && expectedContext && appMessageEnvelope(p, turnId, expectedContext.role, expectedContext.kinds), 'unsupported_app_context_prefix');
+        contextLength++;
+        continue;
+      }
       if (firstResponseItem && p?.type === 'message' && p.role === 'developer') {
         // A model override prepends exactly these two app-owned instruction
         // envelopes before the ordinary incoming prompt. Their text is private
         // and is neither interpreted nor copied to a receipt.
-        const metadata = p.internal_chat_message_metadata_passthrough;
-        const kinds = metadata?.content_item_kinds;
-        requireValue(prefixLength < switchPrefix.length && typeof p.id === 'string' && p.id.length > 0
-          && Array.isArray(kinds) && switchPrefix[prefixLength].some(expectedKinds => expectedKinds.length === kinds.length && expectedKinds.every((kind, index) => kinds[index] === kind))
-          && Array.isArray(p.content) && p.content.length === kinds.length && p.content.every(block => block.type === 'input_text' && typeof block.text === 'string')
-          && object(metadata) && metadata.turn_id === turnId && Number.isFinite(metadata.create_time)
-          && Array.isArray(metadata.content_item_metadata) && metadata.content_item_metadata.length === kinds.length, 'unsupported_app_model_switch_prefix');
+        requireValue(contextLength === 0 && prefixLength < switchPrefix.length
+          && switchPrefix[prefixLength].some(kinds => appMessageEnvelope(p, turnId, 'developer', kinds)), 'unsupported_app_model_switch_prefix');
         prefixLength++;
         continue;
       }
       if (p?.type === 'function_call_output' && !Object.hasOwn(p, 'call_id')) {
         // The desktop app records an incoming send_message_to_thread prompt as
-        // its first response item after any exact model-switch prefix. It is
+        // its first response item after any exact app context prefix. It is
         // not a result of a target-thread call.
         // Recognize only that observed ingress envelope, never arbitrary orphan
         // outputs or a second ingress mixed into the selected native turn.
         requireValue(firstResponseItem && (prefixLength === 0 || prefixLength === switchPrefix.length)
+          && (contextLength === 0 || contextLength === contextPrefix.length)
           && p.name === 'send_message_to_thread' && p.namespace === 'codex_app'
           && typeof p.id === 'string' && p.id.length > 0 && typeof p.output === 'string'
           && object(p.internal_chat_message_metadata_passthrough)
@@ -312,6 +335,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         continue;
       }
       requireValue(prefixLength === 0 || prefixLength === switchPrefix.length, 'unsupported_app_model_switch_prefix');
+      requireValue(contextLength === 0 || !firstResponseItem, 'unsupported_app_prompt_ingress');
       firstResponseItem = false;
       if (callKinds.has(p?.type)) {
         requireValue(typeof p.call_id === 'string' && p.call_id.length > 0 && !calls.has(p.call_id), 'duplicate_or_invalid_call');
