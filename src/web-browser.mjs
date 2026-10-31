@@ -48,6 +48,61 @@ export function discoverBrowserExecutor(tools) {
   return { namespace: nativeNamespace, name: "js", argumentsFor };
 }
 
+// Native built-in and connector declarations expose these two current app
+// namespaces. Only the explicit function identity grants UI-opening authority;
+// flattened names and suffix matches do not identify a declared native tool.
+export function discoverBrowserOpener(tools) {
+  const namespaces = new Set(["codex_app", "mcp__codex_app"]), matches = [];
+  for (const tool of tools || []) {
+    if (tool?.type === "namespace" && namespaces.has(tool.name)) {
+      for (const child of tool.tools || []) if (child?.name === "open_in_codex") matches.push({ namespace: tool.name, tool: child });
+    } else if (namespaces.has(tool?.namespace) && tool.name === "open_in_codex") matches.push({ namespace: tool.namespace, tool });
+  }
+  if (!matches.length) throw failure("The current native Codex app browser opener is not declared.", "web_browser_opener_missing");
+  if (matches.length !== 1 || matches[0].tool.type !== "function"
+      || matches[0].tool.namespace !== undefined && matches[0].tool.namespace !== matches[0].namespace) {
+    throw failure("Require one explicitly declared native Codex app browser opener function.");
+  }
+  const { namespace, tool } = matches[0], schemas = [tool.parameters, tool.inputSchema].filter(value => value !== undefined);
+  const schema = schemas[0];
+  if (schemas.length !== 1 || !record(schema) || schema.type !== "object") throw failure("The current native browser opener schema is unavailable.");
+  // Validate just the concrete supported app arguments against their current
+  // declaration, including the app's target union. Unsupported schema features
+  // fail rather than silently broadening or changing the requested UI action.
+  const supported = new Set(["type", "properties", "required", "additionalProperties", "anyOf", "oneOf", "enum", "const",
+    "minLength", "maxLength", "pattern", "minProperties", "maxProperties", "title", "description", "default", "examples",
+    "deprecated", "readOnly", "writeOnly", "$schema"]);
+  const accepts = (rule, value, depth = 0) => {
+    if (!record(rule) || depth > 12 || Object.keys(rule).some(key => !supported.has(key))) return false;
+    if (rule.anyOf !== undefined && (!Array.isArray(rule.anyOf) || !rule.anyOf.some(child => accepts(child, value, depth + 1)))) return false;
+    if (rule.oneOf !== undefined && (!Array.isArray(rule.oneOf) || rule.oneOf.filter(child => accepts(child, value, depth + 1)).length !== 1)) return false;
+    if (rule.enum !== undefined && (!Array.isArray(rule.enum) || !rule.enum.includes(value))
+        || Object.hasOwn(rule, "const") && rule.const !== value) return false;
+    if (rule.type !== undefined && !hasType(rule, record(value) ? "object" : typeof value)) return false;
+    if (typeof value === "string") {
+      if (value.length < (rule.minLength ?? 0) || value.length > (rule.maxLength ?? Infinity)) return false;
+      if (rule.pattern !== undefined) { try { if (typeof rule.pattern !== "string" || !new RegExp(rule.pattern).test(value)) return false; } catch { return false; } }
+    } else if (record(value)) {
+      if (rule.properties !== undefined && !record(rule.properties) || rule.required !== undefined
+          && (!Array.isArray(rule.required) || rule.required.some(key => typeof key !== "string" || !Object.hasOwn(value, key)))) return false;
+      if (Object.keys(value).length < (rule.minProperties ?? 0) || Object.keys(value).length > (rule.maxProperties ?? Infinity)) return false;
+      for (const [key, child] of Object.entries(value)) {
+        if (Object.hasOwn(rule.properties ?? {}, key)) { if (!accepts(rule.properties[key], child, depth + 1)) return false; }
+        else if (rule.additionalProperties === false || record(rule.additionalProperties) && !accepts(rule.additionalProperties, child, depth + 1)) return false;
+      }
+    } else return false;
+    return true;
+  };
+  return { namespace, name: "open_in_codex", argumentsFor(savedUrl, sessionId) {
+    if (!isSavedChatUrl(savedUrl) || typeof sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(sessionId)) {
+      throw failure("Browser panel recovery requires the exact saved chat URL and current native session identity.");
+    }
+    const args = { target: { type: "browser", url: savedUrl }, threadId: sessionId };
+    if (!accepts(schema, args)) throw failure("The exact browser panel recovery arguments do not satisfy the current native app declaration.");
+    return JSON.stringify(args);
+  } };
+}
+
 export function isSavedChatUrl(value) {
   if (typeof value !== "string") return false;
   try {
@@ -936,7 +991,12 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     requireRecoveryOwnership();
     const own = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
     requireRecoveryOwnership();
-    if (own.length !== 1 || typeof own[0].id !== "string") throw new Error("The same-session browser is unavailable for recovery.");
+    // The public SDK can select only an existing browser. Opening the exact
+    // saved chat in this task's app panel belongs to the native app tool; this
+    // receipt grants neither page custody nor Send/Stop authority. The caller
+    // must run the complete checkpoint proof again after that one UI action.
+    if (own.length === 0) { emit({ needsBrowserOpen: true, noActions: true }); return; }
+    if (own.length !== 1 || typeof own[0].id !== "string" || !own[0].id) throw new Error("The same-session browser identity is ambiguous or invalid for recovery.");
     const browser = await agent.browsers.get(own[0].id);
     requireRecoveryOwnership();
     if (browser.browserId !== own[0].id) throw new Error("The current browser identity changed during recovery.");
@@ -1696,33 +1756,45 @@ export function browserScript(options) {
 // replays Send nor accepts the abandoned attempt as delivered context.
 async function runControlledRecovery(previous, options, nodeRepl, readReplies, createView, createContext, lifecycle) {
   const { createHash } = await import("node:crypto");
-  const refusal = reason => new Error(`Controlled same-chat recovery refused. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason, phase: "initial-proof" })}`);
+  let phase = "browser-discovery";
+  let browserCount, tabMatchCount;
+  const refusal = reason => new Error(`Controlled same-chat recovery refused. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason, phase,
+    ...(phase === "browser-discovery" || phase === "browser-recheck" ? { browserCount } : {}),
+    ...(phase === "saved-tab-discovery" ? { tabMatchCount } : {}) })}`);
   const refuse = reason => { throw refusal(reason); };
   const hash = value => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
   const proof = options.recoveryProof;
   const agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
   const browsers = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
+  browserCount = Math.min(browsers.length, 10000);
   if (browsers.length !== 1) refuse("ownership-changed");
+  phase = "browser-acquisition";
   const browser = await agent.browsers.get(browsers[0].id);
   await browser.documentation();
+  phase = "active-owner";
   const owner = globalThis.routerWebActiveTurns?.get(options.sessionId);
   if (owner && (owner.state !== previous || !options.expectedOwnerTurnIds.includes(owner.turnId))) refuse("ownership-changed");
+  phase = "saved-tab-discovery";
   const tabs = (await browser.tabs.list()).filter(tab => tab.url === proof.chatUrl);
+  tabMatchCount = Math.min(tabs.length, 10000);
   if (tabs.length > 1) refuse("ownership-changed");
   const effects = { tabReopened: tabs.length === 0, tabNavigated: false, handoffMarked: false };
   let contentPending = false;
   const allowance = lifecycle.createAllowance(Date.now() + 10000, () => refusal(contentPending ? "reply-prefix-too-short" : "ownership-changed"));
+  phase = "saved-tab-acquisition";
   const tab = tabs.length ? await browser.tabs.get(tabs[0].id) : await browser.tabs.new(), currentTabId = tab.id;
   if (!currentTabId || tabs.length && currentTabId !== tabs[0].id) refuse("ownership-changed");
   const assertOwner = () => {
     if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner || browser.browserId !== browsers[0].id
-        || tab.id !== currentTabId) refuse("ownership-changed");
+        || tab.id !== currentTabId) { phase = "active-owner"; refuse("ownership-changed"); }
   };
   if (effects.tabReopened) { effects.tabNavigated = true; await tab.goto(proof.chatUrl); }
+  phase = "saved-url-readiness";
   try { await tab.playwright.waitForURL(proof.chatUrl, { timeoutMs: allowance(1000) }); }
   catch { refuse("ownership-changed"); }
   const recoveryState = lifecycle.recoveryState(tab, { ui: options.ui, proof: { generationTurnKey: proof.generationTurnKey,
     replyId: proof.observation.replyId, completed: true, controlledAbandonment: true } });
+  phase = "checkpoint-readiness";
   const mounted = await lifecycle.browserReadiness(recoveryState.ready, { nextTimeout: () => { assertOwner(); return allowance(1000); },
     inspect: async () => tab.id === currentTabId && await tab.url() === proof.chatUrl && await recoveryState.ready.count() === 1,
     ready: value => value === true });
@@ -1734,27 +1806,40 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
   const context = createContext(state, options, nodeRepl, readReplies, viewFactory, lifecycle);
   const inspect = async () => {
     allowance(); assertOwner();
+    phase = "browser-recheck";
     const currentBrowsers = (await agent.browsers.list()).filter(value => value.type === "iab" && value.metadata?.codexSessionId === options.sessionId);
+    browserCount = Math.min(currentBrowsers.length, 10000);
     if (currentBrowsers.length !== 1 || currentBrowsers[0].id !== browser.browserId) refuse("ownership-changed");
+    phase = "saved-url-recheck";
     if (tab.id !== currentTabId || await tab.url() !== proof.chatUrl) refuse("ownership-changed");
+    phase = "dom-snapshot";
     const snapshot = await context.mutationSnapshot({ includeReplies: true, projection: "recovery" });
     const mutation = snapshot.mutation, replies = snapshot.replies, turns = snapshot.turns;
+    phase = "generation-state";
     if (await context.role(options.ui.stopButtonExactName).filter({ visible: true }).count() !== 0) refuse("generation-active");
+    phase = "composer-state";
     if (!mutation.emptyComposer) refuse("composer-draft-present");
+    phase = "normal-chat-state";
     if (!mutation.normal || mutation.url !== proof.chatUrl) refuse("ownership-changed");
+    phase = "idle-control-state";
     if (!mutation.idle || await context.role(options.recoveryIdleButtonExactName).filter({ visible: true }).count() !== 1) refuse("idle-control-missing");
+    phase = "message-identities";
     if (!context.validReplies(replies) || turns.some(turn => typeof turn.turnKey !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(turn.turnKey))
         || new Set(turns.map(turn => turn.turnKey)).size !== turns.length) refuse("ownership-changed");
     const accepted = turns.filter(turn => turn.turnKey === proof.generationTurnKey);
     const reply = replies.find(reply => reply.messageId === proof.observation.replyId);
+    phase = "accepted-checkpoint";
     if (accepted.length !== 1 || accepted[0].complete !== true || !reply || reply.turnKey !== proof.generationTurnKey) refuse("ownership-changed");
     const allowed = new Set([...proof.sendBaselineReplyIds, ...proof.generationReplyIds]);
+    phase = "reply-history";
     if (replies.some(reply => !allowed.has(reply.messageId)) || replies.at(-1)?.messageId !== proof.observation.replyId) refuse("ownership-changed");
+    phase = "anchor-snapshot";
     const anchors = await context.snapshot(tab, `Router generation: ${proof.failedTurnId}`, undefined, "recovery-anchor", []);
     if (anchors.turns.length !== turns.length || anchors.turns.some((turn, index) => turn.turnKey !== turns[index].turnKey || turn.nestedInTurn)) refuse("snapshot-changed");
     const acceptedIndex = turns.findIndex(turn => turn.turnKey === proof.generationTurnKey);
     const abandoned = [...(proof.priorRevokedTurnIds ?? []), proof.failedTurnId], used = new Set();
     let previousMarkerIndex = -1;
+    phase = "revoked-turn-order";
     for (const turn of anchors.turns.slice(acceptedIndex + 1)) {
       const markers = abandoned.flatMap((turnId, index) => turn.textContent.includes(`Router generation: ${turnId}`) ? [index] : []);
       if (markers.length !== 1 || used.has(markers[0]) || markers[0] <= previousMarkerIndex
@@ -1762,6 +1847,7 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
       used.add(markers[0]); previousMarkerIndex = markers[0];
     }
     assertOwner(); allowance();
+    phase = "reply-prefix";
     if (reply.text.length < proof.observation.assistantPrefix.length) {
       if (reply.answer !== true || typeof reply.recoveryTextContent !== "string") refuse("ownership-changed");
       return { pendingText: reply.recoveryTextContent };
@@ -1775,6 +1861,7 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
     while (Object.hasOwn(result, "pendingText")) {
       contentPending = true;
       let changed = false;
+      phase = "reply-content-readiness";
       const observed = await lifecycle.browserReadiness(recoveryState.contentChangedSince(result.pendingText), {
         nextTimeout: () => { assertOwner(); return allowance(1000); },
         afterWait: ({ error, timedOut }) => { assertOwner(); changed = !error; if (error && !timedOut) refuse("ownership-changed"); },
@@ -1788,12 +1875,17 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
     return result;
   };
   const first = await completeInspect(), snapshot = await completeInspect(), snapshotSha256 = hash(snapshot);
+  phase = "snapshot-stability";
   if (hash(first) !== snapshotSha256 || options.snapshotSha256 !== undefined && snapshotSha256 !== options.snapshotSha256) refuse("snapshot-changed");
   if (effects.tabReopened) {
+    phase = "handoff";
     await tab.markHandoff(); effects.handoffMarked = true;
-    if (hash(await completeInspect()) !== snapshotSha256) refuse("snapshot-changed");
+    const retained = await completeInspect();
+    phase = "snapshot-stability";
+    if (hash(retained) !== snapshotSha256) refuse("snapshot-changed");
   }
   if (!options.inspectionOnly) {
+    phase = "ownership-transfer";
     if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner) refuse("ownership-changed");
     // Old browser flags and tool directives never become the new turn's state.
     Object.assign(state, { completed: true, retained: true, sendAttempted: false, sendClicked: false, sendConfirmed: false,

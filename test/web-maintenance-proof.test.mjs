@@ -520,6 +520,26 @@ test("opaque recovery sidecars are byte-preserved without becoming authoritative
   assert.throws(() => snapshotWebConversationLedgers(directory, options), /protected bounded regular file/u);
 });
 
+test("pending native browser openings remain durable action risk until exact saved-chat verification", t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "pending-browser-open-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const ledgers = path.join(directory, "web-in-app", "conversations"); mkdirSync(ledgers, { recursive: true });
+  const threadId = "00112233-4455-6677-8899-aabbccddeeff", turnId = "11002233-4455-6677-8899-aabbccddeeff";
+  const value = { version: 4, priorVersion: 1, threadId, uncertainSend: false, unresolvedCoding: [],
+    pendingBrowserOpen: { turnId, callId: `call_router_web_${"a".repeat(32)}`, chatUrl: "https://chatgpt.com/c/accepted-chat" },
+    lastTurn: { turnId, sendState: "unsent", completed: false } };
+  const file = path.join(ledgers, `${threadId}.json`); writeFileSync(file, JSON.stringify(value), "utf8");
+  assert.equal(validWebConversationRisk(value, threadId), true);
+  const snapshot = snapshotWebConversationLedgers(directory, { isPrivate: () => true });
+  assert.equal(snapshot[0].unresolvedActions, 1); assert.equal(snapshot[0].uncertainSend, false);
+  for (const mutate of [next => { next.version = 1; }, next => { next.priorVersion = 4; }, next => { delete next.pendingBrowserOpen; },
+    next => { next.pendingBrowserOpen.callId = "not-an-internal-native-call"; }, next => { next.pendingBrowserOpen.chatUrl = "https://example.test/foreign"; },
+    next => { next.lastTurn.completed = true; }, next => { next.uncertainSend = true; next.lastTurn.sendState = "uncertain"; }]) {
+    const invalid = structuredClone(value); mutate(invalid);
+    assert.equal(validWebConversationRisk(invalid, threadId), false);
+  }
+});
+
 test("failed, partial, malformed and inaccessible censuses cannot prove absence", () => {
   for (const value of [undefined, { processes: [] }, { complete: false, processes: [] }, census([{}]),
     census([row(0, adapter.currentRuntime.node.path)]), census([{ ...row(1234, adapter.currentRuntime.node.path), identity: "100|" }]),

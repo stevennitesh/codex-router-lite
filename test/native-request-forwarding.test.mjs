@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +10,9 @@ import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { callerBaseUrl } from "../src/caller-auth.mjs";
 import { launch, ready, stop } from "./router-fixture.mjs";
 import { openPort } from "./port-pool.mjs";
+import { writePrivateJsonAsync } from "../src/file-security.mjs";
+import { nativeCompactionWitnessPath, readNativeCompactionWitness } from "../src/web-native-compaction.mjs";
+import { createHash } from "node:crypto";
 
 const CALLER = "native-byte-fixture-caller-capability-long-enough";
 const frame = event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
@@ -23,13 +26,14 @@ const eventsFrom = wire => wire.split(/\r?\n\r?\n/u).flatMap(block => {
   try { return [JSON.parse(data)]; } catch { return []; }
 });
 
-async function fixture(t, handle, { observeFetch = false } = {}) {
+async function fixture(t, handle, { observeFetch = false, stateSetup } = {}) {
   const state = mkdtempSync(path.join(os.tmpdir(), "native-byte-relay-"));
   const catalog = path.join(state, "merged-models.json");
   const publish = efforts => writeFileSync(catalog, JSON.stringify({ models: [{
     slug: "gpt-6.1-sol", supported_reasoning_levels: efforts.map(effort => ({ effort })),
   }] }));
   publish(["low", "medium"]);
+  await stateSetup?.(state);
   const seen = [], sockets = new Set();
   const upstream = http.createServer((request, response) => {
     void (async () => {
@@ -77,10 +81,10 @@ globalThis.fetch = (target, init) => {
   });
   const base = callerBaseUrl(port, CALLER);
   await ready(`${base}/models`, router);
-  const post = (body, { encoding, compact = false } = {}) =>
+  const post = (body, { encoding, compact = false, headers = {} } = {}) =>
     fetch(`${base}/responses${compact ? "/compact" : ""}`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer native-synthetic-session",
-        "chatgpt-account-id": "synthetic-account", ...(encoding ? { "Content-Encoding": encoding } : {}) },
+        "chatgpt-account-id": "synthetic-account", ...(encoding ? { "Content-Encoding": encoding } : {}), ...headers },
       body, signal: AbortSignal.timeout(5000),
     });
   const send = async (body, encoding) => {
@@ -89,7 +93,7 @@ globalThis.fetch = (target, init) => {
     assert.match(await response.text(), /Result 42/);
     return seen.at(-1);
   };
-  return { send, post, publish, router, seen };
+  return { send, post, publish, router, seen, state };
 }
 
 test("unchanged native requests retain JSON bytes and the caller's zstd frame", async t => {
@@ -219,10 +223,72 @@ test("native V1 compact, nonstream, explicit non-SSE and failed headerless respo
     [false, true, 200, "application/json"], [false, true, 200, ""], [false, true, 500, undefined],
   ]) {
     const response = await f.post(JSON.stringify({ model: responseIdentity.model, stream, input: "Synthetic body fixture.",
-      metadata: { status, contentType } }), { compact });
+      metadata: { status, contentType } }), { compact, headers: compactHeaders });
     assert.equal(response.status, status);
     assert.equal(response.headers.get("content-type"), contentType ?? null);
     assert.equal(await response.text(), '{"output":[],"synthetic":true}');
   }
   assert.equal(f.seen.length, 5);
+  assert.equal(existsSync(path.join(f.state, "web-in-app")), false, "unrelated native compaction creates no Web state or service");
+});
+
+const compactThread = "00112233-4455-6677-8899-aabbccddeeff";
+const compactTurn = "11002233-4455-6677-8899-aabbccddeeff";
+const compactReply = "22002233-4455-6677-8899-aabbccddeeff";
+const compactSource = [{ role: "user", content: "Accepted Web history." }, { role: "user", content: "Native work not yet sent to Web." }];
+const compactDigest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const compactHeaders = { "x-codex-turn-metadata": JSON.stringify({ thread_id: compactThread, turn_id: compactTurn }) };
+const compactLedgerPath = state => path.join(state, "web-in-app", "conversations", `${compactThread}.json`);
+const seedCompactLedger = state => writePrivateJsonAsync(compactLedgerPath(state), {
+  version: 1, threadId: compactThread, bindingId: "web_fixture", browserOwnerTurnIds: [compactTurn], tabId: "fixture-tab",
+  chatUrl: `https://chatgpt.com/c/${compactThread}`, checkpoint: [compactDigest(compactSource[0])],
+  sendBaseline: 0, sendBaselineReplyIds: [], generationTurnKey: compactTurn, generationReplyIds: [compactReply],
+  generationCompleted: true, uncertainSend: false, unresolvedCoding: [],
+  lastTurn: { turnId: compactTurn, sendState: "sent", completed: true },
+});
+
+for (const compactV1 of [true, false]) test(`owned native ${compactV1 ? "V1" : "V2"} compaction is byte-preserved only after durable readable witness`, async t => {
+  const item = { type: "compaction", id: `cmp_owned_${compactV1}`, encrypted_content: "synthetic-owned-ciphertext" };
+  const wire = compactV1 ? ` { "id":"compact_owned", "output":${JSON.stringify([compactSource[0], item])} }\n`
+    : frame({ ...created, response: { ...created.response, id: "resp_owned" } })
+      + frame({ ...completed, response: { ...completed.response, id: "resp_owned", output: [item] } });
+  const f = await fixture(t, (_entry, response) => {
+    response.writeHead(200, { "Content-Type": compactV1 ? "application/json" : "text/event-stream", "x-native-fixture": "preserved" });
+    response.end(wire);
+  }, { stateSetup: seedCompactLedger });
+  const payload = { model: "gpt-6.1-sol", stream: !compactV1,
+    input: [...compactSource, ...(!compactV1 ? [{ type: "compaction_trigger" }] : [])] };
+  const requestBytes = JSON.stringify(payload);
+  const response = await f.post(requestBytes, { compact: compactV1, headers: compactHeaders });
+  assert.equal(response.status, 200, await (response.status !== 200 ? response.text() : Promise.resolve("")));
+  assert.equal(await response.text(), wire);
+  assert.equal(response.headers.get("x-native-fixture"), "preserved");
+  assert.equal(f.seen[0].decoded.toString("utf8"), requestBytes);
+  const ledger = JSON.parse(readFileSync(compactLedgerPath(f.state), "utf8"));
+  assert.equal(ledger.version, 4);
+  assert.equal(ledger.priorVersion, 1);
+  assert.equal(ledger.uncertainSend, false);
+  assert.deepEqual(ledger.checkpoint, [compactDigest(compactSource[0])]);
+  assert.equal(ledger.nativeCompactionProjection.length, 1);
+  const witness = readNativeCompactionWitness({ stateDir: f.state, threadId: compactThread, reference: ledger.nativeCompactionProjection[0] });
+  assert.deepEqual(witness.source, compactSource);
+  assert.equal(witness.provenance.kind, "router-native-request");
+  assert.doesNotMatch(f.router.errors(), /Native work not yet sent|synthetic-owned-ciphertext/u);
+});
+
+test("owned native compaction with failed witness persistence never publishes opaque replacement", async t => {
+  const item = { type: "compaction", id: "cmp_blocked", encrypted_content: "synthetic-blocked-ciphertext" };
+  const f = await fixture(t, (_entry, response) => {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ id: "compact_blocked", output: [item] }));
+  }, { stateSetup: async state => {
+    await seedCompactLedger(state);
+    mkdirSync(nativeCompactionWitnessPath(state, compactThread, compactDigest(item)));
+  } });
+  const response = await f.post(JSON.stringify({ model: "gpt-6.1-sol", input: compactSource }), { compact: true, headers: compactHeaders });
+  assert.notEqual(response.status, 200);
+  assert.doesNotMatch(await response.text(), /synthetic-blocked-ciphertext/u);
+  const ledger = JSON.parse(readFileSync(compactLedgerPath(f.state), "utf8"));
+  assert.equal(ledger.version, 1);
+  assert.equal(ledger.nativeCompactionProjection, undefined);
 });

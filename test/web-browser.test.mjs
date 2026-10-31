@@ -5,7 +5,7 @@ import path from "node:path";
 import test, { after } from "node:test";
 import { runInNewContext } from "node:vm";
 
-import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
+import { browserDom, browserHelperVersion, browserMutationVersion, browserIdleButtonExactName, browserScript, discoverBrowserExecutor, discoverBrowserOpener, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, readBrowserProgram, readBrowserReplies } from "../src/web-browser.mjs";
 import { browserObservationBudget, createBrowserNavigationObserver } from "../src/web-browser-state.mjs";
 import { WEB_MODEL_REGISTRY, webModelSelection } from "../src/web-models.mjs";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
@@ -166,6 +166,48 @@ test("native browser executor preserves the exact declared schema and identity",
   const withInputSchema = [{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", inputSchema: schema }] }];
   assert.deepEqual(JSON.parse(discoverBrowserExecutor(withInputSchema).argumentsFor(code)), JSON.parse(executor.argumentsFor(code)));
   assert.throws(() => discoverBrowserExecutor([{ type: "namespace", name: "mcp__node_repl", tools: [{ type: "function", name: "js", input_schema: schema }] }]), /schema/);
+});
+
+const openerSchema = { type: "object", properties: {
+  target: { anyOf: [
+    { type: "object", properties: { type: { const: "file" }, path: { type: "string" } }, required: ["type", "path"], additionalProperties: false },
+    { type: "object", properties: { type: { type: "string", enum: ["browser"] }, url: { type: "string" } }, required: ["type"], additionalProperties: false },
+  ] }, threadId: { type: "string" }, placement: { type: "string", enum: ["right", "bottom"] },
+}, required: ["target"], additionalProperties: false };
+const offeredOpener = (parameters = openerSchema, namespace = "codex_app") => [{ type: "namespace", name: namespace,
+  tools: [{ type: "function", name: "open_in_codex", parameters }] }];
+
+test("native browser opener preserves its exact declared identity and targets only the saved URL in the current task", () => {
+  const url = "https://chatgpt.com/c/saved-owned-chat", sessionId = "current-session";
+  for (const namespace of ["codex_app", "mcp__codex_app"]) {
+    for (const tools of [offeredOpener(openerSchema, namespace),
+      [{ type: "function", namespace, name: "open_in_codex", inputSchema: openerSchema }]]) {
+      const opener = discoverBrowserOpener(tools);
+      assert.equal(opener.namespace, namespace); assert.equal(opener.name, "open_in_codex");
+      assert.deepEqual(JSON.parse(opener.argumentsFor(url, sessionId)), { target: { type: "browser", url }, threadId: sessionId });
+      for (const invalid of ["https://chatgpt.com/", "https://foreign.test/c/saved-owned-chat", "https://chatgpt.com/c/a?temporary-chat=true"])
+        assert.throws(() => opener.argumentsFor(invalid, sessionId), /exact saved chat URL/u);
+      assert.throws(() => opener.argumentsFor(url, ""), /current native session/u);
+    }
+  }
+});
+
+test("browser opener discovery distinguishes absence from ambiguous, unsupported or incompatible declarations", () => {
+  for (const tools of [[], [{ type: "function", name: "mcp__codex_app__open_in_codex", parameters: openerSchema }],
+    offeredOpener(openerSchema, "foreign_codex_app")]) {
+    assert.throws(() => discoverBrowserOpener(tools), error => error.code === "web_browser_opener_missing");
+  }
+  const url = "https://chatgpt.com/c/saved-owned-chat";
+  for (const tools of [[...offeredOpener(), ...offeredOpener(openerSchema, "mcp__codex_app")],
+    [{ type: "namespace", name: "codex_app", tools: [{ type: "custom", name: "open_in_codex" }] }],
+    [{ type: "namespace", name: "codex_app", tools: [{ type: "function", namespace: "foreign", name: "open_in_codex", parameters: openerSchema }] }],
+    offeredOpener({}),
+    offeredOpener({ ...openerSchema, required: ["target", "placement"] }),
+    offeredOpener({ ...openerSchema, properties: { ...openerSchema.properties, threadId: { type: "string", pattern: "^another-session$" } } }),
+    offeredOpener({ ...openerSchema, properties: { ...openerSchema.properties, target: { $ref: "#/file-only" } } }),
+    offeredOpener({ ...openerSchema, properties: { target: { type: "object" } } }),
+    offeredOpener({ ...openerSchema, properties: { ...openerSchema.properties, target: { oneOf: [{ type: "object" }, { type: "object" }] } } }),
+  ]) assert.throws(() => discoverBrowserOpener(tools).argumentsFor(url, "current-session"), error => error.code === "web_browser_capability_gap");
 });
 
 test("saved chat URL qualification is shared and safe for malformed or foreign values", () => {
@@ -905,7 +947,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       }
       return result;
     }
-    if (["open", "continue", "rollover"].includes(operation)) ownerTurnId = nativeContext.routerWebActiveTurns?.get(sessionId)?.turnId;
+    if (["open", "continue", "rollover"].includes(operation) && result.noActions !== true) ownerTurnId = nativeContext.routerWebActiveTurns?.get(sessionId)?.turnId;
     return result;
   };
   const ready = async () => {
@@ -933,6 +975,49 @@ async function recoverableFixture({ completed = true, text = "  Observed ðŸ”
     assistantPrefix: assistantPrefix(observed.assistantText), completed: observed.completed };
   return { ...f, recovery, text };
 }
+
+async function controlledInspectionFixture() {
+  const nativeContext = {}, sessionId = messageId(980), failedTurnId = messageId(981);
+  const f = fixture({ fastTimers: true, nativeContext, sessionId }); await f.ready();
+  await f.run("send", { ...plugin, prompt: "PRIVATE_CONTROLLED_PROMPT" });
+  f.ui.texts.push("PRIVATE_CONTROLLED_ACCEPTED_REPLY"); f.ui.complete = true;
+  const observed = await f.run("observe"); await f.run("retain");
+  const recoveryProof = { tabId: observed.tabId, chatUrl: observed.url, failedTurnId,
+    generationTurnKey: observed.generationTurnKey, sendBaselineReplyIds: observed.baselineReplyIds,
+    generationReplyIds: observed.generationReplyIds, observation: { completed: true, replyId: observed.replyId,
+      assistantPrefix: assistantPrefix(observed.assistantText) } };
+  f.loseBinding();
+  return { ...f, nativeContext, sessionId, failedTurnId, recoveryProof,
+    inspect: () => f.run("recover", { ...plugin, sessionId, turnId: failedTurnId, expectedOwnerTurnIds: [failedTurnId],
+      runtimeModule: f.runtimeModule, inspectionOnly: true, recoveryProof }) };
+}
+
+test("controlled read-only recovery distinguishes browser, owner, tab, readiness and DOM refusals without private content", async () => {
+  for (const [phase, change, counts = {}] of [
+    ["browser-discovery", f => { f.agent.browsers.list = async () => []; }, { browserCount: 0 }],
+    ["browser-discovery", f => { f.agent.browsers.list = async () => ["PRIVATE_FIRST", "PRIVATE_SECOND"].map(id =>
+      ({ type: "iab", id, metadata: { codexSessionId: f.sessionId } })); }, { browserCount: 2 }],
+    ["active-owner", f => { f.nativeContext.routerWebActiveTurns.set(f.sessionId, { state: {}, turnId: "PRIVATE_OWNER" }); }],
+    ["saved-tab-discovery", f => { f.ui.extraTabs = [{ id: "PRIVATE_DUPLICATE_TAB", url: f.recoveryProof.chatUrl }]; }, { tabMatchCount: 2 }],
+    ["checkpoint-readiness", f => { f.ui.complete = false; }],
+    ["composer-state", f => { f.ui.composerText = "PRIVATE_DRAFT"; }],
+    ["message-identities", f => { f.ui.texts.push("PRIVATE_UNKNOWN_REPLY"); f.ui.replyIds = [messageId(0), null]; }],
+    ["reply-prefix", f => { f.ui.texts[0] = "PRIVATE_CHANGED_REPLY".repeat(4); }],
+  ]) {
+    const f = await controlledInspectionFixture(); change(f);
+    const before = { sends: f.ui.sendClicks, stops: f.ui.stopClicks, tabs: f.ui.newTabs, closed: f.ui.closeCount,
+      navigations: [...f.ui.navigations], handoffs: f.ui.handoffs };
+    await assert.rejects(f.inspect(), error => {
+      const diagnostic = JSON.parse(error.message.split("ROUTER_WEB_RECOVERY_DIAGNOSTIC ")[1]);
+      assert.deepEqual(diagnostic, { reason: phase === "composer-state" ? "composer-draft-present" : "ownership-changed", phase, ...counts });
+      assert.doesNotMatch(error.message, /PRIVATE_|chatgpt|owned-tab|first-turn/u);
+      return true;
+    }, phase);
+    assert.deepEqual({ sends: f.ui.sendClicks, stops: f.ui.stopClicks, tabs: f.ui.newTabs, closed: f.ui.closeCount,
+      navigations: f.ui.navigations, handoffs: f.ui.handoffs }, before);
+    assert.equal(f.ui.draftCleared, false);
+  }
+});
 
 async function staleCompletedCheckpointFixture() {
   const nativeContext = {}, baseline = ["Older reply", "Previous reply", "Immediate predecessor"], text = "Completed checkpoint reply";
@@ -3483,6 +3568,77 @@ test("a rendered recovery checkpoint with a wrong stable digest fails immediatel
   f.ui.onGoto = () => { f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, "Different checkpoint content.")])); };
   await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply-prefix-mismatch/);
   assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.reloads, 0);
+});
+
+test("a missing same-session browser yields only a no-action panel request and full checkpoint recovery resumes after native opening", async () => {
+  const f = await recoverableFixture(); f.loseBinding();
+  const list = f.agent.browsers.list;
+  f.agent.browsers.list = async () => [
+    { type: "iab", id: "foreign-browser", metadata: { codexSessionId: "foreign-session" } },
+    { type: "extension", id: "wrong-backend", metadata: { codexSessionId: base.sessionId } },
+  ];
+  const before = { reads: f.ui.replyReads, tabs: f.ui.tabReads, newTabs: f.ui.newTabs, handoffs: f.ui.handoffs,
+    documentation: f.ui.browserDocumentationReads, navigations: [...f.ui.navigations] };
+  const proof = JSON.stringify(f.recovery);
+  const missing = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.deepEqual(missing, { operation: "continue", needsBrowserOpen: true, noActions: true });
+  assert.equal(f.activeTurn(), undefined);
+  assert.equal(f.getState().bindingLost, true);
+  assert.equal(f.getState().browser, undefined);
+  assert.deepEqual({ reads: f.ui.replyReads, tabs: f.ui.tabReads, newTabs: f.ui.newTabs, handoffs: f.ui.handoffs,
+    documentation: f.ui.browserDocumentationReads, navigations: f.ui.navigations }, before);
+  assert.equal(JSON.stringify(f.recovery), proof);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  // Native app opening supplies availability only. The same ordinary proof must
+  // still establish the saved URL, generation, reply digest and empty composer.
+  f.agent.browsers.list = list;
+  const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.equal(continued.recovered, true);
+  assert.equal(continued.url, f.recovery.url);
+  assert.equal(continued.assistantText, f.text);
+  assert.equal(continued.tabReopened, false); assert.equal(continued.tabNavigated, false);
+  assert.equal(f.ui.newTabs, before.newTabs);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+});
+
+test("browser acquisition refuses ambiguous or malformed same-session identities before page access or a panel-open request", async () => {
+  for (const ids of [["first", "second"], [null], [""]]) {
+    const f = await recoverableFixture(); f.loseBinding();
+    f.agent.browsers.list = async () => ids.map(id => ({ type: "iab", id, metadata: { codexSessionId: base.sessionId } }));
+    const reads = f.ui.replyReads, tabs = f.ui.tabReads, created = f.ui.newTabs;
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /browser identity is ambiguous or invalid/u);
+    assert.equal(f.activeTurn(), undefined);
+    assert.equal(f.ui.replyReads, reads); assert.equal(f.ui.tabReads, tabs); assert.equal(f.ui.newTabs, created);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+  }
+});
+
+test("a foreign native owner appearing during browser discovery prevents the no-action panel request", async () => {
+  const nativeContext = {}, f = await recoverableFixture({ nativeContext }); f.loseBinding();
+  f.agent.browsers.list = async () => {
+    nativeContext.routerWebActiveTurns.set(base.sessionId, { turnId: "foreign-turn", state: {} });
+    return [];
+  };
+  const reads = f.ui.replyReads, tabs = f.ui.tabReads;
+  await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /different native turn owns the active browser recovery/u);
+  assert.equal(f.activeTurn().turnId, "foreign-turn");
+  assert.equal(f.ui.replyReads, reads); assert.equal(f.ui.tabReads, tabs);
+  assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+});
+
+test("panel availability never replaces the saved checkpoint proof or permits recovery over a draft", async () => {
+  for (const invalid of ["changed reply", "draft"]) {
+    const f = await recoverableFixture(); f.loseBinding();
+    const list = f.agent.browsers.list;
+    f.agent.browsers.list = async () => [];
+    assert.equal((await f.run("continue", { turnId: "next-turn", recovery: f.recovery })).needsBrowserOpen, true);
+    f.agent.browsers.list = list;
+    if (invalid === "changed reply") f.ui.texts = ["A different saved reply"];
+    else f.ui.composerText = "User draft after opening";
+    await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply-prefix-mismatch|composer-draft-present/u);
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0); assert.equal(f.ui.newTabs, 1);
+    assert.equal(f.ui.draftCleared, false);
+  }
 });
 
 test("a missing original tab reopens only its exact saved URL and registers retention before navigation", async () => {

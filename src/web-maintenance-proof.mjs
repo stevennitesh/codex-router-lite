@@ -224,7 +224,8 @@ export function snapshotWebConversationLedgers(stateDir, { isPrivate = privateFi
     if (!mapping) { snapshot.push({ name, kind: "sidecar", sha256: digest(bytes) }); continue; }
     let value; try { value = JSON.parse(bytes); } catch { throw new Error("Saved Web conversation ledger is invalid."); }
     if (!validWebConversationRisk(value, name.slice(0, -5))) throw new Error("Saved Web conversation ledger has invalid or unknown durable action risk.");
-    snapshot.push({ name, kind: "conversation", sha256: digest(bytes), uncertainSend: value.uncertainSend, unresolvedActions: value.unresolvedCoding.length });
+    snapshot.push({ name, kind: "conversation", sha256: digest(bytes), uncertainSend: value.uncertainSend,
+      unresolvedActions: value.unresolvedCoding.length + (value.pendingBrowserOpen ? 1 : 0) });
   }
   return snapshot;
 }

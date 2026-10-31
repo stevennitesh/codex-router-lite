@@ -8,7 +8,9 @@ import test from "node:test";
 import { installWebStopAdapter, rollbackWebStopAdapter } from "../src/web-stop-adapter-install.mjs";
 import { discoverWebRuntimeAnchors, refreshWebRuntime, inspectWebRuntimeMaintenance } from "../src/web-runtime-refresh.mjs";
 import { createAdapterHook } from "../src/web-stop-contract.mjs";
-import { runWebMaintenance } from "../maintenance/web-runtime-maintenance.mjs";
+import { runWebMaintenance, restoreWebMaintenanceNativeCompaction } from "../maintenance/web-runtime-maintenance.mjs";
+import { assertControlledRecoveryOffline } from "../maintenance/web-recovery.mjs";
+import { assertWebMaintenanceAbsent } from "../src/web-maintenance-proof.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
@@ -97,6 +99,88 @@ function retainLegacyHook(f) {
   receipt.hook = hook; hooks.hooks.Interrupt[0].hooks[0] = hook;
   f.write(f.receiptPath, json(receipt)); f.write(f.hooksPath, json(hooks));
 }
+
+test("maintenance restoration retains runtime discovery through real offline proof and exact rollback with a cached old MCP command", async t => {
+  for (const branch of ["restore", "rollback", "changed-config", "live-task"]) await t.test(branch, async subtest => {
+    const f = fixture(subtest), prior = JSON.parse(readFileSync(f.receiptPath, "utf8"));
+    f.saveConfig({ server: prior.entryPath });
+    const configBytes = readFileSync(f.configPath), expectedCommit = "a".repeat(40), binaryHash = "b".repeat(64);
+    const threadId = "12345678-1234-1234-1234-123456789abc", before = "1".repeat(64), after = "2".repeat(64);
+    const ledgerPath = path.join(f.stateDir, "web-in-app", "conversations", `${threadId}.json`), confirmationSha256 = "3".repeat(64);
+    const archive = `${ledgerPath}.native-compaction-${confirmationSha256}.original`, witnessFile = `${ledgerPath}.witness.json`;
+    const restoration = { plan: {}, threadId, confirmationSha256, ledgerPath, beforeLedgerSha256: before, afterLedgerSha256: after,
+      planFileSha256: "4".repeat(64), witnessSha256: "5".repeat(64), witnessFile,
+      expectedSidecars: [{ name: path.basename(archive), sha256: before }, { name: path.basename(`${archive}.rollout.jsonl`), sha256: "6".repeat(64) },
+        { name: path.basename(witnessFile), sha256: "7".repeat(64) }] };
+    const outcome = { threadId, confirmationSha256, state: "readable-native-compaction-restored", archive,
+      rolloutArchive: `${archive}.rollout.jsonl`, witnessFile, ledgerSha256: after, witnessSha256: restoration.witnessSha256 };
+    const options = { expectedCommit, expectedBinarySha256: binaryHash, expectedCandidateSha256: "c".repeat(64),
+      candidateBinary: path.join(f.root, "switchyard.exe"), deploymentAcceptancePath: path.join(f.root, "acceptance.json"), timeoutMs: 1000,
+      nativeCompactionRestorePlan: path.join(f.root, "plan.json"), nativeCompactionRestorePlanSha256: confirmationSha256 };
+    const deployed = { version: 1, accepted: true, deployed: true, routerCommit: expectedCommit, switchyardBinarySha256: binaryHash,
+      switchyardCommit: "a".repeat(40), switchyardRoutesSha256: "b".repeat(64), rollbackRoot: path.join(f.root, "switchyard-rollback"),
+      rollbackRouterRoot: path.join(f.root, "router-rollback"), checks: Object.fromEntries(["switchyardHealth", "taskIdentity", "routerFullHealth", "cleanCandidate",
+        "installManifest", "doctor", "protectedEndpoints", "processIdentity", "provenance", "installedHashes", "installedCatalog"].map(name => [name, true])) };
+    const inspect = extra => inspectWebRuntimeMaintenance({ ...f.options, dependencies: { ...f.dependencies, ...extra.dependencies } });
+    const absent = adapter => assertWebMaintenanceAbsent(adapter, { census: () => ({ complete: true, processes: [] }) });
+    let running = true, currentHash = before, offlineProofs = 0, publications = 0, rollbacks = 0, starts = 0;
+    f.dependencies.drain = async () => idleDrain("forced");
+    const maintenance = runWebMaintenance(options, {
+      prepare(_commit, _binary, _hash, { discover }) { return { ...inspect({ dependencies: { discover } }),
+        candidateSha256: options.expectedCandidateSha256, nativeCompactionRestoration: restoration }; },
+      async wait() {}, absent, source() {}, unchanged() {},
+      ledger: () => [{ name: path.basename(ledgerPath), kind: "conversation", sha256: before, uncertainSend: false, unresolvedActions: 0 }],
+      refresh: value => refreshWebRuntime({ ...f.options, ...value }),
+      planConfigurationPublication: () => ({ beforeSha256: hash(configBytes), afterSha256: hash(configBytes) }),
+      async deploy() {
+        assert.notEqual(JSON.parse(readFileSync(f.receiptPath, "utf8")).entryPath, prior.entryPath);
+        assert.deepEqual(readFileSync(f.configPath), configBytes);
+        assert.throws(() => discoverWebRuntimeAnchors(f.options), { code: "ERR_WEB_RUNTIME_ANCHORS" });
+        return { receipt: deployed, resultPath: path.join(f.root, "deployment-result.json") };
+      },
+      async accept() {}, inspectFinal: inspect, inspectActual: inspect, inspectOfflineRuntime: inspect, inspectRestoration: () => restoration,
+      assertOffline: ({ inspect: inspectRetained }) => assertControlledRecoveryOffline({ inspect() {
+        const inspected = inspectRetained();
+        assert.notEqual(inspected.adapter.managedEntryPath, prior.entryPath, "offline proof inspects current replacement ownership");
+        return inspected;
+      }, absent,
+        async taskState() { offlineProofs++; return { instanceCount: 0, launcherAlive: false, enabled: branch === "live-task" || running }; },
+        async fetchImpl() { assert.equal(running, false); throw Object.assign(new Error("fixture refusal"), { code: "ECONNREFUSED" }); },
+        readProcess: () => ({ stopped: !running }), stopped: state => assert.equal(state.stopped, true) }),
+      restore: (value, guardedOptions) => restoreWebMaintenanceNativeCompaction(value, { ...guardedOptions,
+        lock: operation => operation(), ledgerHash: () => currentHash,
+        async service(command, args, { beforeMutation }) {
+          assert.deepEqual(args, [command]); beforeMutation(); running = command === "start";
+          if (command === "start") starts++;
+          if (command === "stop" && branch === "changed-config") f.write(f.configPath, `${configBytes.toString("utf8")}\n# concurrent configuration edit\n`);
+          return 0;
+        },
+        async apply(_plan, _sha, applyOptions) {
+          assert.equal(applyOptions.serviceAlreadyLocked, true);
+          await applyOptions.assertOffline(); await applyOptions.assertOffline();
+          currentHash = after; publications++;
+          if (branch === "rollback") throw new Error("fixture post-publication failure");
+          return outcome;
+        },
+        async rollback(_plan, _sha, rollbackOptions) {
+          assert.equal(rollbackOptions.serviceAlreadyLocked, true);
+          await rollbackOptions.assertOffline(); await rollbackOptions.assertOffline();
+          currentHash = before; rollbacks++;
+        },
+      }),
+    });
+    if (branch === "restore") { const receipt = await maintenance; assert.equal(receipt.nativeCompactionRestoration.ledgerSha256, after);
+      assert.equal(offlineProofs, 2); assert.equal(currentHash, after); }
+    else { await assert.rejects(maintenance, branch === "rollback" ? /post-publication failure.*Original ledger/u
+      : branch === "changed-config" ? /configuration changed/u : /not proven stopped and disabled/u);
+      assert.equal(currentHash, before); assert.equal(rollbacks, branch === "rollback" ? 1 : 0);
+      assert.equal(publications, branch === "rollback" ? 1 : 0); }
+    assert.equal(offlineProofs, branch === "restore" ? 2 : branch === "rollback" ? 4 : branch === "live-task" ? 1 : 0);
+    assert.equal(running, true); assert.equal(starts, 1);
+    if (branch !== "changed-config") assert.deepEqual(readFileSync(f.configPath), configBytes);
+    assert.throws(() => discoverWebRuntimeAnchors(f.options), { code: "ERR_WEB_RUNTIME_ANCHORS" });
+  });
+});
 
 test("runtime refresh plans from exact official MCP anchors with no mutation even when old app files are deleted", async t => {
   const f = fixture(t), before = f.snapshot(), effects = [...f.effects], generations = readdirSync(path.dirname(f.receiptPath));

@@ -33,6 +33,7 @@ const retainedWebRuntime = [
   "src/web-status.mjs",
   "src/web-models.mjs",
   "src/web-runtime.mjs",
+  "src/web-native-compaction.mjs",
   "src/web-response.mjs",
   "src/web-tunnel.mjs",
   "src/web-tools.mjs",

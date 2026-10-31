@@ -36,7 +36,11 @@ try {
   if ($request.requireAcceptance) {
     $acceptance = Get-Content -Raw -LiteralPath $acceptancePath -Encoding UTF8 | ConvertFrom-Json
     if ($request.acceptanceKind -eq 'web-runtime-maintenance') {
-      & node (Join-Path $PSScriptRoot 'web-runtime-maintenance.mjs') accept $parameters['ExpectedRouterCommit'] $parameters['CandidateBinary'] $parameters['ExpectedBinarySha256'] $parameters['ExpectedCandidateSha256'] $acceptancePath
+      $restorationAcceptanceArgs = @()
+      if ($parameters['NativeCompactionRestorePlan'] -or $parameters['NativeCompactionRestorePlanSha256']) {
+        $restorationAcceptanceArgs = @($parameters['NativeCompactionRestorePlan'], $parameters['NativeCompactionRestorePlanSha256'])
+      }
+      & node (Join-Path $PSScriptRoot 'web-runtime-maintenance.mjs') accept $parameters['ExpectedRouterCommit'] $parameters['CandidateBinary'] $parameters['ExpectedBinarySha256'] $parameters['ExpectedCandidateSha256'] $acceptancePath @restorationAcceptanceArgs
       if ($LASTEXITCODE -ne 0) { throw 'Web runtime maintenance acceptance validation failed.' }
     } elseif ($request.acceptanceKind -and $request.acceptanceKind -ne 'switchyard') {
       throw 'Unsupported independent deployment acceptance owner.'

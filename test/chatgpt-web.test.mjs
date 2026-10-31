@@ -80,6 +80,9 @@ async function routerFixture(t, handle, options = {}) {
   let maintenance = {activeTurns:0,uncertainSends:0,unresolvedActions:0};
   const states = ${JSON.stringify(runtimeStates)};
   export function inAppWebMaintenanceState() { return {...maintenance}; }
+  export function stageInAppNativeCompaction() { throw new Error('Web routing must not stage native compaction.'); }
+  export function finalizeInAppNativeCompaction() { throw new Error('Web routing must not finalize native compaction.'); }
+  export function releaseInAppNativeCompaction(stage) { if (stage !== undefined) throw new Error('Unexpected native compaction stage.'); }
   export function startInAppWebBridge() {}\nexport function closeInAppWebBridge() {}\nexport async function requestInAppWebBridge(payload, {compact, compactV2, signal, headers}) {
     if (browserFailure) parseBrowserOutput(browserFailure.output, browserFailure.frameToken, browserFailure.stage, savedChatRecoveryError);
     const response = await fetch(${JSON.stringify(bridge.baseUrl)} + (compact ? '/compact' : '/request'), {method:'POST',signal,

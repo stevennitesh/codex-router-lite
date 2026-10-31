@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { browserDom, readBrowserReplies } from "../src/web-browser.mjs";
+import { createObservationBrowserState } from "../src/web-browser-state.mjs";
 
 const fixturePath = new URL("../test/fixtures/web-send-browser.html", import.meta.url);
 const route = "/web-send-browser.html";
@@ -53,16 +54,29 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
     await tab.playwright.getByRole("button", { name: label, exact: true }).click({ timeoutMs });
     const before = await tab.playwright.getByRole("textbox", { name: browserDom.composerName, exact: true }).textContent({ timeoutMs });
     try {
-      const union = tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector},body`)
-        .or(tab.playwright.getByRole("button", { name: browserDom.stopButtonExactName, exact: true }))
-        .or(tab.playwright.getByRole("button", { name: browserDom.regenerateButtonExactName, exact: true }))
-        .or(tab.playwright.getByText(browserDom.requestErrorText, { exact: true }).filter({ visible: true }))
-        .or(tab.playwright.getByRole("button", { name: browserDom.retryButtonExactName, exact: true }).filter({ visible: true }))
-        .or(tab.playwright.getByRole("textbox", { name: browserDom.composerName, exact: true }).filter({ visible: true }));
-      const projection = await union.evaluateAll(readReplies, { ui: browserDom,
+      const controls = createObservationBrowserState(tab, { ui: browserDom, generationTurnKey });
+      const options = { ui: browserDom,
         assistantSelector: browserDom.assistantFinalReplySelector, regenerateName: browserDom.regenerateButtonExactName,
-        observation: true, generationTurnKey, generationMarker,
-        submittedComposerText: name === "attachment-error" ? `Pasted text.txt\n${generationMarker}` : `Fixture request.\n${generationMarker}` }, { timeoutMs });
+        generationTurnKey, generationMarker,
+        submittedComposerText: name === "attachment-error" ? `Pasted text.txt\n${generationMarker}` : `Fixture request.\n${generationMarker}` };
+      const read = (selection, projection) => selection.evaluateAll(readReplies, { ...options, ...projection }, { timeoutMs });
+      // These scenarios are idle. Use the same guarded quiet profile, dedicated
+      // indicator unions and fresh answer frame as production observation.
+      const readProfile = quiet => read(controls.profile(false, quiet)
+        .or(tab.playwright.locator(`${browserDom.turnSelector},${browserDom.assistantFinalReplySelector}`)).or(controls.regenerate),
+      { observation: true, stopVisible: false });
+      let projection = await readProfile(true);
+      if (!projection) {
+        const full = await read(controls.indicatorBody.or(controls.fullBanner).or(controls.fullButton), { indicator: "full" });
+        const error = await read(controls.indicatorBody.or(tab.playwright.locator(browserDom.turnSelector))
+          .or(controls.requestError).or(controls.retry).or(controls.composer), { indicator: "error" });
+        projection = await readProfile(false);
+        if (!full || !error || full.url !== url.href || error.url !== url.href) throw new Error("Fixture indicator proof is unavailable.");
+        if (projection && projection.turns.filter(turn => turn.turnKey === generationTurnKey).length === 1
+            && projection.turns.at(-1)?.turnKey === generationTurnKey) Object.assign(projection.observation,
+          { conversationFull: full.conversationFull }, error.requestError ? { requestError: error.requestError } : {});
+      }
+      if (!projection || projection.observation.url !== url.href) throw new Error("Fixture observation proof is unavailable.");
       const after = await tab.playwright.getByRole("textbox", { name: browserDom.composerName, exact: true }).textContent({ timeoutMs });
       const retries = await tab.playwright.locator("#contract-status").getAttribute("data-retries", { timeoutMs });
       const error = projection.observation.requestError ?? null;

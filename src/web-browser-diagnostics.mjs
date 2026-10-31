@@ -2,6 +2,11 @@ import { safeLocalHttpError } from "./http-utils.mjs";
 
 const marker = "ROUTER_WEB_RECOVERY_DIAGNOSTIC";
 const stages = new Set(["bootstrap", "open", "send", "observe", "retain", "continue", "rollover", "recover"]);
+const phases = new Set(["initial-proof", "registered-recheck", "ownership-guard", "browser-discovery", "browser-acquisition",
+  "active-owner", "saved-tab-discovery", "saved-tab-acquisition", "saved-url-readiness", "checkpoint-readiness",
+  "browser-recheck", "saved-url-recheck", "dom-snapshot", "generation-state", "composer-state", "normal-chat-state",
+  "idle-control-state", "message-identities", "accepted-checkpoint", "reply-history", "anchor-snapshot", "revoked-turn-order",
+  "reply-prefix", "reply-content-readiness", "snapshot-stability", "handoff", "ownership-transfer"]);
 const reasons = new Set([
   "saved-url-changed", "temporary-mode-active", "invalid-reply-identities", "generation-turn-not-unique",
   "generation-turn-not-latest", "generation-turn-incomplete", "fresh-reply-not-latest", "expected-reply-mismatch",
@@ -16,7 +21,7 @@ const booleans = ["urlMatches", "temporaryInactive", "replyIdentitiesValid", "ge
   "checkpointPrefixMatches", "checkpointHasTurnIdentity", "checkpointTurnIsLatest", "viewportReadSucceeded", "viewportUrlMatches",
   "viewportLastReplyMatches", "scrollChainComplete", "scrollHasAbove", "scrollHasBelow", "scrollAtEnd",
   "documentHasAbove", "documentHasBelow", "documentAtEnd", "recordedReplyUtf16LengthCapped", "recordedReplyHasAnswer"];
-const counts = ["replyCount", "generationTurnCount", "freshReplyCount", "composerCount", "mountedTurnCount",
+const counts = ["browserCount", "tabMatchCount", "replyCount", "generationTurnCount", "freshReplyCount", "composerCount", "mountedTurnCount",
   "prefixMatchingReplyCount", "checkpointReplyCount", "checkpointTurnCount", "scrollAncestorCount", "scrollUnknownCount", "recordedReplyUtf16Length"];
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -57,7 +62,7 @@ export function savedChatRecoveryError(output, stage) {
   try { value = JSON.parse(line); } catch { return undefined; }
   if (!record(value) || JSON.stringify(value) !== line || !reasons.has(value.reason)) return undefined;
   const diagnostic = { stage, reason: value.reason };
-  if (["initial-proof", "registered-recheck", "ownership-guard"].includes(value.phase)) diagnostic.phase = value.phase;
+  if (phases.has(value.phase)) diagnostic.phase = value.phase;
   for (const key of booleans) if (typeof value[key] === "boolean") diagnostic[key] = value[key];
   for (const key of counts) if (Number.isSafeInteger(value[key]) && value[key] >= 0 && value[key] <= 10000) diagnostic[key] = value[key];
   if (Number.isSafeInteger(value.expectedPrefixUtf16Length) && value.expectedPrefixUtf16Length >= 0 && value.expectedPrefixUtf16Length <= 1024) {

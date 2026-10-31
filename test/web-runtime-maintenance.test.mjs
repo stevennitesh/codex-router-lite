@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { prepareWebMaintenance, runWebMaintenance, validateWebMaintenanceAcceptance } from "../maintenance/web-runtime-maintenance.mjs";
+import { prepareWebMaintenance, runWebMaintenance, validateWebMaintenanceAcceptance, nativeCompactionRestoredSnapshot,
+  restoreWebMaintenanceNativeCompaction } from "../maintenance/web-runtime-maintenance.mjs";
 
 function fixture({ finalChanged = false } = {}) {
   const options = { expectedCommit: "a".repeat(40), candidateBinary: path.resolve(".tmp", "switchyard-server.exe"), expectedBinarySha256: "d".repeat(64),
@@ -46,6 +47,95 @@ function fixture({ finalChanged = false } = {}) {
   };
   return { options, dependencies, initial, final, events };
 }
+
+function restorationFixture() {
+  const threadId = "12345678-1234-1234-1234-123456789abc", ledgerPath = path.resolve(".tmp", `${threadId}.json`);
+  const confirmationSha256 = "8".repeat(64), archive = `${ledgerPath}.native-compaction-${confirmationSha256}.original`;
+  const witnessFile = path.resolve(".tmp", `${threadId}.native-compaction-${"7".repeat(64)}.json`);
+  const restoration = { plan: { fixture: true }, threadId, confirmationSha256, ledgerPath, beforeLedgerSha256: "1".repeat(64),
+    afterLedgerSha256: "2".repeat(64), planFileSha256: "3".repeat(64), witnessFile, witnessSha256: "4".repeat(64),
+    expectedSidecars: [{ name: path.basename(archive), sha256: "1".repeat(64) },
+      { name: path.basename(`${archive}.rollout.jsonl`), sha256: "5".repeat(64) }, { name: path.basename(witnessFile), sha256: "6".repeat(64) }] };
+  const snapshot = [{ name: path.basename(ledgerPath), kind: "conversation", sha256: restoration.beforeLedgerSha256, uncertainSend: false, unresolvedActions: 0 },
+    { name: "existing.original", kind: "sidecar", sha256: "9".repeat(64) }];
+  const receipt = { threadId, state: "readable-native-compaction-restored", confirmationSha256, archive, rolloutArchive: `${archive}.rollout.jsonl`,
+    witnessFile, ledgerSha256: restoration.afterLedgerSha256, witnessSha256: restoration.witnessSha256 };
+  return { restoration, snapshot, receipt };
+}
+
+test("exact restoration snapshot preserves all other ledger evidence and names each expected sidecar", () => {
+  const f = restorationFixture(), after = nativeCompactionRestoredSnapshot(f.snapshot, f.restoration);
+  assert.equal(after.length, f.snapshot.length + 3);
+  assert.deepEqual(after.find(row => row.name === "existing.original"), f.snapshot[1]);
+  assert.deepEqual(after.find(row => row.kind === "conversation"), { ...f.snapshot[0], sha256: f.restoration.afterLedgerSha256 });
+  for (const mutate of [rows => { rows[0].sha256 = "f".repeat(64); }, rows => { rows[0].uncertainSend = true; },
+    rows => { rows[0].unresolvedActions = 1; }, rows => { rows.push({ ...after.find(row => row.name === f.restoration.expectedSidecars[0].name), sha256: "f".repeat(64) }); }]) {
+    const changed = structuredClone(f.snapshot); mutate(changed);
+    assert.throws(() => nativeCompactionRestoredSnapshot(changed, f.restoration));
+  }
+});
+
+test("offline restoration retains the service owner across strict stop, apply, start and acceptance", async () => {
+  const f = restorationFixture(), events = [];
+  const actual = await restoreWebMaintenanceNativeCompaction(f.restoration, {
+    async lock(operation) { events.push("locked"); const result = await operation(); events.push("released"); return result; },
+    prove() { events.push("absent"); }, verifySource() { events.push("source"); }, verify() { events.push("restored"); },
+    async service(command, args, options) { assert.deepEqual(args, [command]); options.beforeMutation(); events.push(command); return 0; },
+    async apply(plan, sha, options) { assert.equal(plan, f.restoration.plan); assert.equal(sha, f.restoration.confirmationSha256);
+      assert.equal(options.serviceAlreadyLocked, true); assert.equal(typeof options.assertOffline, "function"); events.push("apply"); return f.receipt; },
+    async accept() { events.push("accept"); },
+  });
+  assert.equal(actual, f.receipt);
+  assert.equal(events[0], "locked"); assert.equal(events.at(-1), "released");
+  assert.ok(events.indexOf("stop") < events.indexOf("apply")); assert.ok(events.indexOf("apply") < events.indexOf("start"));
+  assert.ok(events.indexOf("start") < events.indexOf("accept"));
+});
+
+test("restoration failures compensate only exact unadvanced ledger bytes and preserve both errors", async t => {
+  for (const branch of ["offline-refused", "applied-then-failed", "start-failed", "health-failed", "advanced", "rollback-failed", "drain-refused", "new-native-work"]) await t.test(branch, async () => {
+    const f = restorationFixture(), events = []; let current = f.restoration.beforeLedgerSha256, starts = 0, health = 0, proofs = 0;
+    const dependencies = { lock: operation => operation(), prove() { if (++proofs > 1 && branch === "new-native-work") throw new Error("native work returned"); },
+      verifySource() {}, verify() {}, ledgerHash: () => current,
+      async service(command) { events.push(command); if (command === "stop" && branch === "drain-refused") return 1;
+        if (command === "start" && ++starts === 1 && branch === "start-failed") return 1; return 0; },
+      async accept() { if (++health === 1 && ["health-failed", "advanced", "rollback-failed"].includes(branch)) {
+        if (branch === "advanced") current = "f".repeat(64); throw new Error("health refused"); } },
+      async apply() { events.push("apply"); if (branch === "offline-refused") throw new Error("offline refused"); current = f.restoration.afterLedgerSha256;
+        if (branch === "applied-then-failed") throw new Error("write readback failed"); return f.receipt; },
+      async rollback() { events.push("rollback"); if (branch === "rollback-failed") throw new Error("archive changed"); current = f.restoration.beforeLedgerSha256; },
+    };
+    await assert.rejects(restoreWebMaintenanceNativeCompaction(f.restoration, dependencies), branch === "advanced" ? /advanced/u
+      : branch === "rollback-failed" ? /health refused.*recovery also failed: archive changed/u : /failed|refused|native work returned/u);
+    if (["drain-refused", "new-native-work"].includes(branch)) assert.equal(events.includes("apply"), false);
+    if (["advanced", "rollback-failed", "drain-refused", "new-native-work"].includes(branch)) assert.equal(events.at(-1) === "start", false);
+    else assert.equal(current, f.restoration.beforeLedgerSha256);
+  });
+});
+
+test("optional restoration occurs after accepted deployment and retains exact hashes in acceptance", async () => {
+  const f = fixture(), r = restorationFixture();
+  f.options.nativeCompactionRestorePlan = path.resolve(".tmp", "restoration-plan.json");
+  f.options.nativeCompactionRestorePlanSha256 = r.restoration.confirmationSha256;
+  f.initial.nativeCompactionRestoration = r.restoration;
+  f.dependencies.ledger = () => r.snapshot;
+  f.dependencies.inspectRestoration = () => r.restoration;
+  f.dependencies.unchanged = value => { f.events.push(value === r.snapshot ? "unchanged-source" : "unchanged-restored"); };
+  f.dependencies.restore = async (restoration, options) => { assert.equal(restoration, r.restoration);
+    options.verifySource(); options.prove(); options.verify(); f.events.push("restore"); return r.receipt; };
+  const receipt = await runWebMaintenance(f.options, f.dependencies);
+  assert.ok(f.events.indexOf("restore") > f.events.indexOf("guarded-deploy"));
+  assert.ok(f.events.indexOf("restore") > f.events.indexOf("accept"));
+  assert.equal(receipt.ledgers.sidecarCount, 4); assert.equal(receipt.nativeCompactionRestoration.count, 1);
+  const validate = value => validateWebMaintenanceAcceptance(value, f.options.expectedCommit, f.options.expectedCandidateSha256,
+    f.options.candidateBinary, f.options.expectedBinarySha256, f.options.nativeCompactionRestorePlan, f.options.nativeCompactionRestorePlanSha256);
+  assert.equal(validate(receipt), receipt);
+  for (const mutate of [value => { delete value.nativeCompactionRestoration; }, value => { value.nativeCompactionRestoration.count = 2; },
+    value => { value.nativeCompactionRestoration.afterLedgerSha256 = "f".repeat(64); }, value => { value.nativeCompactionRestoration.confirmationSha256 = "f".repeat(64); }]) {
+    const changed = structuredClone(receipt); mutate(changed); assert.throws(() => validate(changed), /exact native compaction/u);
+  }
+  f.dependencies.inspectRestoration = () => ({ ...r.restoration, planFileSha256: "f".repeat(64) });
+  await assert.rejects(runWebMaintenance(f.options, f.dependencies), /plan changed after deployment/u);
+});
 
 test("Web maintenance reaches the guarded deployment body through the real Windows PowerShell File handoff", { skip: process.platform !== "win32" }, t => {
   const root = path.resolve(import.meta.dirname, ".."), scratch = path.join(root, ".tmp", "web-lifecycle-tests");
@@ -166,6 +256,15 @@ test("checkout maintenance preflight binds the existing installed source and rev
     readInstalled: () => ({ version: 1, current: { target: "codex", sourceRoot } }) };
   const candidate = prepareWebMaintenance("a".repeat(40), binary, expectedHash, dependencies);
   assert.match(candidate.candidateSha256, /^[a-f0-9]{64}$/u);
+  const restoration = restorationFixture().restoration, restorationOptions = { ...dependencies,
+    nativeCompactionRestorePlan: path.join(directory, "plan.json"), nativeCompactionRestorePlanSha256: restoration.confirmationSha256,
+    inspectRestoration: () => restoration };
+  const restored = prepareWebMaintenance("a".repeat(40), binary, expectedHash, restorationOptions);
+  assert.notEqual(candidate.candidateSha256, restored.candidateSha256);
+  assert.notEqual(prepareWebMaintenance("a".repeat(40), binary, expectedHash, { ...restorationOptions,
+    inspectRestoration: () => ({ ...restoration, planFileSha256: "f".repeat(64) }) }).candidateSha256, restored.candidateSha256);
+  assert.throws(() => prepareWebMaintenance("a".repeat(40), binary, expectedHash, { ...restorationOptions,
+    nativeCompactionRestorePlanSha256: undefined }), /exact protected plan/u);
   assert.throws(() => prepareWebMaintenance("a".repeat(40), binary, "0".repeat(64), dependencies), /reviewed candidate hash/u);
   assert.throws(() => prepareWebMaintenance("a".repeat(40), binary, expectedHash, { ...dependencies,
     readInstalled: () => ({ current: { target: "codex", sourceRoot: directory } }) }), /recorded installed Router root/u);

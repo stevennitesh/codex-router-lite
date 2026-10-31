@@ -44,6 +44,23 @@ test("controlled recovery exposes only fixed refusal reasons through the current
   }
 });
 
+test("controlled recovery retains fixed read-only boundary phases and bounded browser or tab counts", () => {
+  const phases = ["browser-discovery", "browser-acquisition", "active-owner", "saved-tab-discovery", "saved-tab-acquisition",
+    "saved-url-readiness", "checkpoint-readiness", "browser-recheck", "saved-url-recheck", "dom-snapshot", "generation-state",
+    "composer-state", "normal-chat-state", "idle-control-state", "message-identities", "accepted-checkpoint", "reply-history",
+    "anchor-snapshot", "revoked-turn-order", "reply-prefix", "reply-content-readiness", "snapshot-stability", "handoff", "ownership-transfer"];
+  for (const phase of phases) {
+    const error = capture(wrapped(marker + JSON.stringify({ reason: "ownership-changed", phase, browserCount: 2,
+      tabMatchCount: 10000, browserId: "PRIVATE_BROWSER", tabId: "PRIVATE_TAB", owner: "PRIVATE_OWNER" })), "recover");
+    assert.deepEqual(error.diagnostic, { stage: "recover", reason: "ownership-changed", phase, browserCount: 2, tabMatchCount: 10000 });
+    assert.doesNotMatch(error.message, /PRIVATE_/u);
+  }
+  for (const [browserCount, tabMatchCount] of [[-1, 10001], [1.5, "2"], [null, {}]]) {
+    const error = capture(wrapped(marker + JSON.stringify({ reason: "ownership-changed", phase: "saved-tab-discovery", browserCount, tabMatchCount })), "recover");
+    assert.deepEqual(error.diagnostic, { stage: "recover", reason: "ownership-changed", phase: "saved-tab-discovery" });
+  }
+});
+
 test("recovery ownership guards have fixed reasons and phases without owner identities", () => {
   for (const reason of ["prior-recovery-unverified", "foreign-recovery-owner"]) {
     const error = capture(wrapped(marker + JSON.stringify({ reason, phase: "ownership-guard", ownerId: "PRIVATE_OWNER_CANARY" })));

@@ -147,6 +147,7 @@
     "src/web-process-diagnostics.mjs",
     "src/web-process-snapshot.mjs",
     "src/web-runtime.mjs",
+    "src/web-native-compaction.mjs",
     "src/web-response.mjs",
     "src/web-tunnel.mjs",
     "src/web-tools.mjs",

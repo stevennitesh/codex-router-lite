@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { discoverBrowserExecutor, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
+import { discoverBrowserExecutor, discoverBrowserOpener, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
 import { savedChatRecoveryError } from "./web-browser-diagnostics.mjs";
 import { webModelSelection } from "./web-models.mjs";
 import { browserObservationIdleComplete, browserObservationOwnershipLost } from "./web-browser-state.mjs";
@@ -17,6 +17,8 @@ import { createWebToolBroker } from "./web-tools.mjs";
 import { startWebTunnel } from "./web-tunnel.mjs";
 import { watchWebTurnCancellation } from "./web-turn-cancellation.mjs";
 import { webToolIdentity, webToolKinds, validWebToolSearchCall, completedWebToolSearchOutput, terminalWebToolSearchOutput } from "./web-tool-contract.mjs";
+import { nativeCompactionSource, validNativeCompactionReference, createNativeCompactionWitness, nativeCompactionWitnessReference,
+  nativeCompactionWitnessPath, readNativeCompactionWitness, validNativeCompactionWitness, expandNativeCompactionWitnesses } from "./web-native-compaction.mjs";
 
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -32,6 +34,20 @@ const outputTypeFor = new Map(Object.values(webToolKinds).map(kind => [kind.call
 const internalCall = value => typeof value === "string" && /^call_router_web_[a-f0-9]{32}$/u.test(value);
 const fail = (message, code = "web_runtime_unavailable", status = 409) => Object.assign(new Error(message), { code, status });
 const nonempty = value => typeof value === "string" && value.length > 0;
+const validPendingBrowserOpen = value => record(value) && uuid.test(value.turnId ?? "") && internalCall(value.callId)
+  && Object.keys(value).sort().join() === "callId,chatUrl,turnId" && isSavedChatUrl(value.chatUrl);
+const validNativeProjection = value => Array.isArray(value) && value.length > 0 && value.length <= 64
+  && value.every(validNativeCompactionReference) && new Set(value.map(item => item.opaqueSha256)).size === value.length;
+const conversationHistory = value => value?.version === 4 ? { ...value, version: value.priorVersion,
+  priorVersion: undefined, pendingBrowserOpen: undefined, nativeCompactionProjection: undefined } : value;
+const guardConversation = conversation => {
+  if (conversation.version !== 4) { conversation.priorVersion = conversation.version ?? 1; conversation.version = 4; }
+};
+const releaseConversationGuard = conversation => {
+  if (conversation.version === 4 && !conversation.pendingBrowserOpen && !conversation.nativeCompactionProjection) {
+    conversation.version = conversation.priorVersion; conversation.priorVersion = undefined;
+  }
+};
 export const WEB_RECOVERY_NOTICE = "Same-chat recovery boundary recorded. The failed attempt remains abandoned with unconfirmed delivery; no prompt was sent. Send a new instruction to continue.";
 export const WEB_RECOVERY_INPUT_POLICY = "quarantine-all-native-input-through-first-recovery-request-v1";
 const opaqueMarkerType = "web_abandoned_opaque_compaction";
@@ -78,6 +94,13 @@ const instructionProtocol = `You are answering the current native Codex conversa
 // Maintenance needs the durable replay/action risks, independently of whether
 // historical browser/checkpoint fields still qualify for current execution.
 export function validWebConversationRisk(value, threadId) {
+  if (value?.version === 4) {
+    if (![1, 2, 3].includes(value.priorVersion) || value.pendingBrowserOpen === undefined && value.nativeCompactionProjection === undefined
+        || value.pendingBrowserOpen !== undefined && (!validPendingBrowserOpen(value.pendingBrowserOpen)
+          || value.uncertainSend || value.lastTurn?.sendState !== "unsent" || value.lastTurn.completed !== false)
+        || value.nativeCompactionProjection !== undefined && !validNativeProjection(value.nativeCompactionProjection)) return false;
+    value = conversationHistory(value);
+  } else if (value?.priorVersion !== undefined || value?.pendingBrowserOpen !== undefined || value?.nativeCompactionProjection !== undefined) return false;
   const last = value?.lastTurn;
   return record(value) && (value.version === 1 && value.recovery === undefined
     || value.version === 2 && value.recovery?.inputPolicy === undefined && validRecovery(value.recovery)
@@ -95,14 +118,26 @@ export function validWebConversationRisk(value, threadId) {
     && (value.version === 1 || value.recovery.boundaryOwner === undefined || value.recovery.boundaryOwner.threadId === threadId);
 }
 
+export function guardedWebConversation(value, { nativeCompactionProjection } = {}) {
+  const next = structuredClone(value);
+  if (!validNativeProjection(nativeCompactionProjection)) throw fail("Invalid native compaction projection authority.", "web_native_compaction_state");
+  next.nativeCompactionProjection = structuredClone(nativeCompactionProjection); guardConversation(next);
+  if (!validWebConversation(next, next.threadId)) throw fail("The guarded native compaction ledger is invalid.", "web_native_compaction_state");
+  return next;
+}
+
 export function validWebConversation(value, threadId) {
+  const riskValid = validWebConversationRisk(value, threadId), pendingBrowserOpen = value?.pendingBrowserOpen;
+  value = conversationHistory(value);
   const last = value?.lastTurn, observed = value?.observation;
-  return validWebConversationRisk(value, threadId)
+  return riskValid
     && typeof value.bindingId === "string" && /^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
     && Array.isArray(value.browserOwnerTurnIds) && value.browserOwnerTurnIds.every(owner => uuid.test(owner))
     && new Set(value.browserOwnerTurnIds).size === value.browserOwnerTurnIds.length
     && (value.tabId === undefined || nonempty(value.tabId)) && (value.chatUrl === undefined || isSavedChatUrl(value.chatUrl))
     && (value.capacityChatUrl === undefined || isSavedChatUrl(value.capacityChatUrl) && value.rolloverRequired === true)
+    && (pendingBrowserOpen === undefined || pendingBrowserOpen.chatUrl === value.chatUrl
+      && value.browserOwnerTurnIds.includes(pendingBrowserOpen.turnId) && value.checkpoint !== undefined)
     && (value.deliveredInstructionsSha256 === undefined || sha256(value.deliveredInstructionsSha256) && value.checkpoint !== undefined)
     && (value.assistantRenderedSha256 === undefined || sha256(value.assistantRenderedSha256) && value.checkpoint !== undefined)
     && (value.deliveredInstructionsGenerationTurnKey === undefined || uuid.test(value.deliveredInstructionsGenerationTurnKey) && value.checkpoint !== undefined)
@@ -233,22 +268,43 @@ function readableInput(payload) {
     && !["additional_tools", "reasoning", "compaction_trigger"].includes(item.type));
 }
 
-function validateQuarantineActions(payload) {
+export function isCanonicalWebAppIngress(item) {
+  const metadata = item?.internal_chat_message_metadata_passthrough;
+  return record(item) && item.call_id === undefined && item.type === "function_call_output" && item.namespace === "codex_app"
+    && ["create_thread", "send_message_to_thread"].includes(item.name) && typeof item.id === "string" && item.id.length > 0
+    && Object.keys(item).sort().join() === "id,internal_chat_message_metadata_passthrough,name,namespace,output,type"
+    && typeof item.output === "string" && record(metadata) && Object.keys(metadata).sort().join() === "create_time,turn_id"
+    && uuid.test(metadata.turn_id ?? "") && Number.isFinite(metadata.create_time) && metadata.create_time > 0;
+}
+
+function validateQuarantineActions(payload, { rejectOrphans = false } = {}) {
   const calls = new Map();
   for (const item of readableInput(payload)) {
     if (callTypes.has(item.type)) {
-      if (!nonempty(item.call_id) || calls.has(item.call_id)) throw fail("Quarantine has an ambiguous visible native call.", "web_tool_result", 400);
+      if (!nonempty(item.call_id) || calls.has(item.call_id)) throw fail("Native history has an ambiguous visible call.", "web_tool_result", 400);
       calls.set(item.call_id, { outputType: outputTypeFor.get(item.type), resolved: false });
-    } else if (outputTypes.has(item.type) && calls.has(item.call_id)) {
+    } else if (outputTypes.has(item.type)) {
       const call = calls.get(item.call_id);
+      if (!call) {
+        if (rejectOrphans && !isCanonicalWebAppIngress(item)) throw fail("Readable native source has an orphan result.", "web_tool_result", 400);
+        continue;
+      }
       if (call.resolved || item.type !== call.outputType || (item.type === "tool_search_output"
         ? !terminalWebToolSearchOutput(item, item.call_id) : item.output === undefined)) {
-        throw fail("Quarantine has an invalid or duplicated native result.", "web_tool_result", 400);
+        throw fail("Native history has an invalid or duplicated result.", "web_tool_result", 400);
       }
       call.resolved = true;
     }
   }
-  if ([...calls.values()].some(call => !call.resolved)) throw fail("A visible native action has no actual paired result; quarantine is blocked.", "web_coding_uncertain");
+  if ([...calls.values()].some(call => !call.resolved)) throw fail("A visible native action has no actual paired result.", "web_coding_uncertain");
+}
+
+export function inspectNativeCompactionSource(source, conversation) {
+  validateQuarantineActions({ input: source }, { rejectOrphans: true });
+  const hashes = transcript({ input: source }).map(digest);
+  if (!Array.isArray(conversation.checkpoint) || !conversation.checkpoint.every((hash, index) => hashes[index] === hash)) {
+    throw fail("Readable native compaction source does not preserve the exact accepted Web checkpoint.", "web_native_compaction_state");
+  }
 }
 
 function transcript(payload, recovery) {
@@ -257,6 +313,11 @@ function transcript(payload, recovery) {
   let quarantined = false;
   for (const item of readableInput(payload)) {
     if (item.role) result.push({ role: item.role, content: contentText(item.content) });
+    else if (item.type === "configuration_update" && Object.keys(item).sort().join() === "reasoning,type"
+        && record(item.reasoning) && Object.keys(item.reasoning).join() === "effort"
+        && typeof item.reasoning.effort === "string" && item.reasoning.effort.length > 0 && item.reasoning.effort.length <= 64) {
+      result.push(structuredClone(item)); // Historical native configuration data, never a current tool declaration.
+    }
     else if (item.type === "compaction") {
       if (!decodeCompaction(item.encrypted_content)) {
         const marker = opaqueMarker(item), recorded = recovery?.opaqueItems?.find(value => value.index === result.length);
@@ -290,7 +351,12 @@ export function createInAppWebRuntime({
   writeState = writePrivateJsonAsync, stateIsProtected = privateFileIsProtected,
 } = {}) {
   const turns = new Map(), conversations = new Map(), tokenOwners = new Map();
-  const compactions = new Set(), retirements = new Set();
+  const compactions = new Set(), retirements = new Set(), nativeCompactions = new Set();
+  const releaseNativeCompaction = stage => {
+    if (!nativeCompactions.delete(stage)) return;
+    if (stage.conversation.compacting === stage) stage.conversation.compacting = false;
+    compactions.delete(stage.settled.promise); stage.settled.resolve();
+  };
   let watcherCloseError;
   const closeWatcher = turn => {
     if (!turn.watcherClose) {
@@ -323,7 +389,8 @@ export function createInAppWebRuntime({
   const maintenanceState = () => ({
     activeTurns: [...turns.values()].filter(turn => !turn.done && !turn.cancelled).length,
     uncertainSends: [...conversations.values()].filter(conversation => conversation.uncertainSend).length,
-    unresolvedActions: [...conversations.values()].reduce((count, conversation) => count + conversation.unresolvedCoding.size, 0),
+    unresolvedActions: [...conversations.values()].reduce((count, conversation) => count + conversation.unresolvedCoding.size
+      + (conversation.pendingBrowserOpen ? 1 : 0), 0),
   });
   const serviceAbort = new AbortController();
   let services, servicePromise, serviceAcquisition, serviceSettings, closePromise, closing = false;
@@ -362,11 +429,20 @@ export function createInAppWebRuntime({
     return acquisition.closePromise;
   };
   const conversationPath = threadId => path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`);
+  const projectedPayload = (conversation, payload) => {
+    if (!conversation.nativeCompactionProjection || !Array.isArray(payload.input)) return payload;
+    const witnesses = conversation.nativeCompactionProjection.map(reference => readNativeCompactionWitness({
+      stateDir, threadId: conversation.threadId, reference, stateIsProtected }));
+    const input = expandNativeCompactionWitnesses(payload.input, witnesses, { threadId: conversation.threadId,
+      itemIdentity: item => { const projected = transcript({ input: [item] }); return projected.length ? digest(projected) : undefined; } });
+    return { ...payload, input };
+  };
+  const nativeInput = (conversation, payload) => readableInput(projectedPayload(conversation, payload));
   const persist = conversation => {
     // Retain historical count fields and the loaded ledger version. Whole-input
     // quarantine uses V3 so older V1/V2 writers reject its durable exclusion.
     // Runtime ownership uses the exact identities; mounted browser counts are irrelevant.
-    const value = { version: conversation.version ?? 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
+    const value = { version: conversation.version ?? 1, priorVersion: conversation.priorVersion, threadId: conversation.threadId, bindingId: conversation.bindingId,
       recovery: conversation.recovery,
       browserOwnerTurnIds: [...conversation.browserOwnerTurnIds], tabId: conversation.tabId, chatUrl: conversation.chatUrl,
       checkpoint: conversation.checkpoint, sendBaseline: conversation.checkpoint === undefined ? undefined : conversation.sendBaselineReplyIds.length,
@@ -381,6 +457,8 @@ export function createInAppWebRuntime({
       needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, capacityChatUrl: conversation.capacityChatUrl, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
       attemptedDelivery: conversation.attemptedDelivery,
+      pendingBrowserOpen: conversation.pendingBrowserOpen,
+      nativeCompactionProjection: conversation.nativeCompactionProjection,
       lastTurn: conversation.lastTurn };
     const serialized = JSON.stringify(value);
     if (serialized === conversation.persistedValue) return conversation.writeTail ?? Promise.resolve();
@@ -511,6 +589,7 @@ export function createInAppWebRuntime({
     throw fail("The quarantined history has no trusted readable compaction lineage.", "web_history_mismatch");
   };
   const conversationInput = (conversation, payload) => {
+    payload = projectedPayload(conversation, payload);
     const current = transcript(payload, conversation.recovery), recovery = conversation.recovery;
     if (recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY && recovery.stage !== "armed") {
       // Removing an opaque item cannot erase its fence. A newer readable
@@ -526,7 +605,7 @@ export function createInAppWebRuntime({
   };
   const compactHistory = async (payload, headers, compactV2) => {
     if (!Array.isArray(payload.input)) return webCompactResponse(payload, { compactV2 });
-    const raw = readableInput(payload), clean = { ...payload, input: raw };
+    let raw = readableInput(payload), clean = { ...payload, input: raw };
     const seed = (input = raw) => webCompactResponse({ ...clean, input }, { compactV2, retainedTail: compactV2 ? input : [] });
     const attributed = payload.client_metadata?.["x-codex-turn-metadata"] !== undefined
       || headers["x-codex-turn-metadata"] !== undefined;
@@ -534,6 +613,8 @@ export function createInAppWebRuntime({
     const owner = webTurnIdentity(payload, headers);
     const conversation = conversations.get(owner.threadId) ?? loadConversation(owner.threadId);
     if (!conversation) return seed();
+    if (conversation.pendingBrowserOpen) throw fail("The saved browser opening has not been verified; native compaction must wait for its exact saved-chat proof.", "web_browser_open_pending");
+    raw = nativeInput(conversation, payload); clean = { ...payload, input: raw };
     if (conversation.recovery && ["armed", "bounded"].includes(conversation.recovery.stage)) {
       throw fail("Complete one fresh accepted Web turn after explicit recovery before compaction.", "web_recovery_pending");
     }
@@ -687,7 +768,7 @@ export function createInAppWebRuntime({
       turn.inputObservationRevision = broker.revision(turn.token);
     }
     if (operation !== "recover") conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
-    turn.pending = { kind: "browser", operation, frameToken, calls: [call], fullContinuation };
+    turn.pending = { kind: "browser", operation, frameToken, calls: [call], fullContinuation, recovery };
     await persist(conversation);
     if (operation === "observe") turn.pending.completionRevision = broker.beginCompletion(turn.token);
     return webResponseRecord(payload, [call]);
@@ -705,26 +786,79 @@ export function createInAppWebRuntime({
     return webResponseRecord(payload, calls);
   };
   const updateTools = (turn, payload, retained) => {
-    const tools = collectWebTools(payload, turn.discovered, retained ?? payload.input);
+    const tools = collectWebTools(payload, turn.discovered, turn.conversation.nativeCompactionProjection ? payload.input : retained ?? payload.input);
     // A native continuation replaces current authority before any queued call
     // can be emitted. The broker retains emitted identities until real results,
     // while reconciling accepted but un-emitted calls against this authority.
     broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto" });
     turn.tools = tools;
   };
+  const emitDiscovery = (turn, payload, purpose) => {
+    if (!turn.tools.some(tool => tool.type === "tool_search" && tool.execution === "client")) {
+      throw fail("The current native tools cannot discover the required browser transport.", "web_browser_capability_gap");
+    }
+    const query = purpose === "browser-open" ? "+mcp__codex_app open_in_codex" : "+mcp__node_repl js persistent JavaScript browser runtime";
+    const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query } };
+    turn.pending = { kind: "discovery", purpose, calls: [call] };
+    return webResponseRecord(payload, [call]);
+  };
+  const emitBrowserOpen = async (turn, payload) => {
+    const conversation = turn.conversation, proof = turn.browserOpenRecovery;
+    if (conversation.pendingBrowserOpen) throw fail("Opening this task's saved browser is still pending. Make the task visible and retry its saved-chat proof; the opening will not be repeated.", "web_browser_open_pending");
+    if (!proof || proof.url !== conversation.chatUrl || !isSavedChatUrl(proof.url)
+        || proof.checkpointSha256 !== digest(conversation.checkpoint) || proof.generationTurnKey !== conversation.generationTurnKey
+        || conversation.uncertainSend || conversation.unresolvedCoding.size) throw fail("The saved browser opening no longer belongs to the confirmed checkpoint.", "web_browser_output_shape");
+    let opener;
+    try { opener = discoverBrowserOpener(turn.tools); }
+    catch (error) {
+      if (error.code !== "web_browser_opener_missing" || turn.openerDiscoveryIssued) throw error;
+      turn.openerDiscoveryIssued = true;
+      return emitDiscovery(turn, payload, "browser-open");
+    }
+    const call = { type: "function_call", id: id("fc"), call_id: id("call_router_web"), namespace: opener.namespace,
+      name: opener.name, arguments: opener.argumentsFor(proof.url, turn.threadId), status: "completed" };
+    // App opening can be queued while this task is hidden. Its actual native
+    // result does not prove a browser exists, so retain this guard until the
+    // full saved-chat continuation verifies the original checkpoint.
+    conversation.pendingBrowserOpen = { turnId: turn.turnId, callId: call.call_id, chatUrl: proof.url };
+    guardConversation(conversation);
+    turn.pending = { kind: "browser-open", calls: [call] };
+    await persist(conversation);
+    return webResponseRecord(payload, [call]);
+  };
+  const acceptBrowserOpenResult = (output, call) => {
+    const failed = (value, depth = 0) => {
+      if (depth > 8) return true;
+      if (typeof value === "string") {
+        try { return failed(JSON.parse(value), depth + 1); } catch { return false; }
+      }
+      if (Array.isArray(value)) return value.some(item => failed(item, depth + 1));
+      return record(value) && (value.isError === true || ["failed", "incomplete", "in_progress"].includes(value.status)
+        || ["content", "output", "text", "structuredContent"].some(key => Object.hasOwn(value, key) && failed(value[key], depth + 1)));
+    };
+    const actual = output.output;
+    const represented = typeof actual === "string" ? actual.trim().length > 0
+      : Array.isArray(actual) ? actual.length > 0 : record(actual) && Object.keys(actual).length > 0;
+    if (output.type !== "function_call_output" || output.call_id !== call.call_id || !represented
+        || failed(output)) throw fail("The native browser opening did not return a valid successful result; its queued effect remains guarded.", "web_browser_open_result", 400);
+  };
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
     const current = conversationInput(conversation, payload), hashes = current.map(digest);
+    turn.releaseNativeProjection = !!conversation.nativeCompactionProjection && Array.isArray(payload.input)
+      && payload.input.some(item => item?.type === "compaction" && decodeCompaction(item.encrypted_content))
+      && !payload.input.some(item => item?.type === "compaction" && !decodeCompaction(item.encrypted_content))
+      && compactTail(conversation, readableInput(payload), undefined, false) !== undefined;
     const safeContext = conversation.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-      ? quarantineContext(conversation, readableInput(payload), current) : undefined;
+      ? quarantineContext(conversation, nativeInput(conversation, payload), current) : undefined;
     turn.compactionLineage = safeContext?.alias;
     // Abandonment is a replay fence, separate from the accepted checkpoint.
     const recoveryBoundary = conversation.recovery?.stage === "bounded";
     const checkpoint = recoveryBoundary ? conversation.recovery.inputHashes : conversation.checkpoint;
     let history = conversation.needsHistory && safeContext ? transcript({ input: safeContext.input }) : current;
     if (checkpoint && !conversation.needsHistory) {
-      const retained = recoveryBoundary ? undefined : compactTail(conversation, readableInput(payload), undefined, false);
+      const retained = recoveryBoundary ? undefined : compactTail(conversation, nativeInput(conversation, payload), undefined, false);
       let common = 0;
       while (common < checkpoint.length && common < hashes.length && checkpoint[common] === hashes[common]) common += 1;
       if (retained) history = transcript({ input: retained });
@@ -758,7 +892,7 @@ export function createInAppWebRuntime({
     const promptFor = value => `${guidance}${quarantineGap}Conversation transcript:\n${JSON.stringify(value)}`;
     turn.prompt = promptFor(history);
     if (conversation.needsHistory && Buffer.byteLength(turn.prompt, "utf8") > 512 * 1024) {
-      const output = webCompactOutput({ ...payload, input: safeContext?.input ?? readableInput(payload) });
+      const output = webCompactOutput({ ...payload, input: safeContext?.input ?? nativeInput(conversation, payload) });
       turn.prompt = promptFor(transcript({ input: output }));
     }
     if (Buffer.byteLength(turn.prompt, "utf8") > 512 * 1024) throw fail("The Web browser prompt exceeds 512 KiB; compact the Codex chat first.", "web_prompt_too_large", 413);
@@ -801,6 +935,7 @@ export function createInAppWebRuntime({
     conversation.generationTurnKey = delivery.generationTurnKey;
     conversation.generationReplyIds = delivery.generationReplyIds;
     conversation.generationCompleted = false;
+    if (turn.releaseNativeProjection) { conversation.nativeCompactionProjection = undefined; releaseConversationGuard(conversation); }
     conversation.observation = delivery.observation;
     conversation.assistantText = undefined;
     conversation.assistantRenderedText = undefined; conversation.assistantRenderedSha256 = undefined;
@@ -840,6 +975,18 @@ export function createInAppWebRuntime({
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
+    if (Object.hasOwn(value, "needsBrowserOpen")) {
+      const conversation = turn.conversation;
+      if (Object.keys(value).sort().join() !== "needsBrowserOpen,noActions,operation" || value.needsBrowserOpen !== true || value.noActions !== true
+          || operation !== "continue" || pending.operation !== "continue" || !pending.fullContinuation || !pending.recovery
+          || pending.recovery.url !== conversation.chatUrl || !isSavedChatUrl(conversation.chatUrl)
+          || !conversation.checkpoint || conversation.uncertainSend || conversation.unresolvedCoding.size) {
+        throw fail("The browser did not provide an exact owned no-action missing-browser receipt.", "web_browser_output_shape");
+      }
+      turn.browserOpenRecovery = { url: conversation.chatUrl, checkpointSha256: digest(conversation.checkpoint),
+        generationTurnKey: conversation.generationTurnKey };
+      return emitBrowserOpen(turn, payload);
+    }
     if (operation === "recover") {
       const conversation = turn.conversation, recovery = conversation.recovery;
       if (recovery?.stage !== (turn.recoveryResume ? "bounded" : "armed") || value.inspectionOnly !== false || value.snapshotSha256 !== recovery.snapshotSha256
@@ -911,6 +1058,17 @@ export function createInAppWebRuntime({
       if (value.normal !== true || !nonempty(value.tabId) || typeof value.url !== "string"
           || (turn.conversation.needsHistory ? !isNormalChatHomeUrl(value.url) || value.needsHistory !== true
             : (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) ? value.url !== (turn.conversation.capacityChatUrl ?? turn.conversation.chatUrl) : !isNormalChatHomeUrl(value.url))) throw fail("The owned saved ChatGPT conversation was not established.");
+      if (turn.conversation.pendingBrowserOpen) {
+        if (operation !== "continue" || !pending.fullContinuation || !pending.recovery || value.recovered !== true || value.bindingRestored !== true
+            || value.url !== turn.conversation.pendingBrowserOpen.chatUrl || pending.recovery.url !== value.url
+            || turn.interruptedTurnId && value.interrupted !== true) {
+          throw fail("The pending browser opening has no full saved-chat recovery proof.", "web_browser_open_pending");
+        }
+        // This full recovery establishes the original saved checkpoint even
+        // when the page is at capacity. Release only the opening guard before
+        // capacity transfer can emit an uncertain successor Send.
+        turn.conversation.pendingBrowserOpen = undefined; releaseConversationGuard(turn.conversation);
+      }
       turn.conversation.tabId = value.tabId;
       if (operation === "continue" && !turn.conversation.needsHistory && (value.conversationFull === true || turn.conversation.rolloverRequired)) return startRollover(turn, payload, value);
       turn.conversation.browserOwnerTurnIds = [turn.turnId];
@@ -980,7 +1138,7 @@ export function createInAppWebRuntime({
       const freshAnswer = freshPostToolAnswer(turn, value);
       if (value.completed === true && quietSnapshot && value.assistantText.trim() && freshAnswer) {
         const current = conversationInput(turn.conversation, payload), hashes = current.map(digest), checkpoint = turn.conversation.checkpoint;
-        compactTail(turn.conversation, readableInput(payload), turn.deliveredCoding);
+        compactTail(turn.conversation, nativeInput(turn.conversation, payload), turn.deliveredCoding);
         if (checkpoint.every((hash, index) => hashes[index] === hash)) {
           let acknowledged = checkpoint.length;
           while (acknowledged < hashes.length && turn.deliveredCoding?.has(hashes[acknowledged])) acknowledged += 1;
@@ -1039,11 +1197,6 @@ export function createInAppWebRuntime({
   };
   const prepare = async (payload, settings, owner, signal) => {
     const model = selection(payload);
-    const tools = collectWebTools(payload);
-    let executor;
-    try { executor = discoverBrowserExecutor(tools); } catch (error) {
-      if (!tools.some(tool => tool.type === "tool_search" && tool.execution === "client")) throw error;
-    }
     const conversationKey = owner.threadId;
     let conversation = conversations.get(conversationKey);
     if (!conversation) {
@@ -1059,6 +1212,11 @@ export function createInAppWebRuntime({
       if (conversations.size >= 64) throw fail("The in-app Web conversation limit was reached. Restart Router after closing finished Web chats.");
       conversation = { threadId: owner.threadId, bindingId: `b${randomBytes(12).toString("hex")}`, browserOwnerTurnIds: [], uncertainSend: false, unresolvedCoding: new Map() };
       conversations.set(conversationKey, conversation);
+    }
+    const tools = collectWebTools(payload);
+    let executor;
+    try { executor = discoverBrowserExecutor(tools); } catch (error) {
+      if (!tools.some(tool => tool.type === "tool_search" && tool.execution === "client")) throw error;
     }
     conversation.activeTurn = owner.turnId;
     let retained;
@@ -1076,7 +1234,7 @@ export function createInAppWebRuntime({
         } else await conversation.writeTail;
       }
       retained = conversation.recovery?.stage === "armed" && conversation.recovery.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-        ? undefined : compactTail(conversation, readableInput(payload), undefined, false);
+        ? undefined : compactTail(conversation, nativeInput(conversation, payload), undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
     } catch (error) { conversation.activeTurn = undefined; throw error; }
     const turn = { ...owner, settings, selection: model, model: payload.model, executor, tools,
@@ -1130,6 +1288,59 @@ export function createInAppWebRuntime({
     finally { turn.starting = false; retire(turn); }
   };
   return {
+    async stageNativeCompaction({ payload, headers = {} }) {
+      let owner;
+      try { owner = webTurnIdentity(payload, headers); } catch { return null; }
+      const conversation = conversations.get(owner.threadId) ?? loadConversation(owner.threadId);
+      if (!conversation?.checkpoint) return null;
+      // Publish cold custody and reserve this exact object before yielding.
+      // Both other compaction requests and ordinary Web preparation must see
+      // the same owner, including while its previous durable write settles.
+      conversations.set(owner.threadId, conversation);
+      if (closing) throw fail("The Web runtime is stopping.");
+      if (conversation.activeTurn || conversation.compacting || conversation.pendingBrowserOpen || conversation.uncertainSend || conversation.unresolvedCoding.size) {
+        throw fail("Native compaction cannot replace history while saved Web work is unresolved.", "web_native_compaction_state");
+      }
+      const settled = Promise.withResolvers(), stage = { conversation, owner, checkpoint: [...conversation.checkpoint],
+        requestId: randomUUID(), settled };
+      conversation.compacting = stage;
+      nativeCompactions.add(stage); compactions.add(settled.promise);
+      try {
+        await conversation.writeTail;
+        if (closing) throw fail("The Web runtime is stopping.");
+        let source = nativeCompactionSource(projectedPayload(conversation, payload).input);
+        try { inspectNativeCompactionSource(source, conversation); }
+        catch (error) {
+          if (typeof payload.instructions !== "string") throw error;
+          const withInstructions = [{ role: "developer", content: payload.instructions }, ...source];
+          inspectNativeCompactionSource(withInstructions, conversation); source = withInstructions;
+        }
+        stage.source = source;
+        return stage;
+      } catch (error) { releaseNativeCompaction(stage); throw error; }
+    },
+    async finalizeNativeCompaction(stage, { output, responseId }) {
+      if (!nativeCompactions.has(stage) || stage.conversation.compacting !== stage || digest(stage.checkpoint) !== digest(stage.conversation.checkpoint)
+          || !Array.isArray(output)) throw fail("Native compaction no longer owns its saved checkpoint.", "web_native_compaction_state");
+      const opaque = output.filter(item => item?.type === "compaction" && !decodeCompaction(item.encrypted_content));
+      if (opaque.length !== 1) throw fail("Native compaction did not return one exact opaque checkpoint.", "web_native_compaction_state");
+      let witness = createNativeCompactionWitness({ threadId: stage.owner.threadId, source: stage.source, opaqueItem: opaque[0], responseId,
+        checkpoint: stage.checkpoint, provenance: { kind: "router-native-request", requestId: stage.requestId } });
+      const target = nativeCompactionWitnessPath(stateDir, stage.owner.threadId, witness.opaqueSha256), existing = readJsonFile(target);
+      if (existing.status !== "missing") {
+        if (existing.status !== "present" || !validNativeCompactionWitness(existing.value, { threadId: stage.owner.threadId, opaqueItem: opaque[0] })
+            || existing.value.sourceSha256 !== witness.sourceSha256 || existing.value.checkpointSha256 !== witness.checkpointSha256
+            || existing.value.responseId !== responseId) throw fail("Retained native compaction evidence conflicts with this response.", "web_native_compaction_state");
+        witness = existing.value;
+      } else await writeState(target, witness);
+      const reference = nativeCompactionWitnessReference(witness);
+      readNativeCompactionWitness({ stateDir, threadId: stage.owner.threadId, reference, stateIsProtected });
+      const references = [...(stage.conversation.nativeCompactionProjection ?? []).filter(item => item.opaqueSha256 !== reference.opaqueSha256), reference];
+      if (!validNativeProjection(references)) throw fail("Native compaction projection exceeds its retained evidence bound.", "web_native_compaction_state");
+      stage.conversation.nativeCompactionProjection = references; guardConversation(stage.conversation);
+      await persist(stage.conversation);
+    },
+    releaseNativeCompaction,
     async start(settings) { await ensureServices(settings); return this.status(); },
     async request(payload, { compact = false, compactV2 = false, headers = {}, settings, signal } = {}) {
       if (closing) throw fail("Router's in-app Web runtime is stopping.");
@@ -1170,7 +1381,7 @@ export function createInAppWebRuntime({
         if (turn.done) throw fail("This Web turn is complete; use a new native turn for a follow-up.");
         const input = Array.isArray(payload.input) ? payload.input : [];
         const retained = turn.conversation.recovery?.stage === "armed" && turn.conversation.recovery.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-          ? undefined : compactTail(turn.conversation, readableInput(payload), undefined, false);
+          ? undefined : compactTail(turn.conversation, nativeInput(turn.conversation, payload), undefined, false);
         for (const item of [...input, ...(retained ?? [])]) if (outputTypes.has(item?.type) && turn.processed.has(item.call_id)
             && turn.processed.get(item.call_id) !== outputDigest(item)) throw fail("A consumed native Web result changed during replay.", "web_tool_result", 400);
         let response;
@@ -1194,9 +1405,21 @@ export function createInAppWebRuntime({
               if (!completedWebToolSearchOutput(outputs[0], pending.calls[0].call_id)) throw fail("Browser discovery did not return completed current native declarations.", "web_tool_result", 400);
               turn.discovered.push(...outputs[0].tools);
               updateTools(turn, payload, retained);
-              turn.executor = discoverBrowserExecutor(turn.tools);
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
-              response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
+              if (pending.purpose === "browser-open") response = await emitBrowserOpen(turn, payload);
+              else {
+                turn.executor = discoverBrowserExecutor(turn.tools);
+                response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
+              }
+            } else if (pending.kind === "browser-open") {
+              acceptBrowserOpenResult(outputs[0], pending.calls[0]);
+              const open = turn.conversation.pendingBrowserOpen;
+              if (!open || open.callId !== pending.calls[0].call_id || open.turnId !== turn.turnId || open.chatUrl !== turn.conversation.chatUrl) {
+                throw fail("The native browser opening result no longer belongs to its durable attempt.", "web_browser_open_result", 400);
+              }
+              updateTools(turn, payload, retained);
+              turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
+              response = await emitBrowser(turn, "continue", payload, { fullContinuation: true });
             } else {
               broker.complete(turn.token, outputs);
               turn.deliveredCoding ??= new Set();
@@ -1215,9 +1438,7 @@ export function createInAppWebRuntime({
           }
         } else if (!turn.executor) {
           updateTools(turn, payload, retained);
-          const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query: "+mcp__node_repl js persistent JavaScript browser runtime" } };
-          turn.pending = { kind: "discovery", calls: [call] };
-          response = webResponseRecord(payload, [call]);
+          response = emitDiscovery(turn, payload, "executor");
         } else {
           updateTools(turn, payload, retained);
           response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
@@ -1265,6 +1486,12 @@ export function createInAppWebRuntime({
 }
 
 let runtime;
+export function stageInAppNativeCompaction(options) {
+  runtime ??= createInAppWebRuntime();
+  return runtime.stageNativeCompaction(options);
+}
+export function finalizeInAppNativeCompaction(stage, captured) { return runtime?.finalizeNativeCompaction(stage, captured); }
+export function releaseInAppNativeCompaction(stage) { runtime?.releaseNativeCompaction(stage); }
 export function inAppWebMaintenanceState() {
   return runtime?.maintenanceState() ?? { activeTurns: 0, uncertainSends: 0, unresolvedActions: 0 };
 }

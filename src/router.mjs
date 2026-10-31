@@ -141,7 +141,8 @@ import {
   loopbackProbeFetch,
 } from "./fetch-transport.mjs";
 import { handleResponsesWebSocketUpgrade } from "./responses-websocket.mjs";
-import { inAppWebMaintenanceState } from "./web-runtime.mjs";
+import { inAppWebMaintenanceState, stageInAppNativeCompaction, finalizeInAppNativeCompaction, releaseInAppNativeCompaction } from "./web-runtime.mjs";
+import { nativeCompactionResponse } from "./web-native-compaction.mjs";
 import {
   clientToolCalls,
   clientToolOutputs,
@@ -2384,6 +2385,7 @@ async function handleResponses(request, response, requestUrl) {
   let observedUpstreamStatus;
   let observedTransportFailure = false;
   let switchyardWorkflow;
+  let nativeCompactionStage;
   const selectedUsageObserver = () => emptyCompletionRetried ? retryUsageTransform : usageTransform;
   const acceptedSuccessfulTerminal = () => selectedUsageObserver()?.completedResponseObserved() === true &&
     acceptedResponsesTerminal(response)?.outcome === "completed";
@@ -2539,6 +2541,11 @@ async function handleResponses(request, response, requestUrl) {
       builtSearchMode = built.searchMode;
       openRouterHostedSearch = built.hostedSearch;
     } else {
+      // A saved Web chat needs readable history across a native-model compact.
+      // Runtime owns the ledger lock; this observation does not start Web services.
+      if (!switchyard && (compactV1 || compactV2)) {
+        nativeCompactionStage = await stageInAppNativeCompaction({ payload, headers: request.headers });
+      }
       const substitutedCaller = callerBroughtNoUpstreamCredential(request.headers, {
         callerKey: CALLER_KEY,
         internalKey: INTERNAL_KEY,
@@ -2657,6 +2664,14 @@ async function handleResponses(request, response, requestUrl) {
     );
     upstreamRetries = retries;
     upstreamStatus = upstream.status;
+    if (nativeCompactionStage && upstream.ok) {
+      // Do not publish an opaque replacement until its exact readable source is
+      // restart-safe. Once durable, relay the original response bytes unchanged.
+      const bytes = await readResponseBody(upstream, { maxBytes: MAX_BUFFERED_RESPONSE_BYTES, signal: controller.signal });
+      const captured = await nativeCompactionResponse(bytes, upstream.headers.get("content-type"), { compactV1, maxBytes: MAX_BUFFERED_RESPONSE_BYTES });
+      await finalizeInAppNativeCompaction(nativeCompactionStage, captured);
+      upstream = responseWithBody(upstream, bytes);
+    }
     if (!route && !switchyard && observesNativeAuth) {
       void observeNativeAuthOutcome(upstream.status, {
         desktop: nativeAuthDesktop,
@@ -3148,6 +3163,7 @@ async function handleResponses(request, response, requestUrl) {
     finalStatus = response.headersSent ? 502 : httpErrorStatus(error);
     throw error;
   } finally {
+    await releaseInAppNativeCompaction(nativeCompactionStage);
     const status = finalStatus ?? response.statusCode;
     if (switchyardWorkflow) {
       const observer = selectedUsageObserver();

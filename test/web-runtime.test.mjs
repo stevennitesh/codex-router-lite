@@ -60,6 +60,10 @@ const nativeJs = { type: "namespace", name: "mcp__node_repl", tools: [{ type: "f
 const currentRead = { type: "namespace", name: "mcp__work", tools: [{ type: "function", name: "read", description: "Read the actual workspace",
   parameters: { type: "object", properties: { path: { type: "string" }, limit: { type: "integer", minimum: 1 } }, required: ["path"], additionalProperties: false } }] };
 const search = { type: "tool_search", execution: "client" };
+const nativeBrowserOpener = { type: "namespace", name: "codex_app", tools: [{ type: "function", name: "open_in_codex",
+  parameters: { type: "object", properties: { target: { type: "object", properties: { type: { type: "string", enum: ["browser"] },
+    url: { type: "string" } }, required: ["type", "url"], additionalProperties: false }, threadId: { type: "string" } },
+  required: ["target", "threadId"], additionalProperties: false } }] };
 const metadata = (turn = turnId) => ({ thread_id: threadId, turn_id: turn });
 const headers = (turn = turnId) => ({ "x-codex-turn-metadata": JSON.stringify(metadata(turn)), "x-codex-thread-id": threadId });
 const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? "tool_search_output" : "function_call_output", call_id: call.call_id,
@@ -1444,6 +1448,168 @@ async function fullContinuationAfterMiss(h, call) {
 function browserReceipt(call, value, frameToken = readBrowserProgram(JSON.parse(call.arguments).code).frameToken) {
   return `ROUTER_WEB_BROWSER_${frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: value })}\nROUTER_WEB_BROWSER_${frameToken}_END`;
 }
+
+async function missingTaskBrowser(t, { tools = [nativeJs, currentRead, nativeBrowserOpener], nativeProjection = false } = {}) {
+  const h = harness(t, { tools }), { call } = await h.toObserve();
+  await h.completeAnswer(call, "Accepted saved-chat checkpoint before the task browser disappeared.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8")), list = h.browser.agent.browsers.list;
+  if (nativeProjection) {
+    const stage = await h.runtime.stageNativeCompaction({ payload: { input: structuredClone(h.input()) }, headers: headers(followupId) });
+    const opaque = { type: "compaction", id: "browser-opening-native-source", encrypted_content: "native-source-before-browser-opening" };
+    try { await h.runtime.finalizeNativeCompaction(stage, { output: [opaque], responseId: "browser-opening-native-response" }); }
+    finally { h.runtime.releaseNativeCompaction(stage); }
+    h.input().splice(0, h.input().length, opaque);
+  }
+  h.loseKernel(); h.browser.agent.browsers.list = async () => [];
+  h.newTurn(followupId, "Continue in this exact saved chat after reopening its task browser.");
+  const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+  return { h, accepted, continuation, restore: () => { h.browser.agent.browsers.list = list; } };
+}
+
+test("missing task browser emits one exact native opener and accepts only the full saved-chat continuation proof", async t => {
+  const { h, accepted, continuation, restore } = await missingTaskBrowser(t);
+  const opener = (await h.answerBrowser(continuation)).output[0];
+  assert.equal(opener.namespace, "codex_app"); assert.equal(opener.name, "open_in_codex");
+  assert.deepEqual(JSON.parse(opener.arguments), { target: { type: "browser", url: accepted.chatUrl }, threadId });
+  const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(pending.version, 4); assert.equal(pending.priorVersion, 1);
+  assert.deepEqual(pending.pendingBrowserOpen, { turnId: followupId, callId: opener.call_id, chatUrl: accepted.chatUrl });
+  assert.deepEqual(pending.checkpoint, accepted.checkpoint); assert.equal(pending.uncertainSend, false);
+  assert.deepEqual(pending.unresolvedCoding, []); assert.equal(h.runtime.maintenanceState().unresolvedActions, 1);
+  assert.equal(h.browser.ui.sends.length, 1);
+  h.append(opener, outputFor(opener, { content: [{ type: "text", text: JSON.stringify({ queued: true }) }] }));
+  const proofCall = (await h.request()).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(proofCall.arguments).code).fullContinuation, true);
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, pending.pendingBrowserOpen);
+  restore();
+  const next = (await h.answerBrowser(proofCall)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(next.arguments).code).operation, "send");
+  const verified = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(verified.pendingBrowserOpen, undefined); assert.equal(verified.priorVersion, undefined); assert.equal(verified.version, 1);
+  assert.deepEqual(verified.checkpoint, accepted.checkpoint, "Opening and recovery do not acknowledge new native input.");
+  const { call } = await h.toObserve(); await h.completeAnswer(call, "The same saved chat continued after exact task browser initialization.");
+  assert.equal(h.browser.ui.sends.length, 2); assert.equal(h.browser.ui.newTabs, 1);
+});
+
+test("a deferred browser opener is discovered through one completed current native search", async t => {
+  const { h, continuation, restore } = await missingTaskBrowser(t, { tools: [nativeJs, search, currentRead] });
+  const discovery = (await h.answerBrowser(continuation)).output[0];
+  assert.equal(discovery.type, "tool_search_call"); assert.match(discovery.arguments.query, /open_in_codex/u);
+  h.append(discovery, outputFor(discovery, [nativeBrowserOpener]));
+  const opener = (await h.request()).output[0];
+  assert.equal(opener.name, "open_in_codex");
+  h.append(opener, outputFor(opener, { queued: false }));
+  const proofCall = (await h.request()).output[0]; restore();
+  const send = (await h.answerBrowser(proofCall)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
+  assert.equal(h.input().filter(item => item.type === "tool_search_call" && item.arguments.query.includes("open_in_codex")).length, 1);
+});
+
+test("verified missing-browser recovery releases its opening guard before capacity rollover and preserves other guards", async t => {
+  for (const nativeProjection of [false, true]) await t.test(`native projection ${nativeProjection}`, async t => {
+    const { h, continuation, restore } = await missingTaskBrowser(t, { nativeProjection });
+    const opener = (await h.answerBrowser(continuation)).output[0];
+    h.append(opener, outputFor(opener, { queued: true }));
+    const proofCall = (await h.request()).output[0];
+    const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    restore(); h.browser.ui.full = true;
+    const rollover = (await h.answerBrowser(proofCall)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(rollover.arguments).code).operation, "rollover");
+    const verified = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(verified.pendingBrowserOpen, undefined);
+    assert.equal(verified.version, nativeProjection ? 4 : 1);
+    assert.deepEqual(verified.nativeCompactionProjection, pending.nativeCompactionProjection);
+    const send = (await h.answerBrowser(rollover)).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
+    const uncertain = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(uncertain.uncertainSend, true); assert.equal(uncertain.pendingBrowserOpen, undefined);
+    assert.equal(validWebConversation(uncertain, threadId), true);
+    assert.deepEqual(uncertain.nativeCompactionProjection, pending.nativeCompactionProjection);
+    const retained = readFileSync(h.stateFile);
+    await h.restartRuntime(); h.loseKernel();
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "An uncertain successor Send must stay guarded after restart.");
+    await assert.rejects(h.request(), { code: "web_send_uncertain" });
+    assert.deepEqual(readFileSync(h.stateFile), retained);
+    assert.equal(h.browser.ui.rollovers, 1); assert.equal(h.browser.ui.sends.length, 1);
+  });
+});
+
+test("a queued browser opener stays guarded across errors, new turns and restart without another open", async t => {
+  const { h, continuation, restore } = await missingTaskBrowser(t);
+  const opener = (await h.answerBrowser(continuation)).output[0];
+  h.append(opener, outputFor(opener, { queued: true }));
+  const proofCall = (await h.request()).output[0];
+  await assert.rejects(h.answerBrowser(proofCall), { code: "web_browser_open_pending" });
+  const guard = JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen;
+  await h.restartRuntime(); h.loseKernel();
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Verify the queued browser without opening it twice.");
+  const retry = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+  await assert.rejects(h.answerBrowser(retry), { code: "web_browser_open_pending" });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, guard);
+  assert.equal(h.input().filter(item => item.name === "open_in_codex").length, 1);
+  await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() },
+    { compact: true, headers: headers() }), { code: "web_browser_open_pending" });
+  restore(); await h.restartRuntime(); h.loseKernel();
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "The task is now visible; verify its existing browser.");
+  const verified = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
+  const send = (await h.answerBrowser(verified)).output[0];
+  assert.equal(readBrowserProgram(JSON.parse(send.arguments).code).operation, "send");
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, undefined);
+  assert.equal(h.input().filter(item => item.name === "open_in_codex").length, 1);
+});
+
+test("missing browser receipts cannot open UI without the exact full saved recovery and current opener schema", async t => {
+  for (const malformed of ["warm", "foreign-frame", "extra-field", "missing-no-actions", "no-checkpoint", "removed-opener", "bad-schema"]) await t.test(malformed, async t => {
+    let h, continuation;
+    if (malformed === "no-checkpoint") { h = harness(t); continuation = (await h.request()).output[0]; }
+    else ({ h, continuation } = await missingTaskBrowser(t));
+    const value = { operation: "continue", needsBrowserOpen: true, noActions: true };
+    if (malformed === "no-checkpoint") value.operation = readBrowserProgram(JSON.parse(continuation.arguments).code).operation;
+    if (malformed === "extra-field") value.accepted = true;
+    if (malformed === "missing-no-actions") delete value.noActions;
+    if (malformed === "warm") {
+      // The receipt is replayed against a real compact Continue in a fresh turn.
+      h = harness(t); const { call } = await h.toObserve(); await h.completeAnswer(call, "Existing checkpoint.");
+      h.newTurn(followupId, "A compact Continue cannot claim full recovery."); continuation = (await h.request()).output[0];
+    }
+    h.append(continuation, outputFor(continuation, browserReceipt(continuation, value,
+      malformed === "foreign-frame" ? "wrong_nonce_123456789" : undefined)));
+    const tools = malformed === "removed-opener" ? [nativeJs, currentRead] : malformed === "bad-schema"
+      ? [nativeJs, { ...nativeBrowserOpener, tools: [{ ...nativeBrowserOpener.tools[0], parameters: { type: "object", required: ["unsupported"] } }] }]
+      : undefined;
+    await assert.rejects(h.request(tools ? { tools } : {}), error => ["web_browser_output_shape", "web_browser_capability_gap"].includes(error.code));
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen, undefined);
+    assert.equal(h.input().some(item => item.name === "open_in_codex"), false);
+  });
+});
+
+test("native browser opener errors and changed saved-chat evidence retain the durable pending-open guard", async t => {
+  for (const fault of ["native-error", "wrong-output-kind", "missing-result", "unproven-capacity", "draft", "changed-answer"]) await t.test(fault, async t => {
+    const { h, accepted, continuation, restore } = await missingTaskBrowser(t);
+    const opener = (await h.answerBrowser(continuation)).output[0];
+    const output = outputFor(opener, { queued: true });
+    if (fault === "native-error") output.output = { isError: true, content: [{ type: "text", text: "Native opening failed." }] };
+    if (fault === "wrong-output-kind") output.type = "custom_tool_call_output";
+    if (fault === "missing-result") output.output = null;
+    h.append(opener, output);
+    if (["native-error", "wrong-output-kind", "missing-result"].includes(fault)) await assert.rejects(h.request(), { code: "web_browser_open_result" });
+    else if (fault === "unproven-capacity") {
+      const proofCall = (await h.request()).output[0];
+      h.append(proofCall, outputFor(proofCall, browserReceipt(proofCall, { operation: "continue", normal: true,
+        url: accepted.chatUrl, tabId: accepted.tabId, conversationFull: true })));
+      await assert.rejects(h.request(), { code: "web_browser_open_pending" });
+      assert.equal(h.browser.ui.rollovers, 0);
+    } else {
+      const proofCall = (await h.request()).output[0]; restore();
+      if (fault === "draft") h.browser.ui.composer = "Preserve this user draft.";
+      else h.browser.ui.texts[0] = "The accepted saved reply was changed by another owner. ".repeat(4);
+      await assert.rejects(h.executeBrowser(proofCall));
+    }
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).pendingBrowserOpen.callId, opener.call_id);
+    assert.equal(h.browser.ui.sends.length, 1);
+    if (fault === "draft") assert.equal(h.browser.ui.composer, "Preserve this user draft.");
+  });
+});
 
 test("warm Continue and Send reuse the installed mutation cache while lost kernels get one bounded full install", async t => {
   for (const lostKernel of [false, true]) await t.test(lostKernel ? "lost kernel" : "warm cache", async t => {
@@ -3038,7 +3204,13 @@ test("runtime recovery passes saved evidence and refuses changed session, reply 
     mutate(h);
     h.newTurn(followupId, "Recover only with unchanged observed evidence.");
     const continuation = await fullContinuationAfterMiss(h, (await h.request()).output[0]);
-    await assert.rejects(h.executeBrowser(continuation), /recovery|saved chat|active browser/iu);
+    if (label === "foreign session") {
+      const output = await h.executeBrowser(continuation);
+      assert.deepEqual(parseBrowserOutput(output, readBrowserProgram(JSON.parse(continuation.arguments).code).frameToken),
+        { operation: "continue", needsBrowserOpen: true, noActions: true });
+      h.append(continuation, outputFor(continuation, output));
+      await assert.rejects(h.request(), { code: "web_browser_capability_gap" });
+    } else await assert.rejects(h.executeBrowser(continuation), /recovery|saved chat|active browser/iu);
     assert.equal(h.browser.ui.stop, true);
     assert.deepEqual(h.browser.ui.stopMarks, []);
     assert.equal(h.browser.ui.newTabs, 1);
@@ -3667,6 +3839,137 @@ test("local compaction preserves a browser executor declared only in current add
     assert.equal(h.browser.ui.sends.length, 2);
     assert.equal(h.browser.ui.newTabs, 1);
   });
+});
+
+test("native model compaction preserves exact readable source across Web continuation, restart and local compaction", async t => {
+  const h = harness(t); h.input().unshift({ role: "developer", content: "Exact initial native base instructions." });
+  const { call } = await h.toObserve(); await h.completeAnswer(call, "Accepted answer before a native model detour.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  const nativeCall = { type: "function_call", call_id: "native-setup-action", name: "inspect", arguments: "{}" };
+  const configuration = { type: "configuration_update", reasoning: { effort: "low" } };
+  const historicalSearch = { type: "tool_search_call", call_id: "native-only-discovery", execution: "client", arguments: { query: "native setup" } };
+  const nativeOnly = { type: "function", name: "native_only_authority", parameters: { type: "object" } };
+  const delta = [configuration, nativeCall, outputFor(nativeCall, "Actual native setup outcome"), historicalSearch,
+    outputFor(historicalSearch, [nativeOnly]), { role: "user", content: "Input preserved through native compaction." }];
+  h.append(...delta);
+  // Native pre-turn compaction carries base instructions separately. It may
+  // contribute a source item only when its exact hash proves the saved prefix.
+  const stage = await h.runtime.stageNativeCompaction({ payload: { model: "gpt-6.1-sol", instructions: h.input()[0].content,
+    input: h.input().slice(1) }, headers: headers(followupId) });
+  assert.ok(stage);
+  const opaque = { type: "compaction", id: "native-opaque-checkpoint", encrypted_content: "opaque-native-ciphertext" };
+  try { await h.runtime.finalizeNativeCompaction(stage, { output: [opaque], responseId: "native-compact-response" }); }
+  finally { h.runtime.releaseNativeCompaction(stage); }
+  const guarded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(guarded.version, 4); assert.equal(guarded.priorVersion, 1); assert.equal(guarded.nativeCompactionProjection.length, 1);
+  assert.deepEqual(guarded.checkpoint, accepted.checkpoint); assert.equal(guarded.uncertainSend, false);
+  const userCopy = { ...h.input().find(item => item.role === "user"), id: "native-rebuilt-user-identity", type: "message" };
+  h.input().splice(0, h.input().length, userCopy, opaque);
+  h.newTurn(followupId, "Continue after the native compaction.");
+  const continued = await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [configuration,
+    { type: nativeCall.type, call_id: nativeCall.call_id, name: nativeCall.name, arguments: nativeCall.arguments },
+    outputFor(nativeCall, "Actual native setup outcome"),
+    { type: historicalSearch.type, call_id: historicalSearch.call_id, arguments: historicalSearch.arguments },
+    { type: "tool_search_output", call_id: historicalSearch.call_id, tools: [nativeOnly], status: "completed" },
+    { role: "user", content: "Input preserved through native compaction." }, { role: "user", content: "Continue after the native compaction." }]);
+  assert.equal(h.broker.list(h.token()).tools.some(tool => tool.name === "native_only_authority"), false, "A readable source witness grants no tool authority.");
+  await h.completeAnswer(continued.call, "Accepted Web answer after native compaction.");
+  await h.restartRuntime(); h.loseKernel();
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Only this fresh input follows restart.");
+  const restarted = await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only this fresh input follows restart." }]);
+  await h.completeAnswer(restarted.call, "The immutable native source survived restart.");
+  const compact = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() },
+    { compact: true, headers: headers("33002233-4455-6677-8899-aabbccddeeff") });
+  h.input().splice(0, h.input().length, ...(await compact.json()).output);
+  assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).version, 4, "An unaccepted compaction cannot release its witness guard.");
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Accept the Router-readable history replacement.");
+  const readable = await h.toObserve();
+  await h.completeAnswer(readable.call, "Accepted the readable compaction.");
+  const released = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(released.version, 1); assert.equal(released.priorVersion, undefined); assert.equal(released.nativeCompactionProjection, undefined);
+  assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.sends.length, 4);
+});
+
+test("native compaction refuses changed accepted source and unresolved browser opening without effects", async t => {
+  const h = harness(t), { call } = await h.toObserve(); await h.completeAnswer(call, "An accepted source checkpoint.");
+  const before = readFileSync(h.stateFile), changed = structuredClone(h.input()); changed[0].content += " changed";
+  await assert.rejects(h.runtime.stageNativeCompaction({ payload: { model: "gpt-6.1-sol", input: changed }, headers: headers(followupId) }), { code: "web_native_compaction_state" });
+  assert.deepEqual(readFileSync(h.stateFile), before);
+  const pending = await missingTaskBrowser(t), opener = (await pending.h.answerBrowser(pending.continuation)).output[0];
+  await assert.rejects(pending.h.runtime.stageNativeCompaction({ payload: { model: "gpt-6.1-sol", input: pending.h.input() }, headers: headers(followupId) }), { code: "web_native_compaction_state" });
+  assert.equal(JSON.parse(readFileSync(pending.h.stateFile, "utf8")).pendingBrowserOpen.callId, opener.call_id);
+});
+
+test("cold native compaction reserves one shared conversation before another stage or Web preparation can enter", async t => {
+  for (const competing of ["native-stage", "web-prepare"]) await t.test(competing, async t => {
+    const h = harness(t), { call } = await h.toObserve(); await h.completeAnswer(call, "Accepted checkpoint before a cold runtime.");
+    await h.restartRuntime();
+    const before = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    const payload = { model: "gpt-6.1-sol", input: structuredClone(h.input()) };
+    const first = h.runtime.stageNativeCompaction({ payload, headers: headers(followupId) });
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "This request must not bypass a cold compaction reservation.");
+    const competitor = competing === "native-stage"
+      ? h.runtime.stageNativeCompaction({ payload, headers: headers("33002233-4455-6677-8899-aabbccddeeff") }) : h.request();
+    const [admitted, denied] = await Promise.allSettled([first, competitor]);
+    assert.equal(admitted.status, "fulfilled"); assert.ok(admitted.value);
+    try {
+      assert.equal(denied.status, "rejected");
+      assert.match(denied.reason.message, /unresolved|already owns/iu);
+      assert.deepEqual(readFileSync(h.stateFile), before);
+      assert.equal(h.observations.nativeOperations.length, operations); assert.equal(h.browser.ui.sends.length, 1);
+    } finally { h.runtime.releaseNativeCompaction(admitted.value); }
+  });
+});
+
+test("native compaction retains exclusive custody through pending writes and stale release cannot clear its successor", async t => {
+  let holdWrite = false;
+  const reached = Promise.withResolvers(), allowed = Promise.withResolvers(); t.after(allowed.resolve);
+  const h = harness(t, { storage: { ...syntheticStorage, writeState: async (target, value) => {
+    if (holdWrite && value.nativeCompactionProjection) { reached.resolve(); await allowed.promise; }
+    await syntheticStorage.writeState(target, value);
+  } } });
+  const { call } = await h.toObserve(); await h.completeAnswer(call, "Accepted native compaction source.");
+  const accepted = JSON.parse(readFileSync(h.stateFile, "utf8")); await h.restartRuntime();
+  const payload = { model: "gpt-6.1-sol", input: structuredClone(h.input()) };
+  const stage = await h.runtime.stageNativeCompaction({ payload, headers: headers(followupId) });
+  holdWrite = true;
+  const finalizing = h.runtime.finalizeNativeCompaction(stage, { output: [{ type: "compaction", id: "cold-first", encrypted_content: "first-native-checkpoint" }], responseId: "first-native-response" });
+  await reached.promise;
+  h.runtime.releaseNativeCompaction({ ...stage }); // A different object has no release authority.
+  await assert.rejects(h.runtime.stageNativeCompaction({ payload, headers: headers(followupId) }), { code: "web_native_compaction_state" });
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "A queued write still owns this thread.");
+  await assert.rejects(h.request(), /already owns/iu);
+  allowed.resolve(); await finalizing; holdWrite = false;
+  const first = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(first.version, 4); assert.equal(first.nativeCompactionProjection.length, 1);
+  assert.deepEqual(first.checkpoint, accepted.checkpoint); assert.equal(first.uncertainSend, false); assert.deepEqual(first.unresolvedCoding, []);
+  h.runtime.releaseNativeCompaction(stage);
+  const successor = await h.runtime.stageNativeCompaction({ payload, headers: headers("44002233-4455-6677-8899-aabbccddeeff") });
+  assert.equal(successor.conversation, stage.conversation);
+  h.runtime.releaseNativeCompaction(stage); // Late cleanup cannot release the successor.
+  h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Old cleanup must not unlock the successor.");
+  await assert.rejects(h.request(), /already owns/iu);
+  try { await h.runtime.finalizeNativeCompaction(successor, { output: [{ type: "compaction", id: "cold-second", encrypted_content: "second-native-checkpoint" }], responseId: "second-native-response" }); }
+  finally { h.runtime.releaseNativeCompaction(successor); }
+  const second = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  assert.equal(second.nativeCompactionProjection.length, 2);
+  assert.deepEqual(second.nativeCompactionProjection[0], first.nativeCompactionProjection[0]);
+  assert.deepEqual(second.checkpoint, accepted.checkpoint); assert.equal(second.uncertainSend, false);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("a failed cold native source qualification releases only its reservation and permits a new owner", async t => {
+  const h = harness(t), { call } = await h.toObserve(); await h.completeAnswer(call, "Accepted source before qualification failure.");
+  await h.restartRuntime(); const before = readFileSync(h.stateFile);
+  const input = structuredClone(h.input()), changed = structuredClone(input); changed[0].content += " changed";
+  const failing = h.runtime.stageNativeCompaction({ payload: { input: changed }, headers: headers(followupId) });
+  await assert.rejects(h.runtime.stageNativeCompaction({ payload: { input }, headers: headers("33002233-4455-6677-8899-aabbccddeeff") }), { code: "web_native_compaction_state" });
+  await assert.rejects(failing, { code: "web_native_compaction_state" });
+  const next = await h.runtime.stageNativeCompaction({ payload: { input }, headers: headers("44002233-4455-6677-8899-aabbccddeeff") });
+  h.runtime.releaseNativeCompaction(next);
+  assert.deepEqual(readFileSync(h.stateFile), before);
 });
 
 test("retained coding continuations use current additional schemas and choices, then remove absent declarations", async t => {

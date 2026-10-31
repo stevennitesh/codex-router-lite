@@ -135,6 +135,21 @@ without repeating a summary of history already delivered to ChatGPT. A first
 attachment with readable compacted history still uses that checkpoint to seed
 its new chat.
 
+Native-to-Web model changes can compact with the previous native model before
+the first Web request. For an attributed native compaction belonging to an owned
+saved Web conversation, Router retains its readable source in a protected witness
+and binds it to the exact completed opaque result before returning that result.
+Native request routing and response bytes are preserved. A later Web request can
+expand only that same-thread, exact-digest witness; counted source copies, changed
+instructions and new suffix items retain their meaning. Current declarations still
+come from the current request. The witness proves source provenance, not delivery
+to ChatGPT. Unrecorded opaque checkpoints continue to fail explicitly.
+
+`src/web-native-compaction.mjs` owns witness storage and validation. Guarded ledger
+version 4 retains the prior history semantics and prevents an older runtime from
+resuming while a native projection or pending browser-open action remains. Recovery
+must preserve its protected witness sidecars with the ledger.
+
 ### Ownership and recovery
 
 After a failed first initialization, a restored record may bootstrap again only
@@ -152,6 +167,12 @@ recorded chat in that Codex conversation's browser. Every path requires the
 confirmed generation checkpoint and matching saved-chat proof, including the
 previous reply's identity and text prefix. If Stop preceded a readable answer,
 the confirmed generation's unique latest turn can establish ownership instead.
+If the task's browser itself is absent, a no-action receipt permits one declared
+native app-open call for that exact task and saved URL. Its result supplies no
+ownership or delivery proof: full continuation must still verify the checkpoint.
+A durable pending-open guard prevents duplicate queued opens across turns and
+restarts. Ambiguous browsers, unavailable declarations and failed proof remain
+explicit failures. No inference-model switch is needed to initialize the browser.
 Successful recovery retains `recovered:true` and reports `bindingRestored:true`.
 Only the original surviving tab without recovery navigation reports both
 `tabReopened:false` and `tabNavigated:false`. A new tab or changed tab identity
@@ -206,6 +227,26 @@ was short. Terminal read-only recheck failures on the original surviving tab
 release only that attempt's exact active-owner entry, allowing a later attempt
 to prove the checkpoint afresh. Reopened, navigated, interrupted and replaced
 custody retain their existing failure guards.
+
+### Native-compaction restoration
+
+An existing opaque checkpoint without a Router witness can be restored only from
+verified canonical readable history. `maintenance/web-recovery.mjs` owns
+`inspect-native-compaction`, `prepare-native-compaction` and
+`apply-native-compaction`. Inspection binds the canonical transcript, the complete
+accepted checkpoint, the exact compaction record and a read-only idle saved-chat
+proof. Preparation preserves all later readable work and labels its canonical
+provenance separately from a captured native request. It does not abandon input,
+rewrite native history, claim delivery or clear uncertain actions.
+
+Application requires stopped Router service and absent native hosts, protected
+byte-verified originals, and an unchanged prepared plan. The independent Web
+maintenance entrypoint accepts `-NativeCompactionRestorePlan` with its exact
+confirmation SHA. It deploys the candidate first, applies the plan during a guarded
+offline service transaction, then accepts health before reopening Codex. Only the
+named ledger and exact witness/archive files may change; unrelated ledgers remain
+byte-identical. A failure restores original bytes only if no later state advanced.
+The software and ledger rollback artifacts remain retained until live checks pass.
 
 ### Controlled same-chat abandonment
 
