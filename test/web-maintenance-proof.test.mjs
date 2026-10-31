@@ -78,6 +78,38 @@ test("process census retains descendants and fails closed for unidentifiable off
   assertWebMaintenanceAbsent(adapter, { census: () => census([{ pid: 0, parentPid: 0, probeState: "alive", name: "System Idle Process", executablePath: null, identity: null, commandLine: null }]) });
 });
 
+test("a reused parent PID cannot adopt an older unrelated process, while unknown lifetime ancestry stays guarded", () => {
+  const host = { ...row(56788, adapter.currentRuntime.officialCli.path), creationTicks: "639290417680000000" };
+  const conhost = { ...row(19084, path.join(base, "Windows", "conhost.exe")), parentPid: host.pid, creationTicks: "639290417680000001" };
+  const stale = { pid: 69320, parentPid: conhost.pid, name: "DiscordSystemHelper.exe", probeState: "unknown", identity: null,
+    executablePath: null, commandLine: null, creationTicks: "639289040980000000" };
+  const grandchild = { ...row(69321, path.join(base, "unrelated", "child.exe")), parentPid: stale.pid, creationTicks: "639289040980000001" };
+  assert.deepEqual(relevantWebMaintenanceProcesses(census([grandchild, stale, conhost, host]), adapter), [conhost, host]);
+  assertWebMaintenanceAbsent(adapter, { census: () => census([grandchild, stale]) });
+  for (const clocks of [
+    { child: undefined, parent: conhost.creationTicks }, { child: stale.creationTicks, parent: undefined },
+    { child: null, parent: null }, { child: conhost.creationTicks, parent: conhost.creationTicks },
+    { child: "639290417680000002", parent: conhost.creationTicks },
+  ]) assert.throws(() => relevantWebMaintenanceProcesses(census([
+    { ...stale, creationTicks: clocks.child }, { ...conhost, creationTicks: clocks.parent }, host,
+  ]), adapter), error => error.diagnostic?.reason === "matching-identity-unknown" && error.diagnostic.role === "descendant");
+  const independentlyRelevant = { ...stale, name: "node_repl.exe" };
+  assert.throws(() => relevantWebMaintenanceProcesses(census([independentlyRelevant, conhost, host]), adapter), /matching-identity-unknown/u);
+  for (const invalid of ["0", "-1", "not-ticks", 639289040980000000, "3155378976000000000"]) {
+    assert.throws(() => relevantWebMaintenanceProcesses(census([{ ...stale, creationTicks: invalid }, conhost, host]), adapter), /fresh complete census/u);
+  }
+});
+
+test("blocker evidence does not report a proven stale parent generation as current ancestry", () => {
+  const parent = { ...row(1234, adapter.currentRuntime.officialCli.path), creationTicks: "639290417680000001" };
+  const child = { ...row(1235, adapter.candidate.officialNodeRepl.path), parentPid: parent.pid, creationTicks: "639289040980000000" };
+  assert.throws(() => assertWebMaintenanceAbsent(adapter, { census: () => census([child, parent]) }), error => {
+    assert.equal(error.diagnostic.count, 2, "Independent runtime identity still blocks even when its raw parent link is stale.");
+    assert.deepEqual(error.diagnostic.processes[0].ancestors, []);
+    return true;
+  });
+});
+
 test("a failed exit proof retains bounded blocker identities from its rejecting census without private paths or commands", () => {
   const privateText = "PRIVATE_BLOCKER_CANARY";
   const host = row(1234, adapter.candidate.officialCli.path, `codex ${privateText}`, "123456789");
@@ -191,6 +223,60 @@ function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(result.stderr, /PRIVATE_CENSUS_CANARY/u);
     assert.equal(JSON.parse(result.stdout).processes[0].probeState, scenario === "denied" || scenario.startsWith("argument-") ? "unknown" : "absent");
+  }
+});
+
+test("native census retains independent CIM lifetime clocks for denied processes and rejects only proven stale parent links", { skip: process.platform !== "win32" }, t => {
+  mkdirSync(base, { recursive: true }); const directory = mkdtempSync(path.join(base, "census-lifetime-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const fixtureAdapter = { currentRuntime: { node: { path: "C:\\fixture\\node.exe" }, officialCli: { path: "C:\\fixture\\codex.exe" },
+    officialNodeRepl: { path: "C:\\fixture\\node_repl.exe" }, runtimeModule: "C:\\fixture\\browser\\browser.mjs" },
+    candidate: { node: { path: "C:\\fixture\\node.exe" }, officialCli: { path: "C:\\fixture\\codex.exe" },
+      officialNodeRepl: { path: "C:\\fixture\\node_repl.exe" }, runtimeModule: "C:\\fixture\\browser\\browser.mjs" }, managedEntryPath: "C:\\adapter\\generation\\entry.exe" };
+  for (const scenario of ["stale", "missing-child", "missing-parent", "equal", "newer"]) {
+    const current = "639290417680000000", prior = "639289040980000000";
+    const fixtures = [
+      { ...row(56788, "C:\\fixture\\codex.exe"), creationTicks: current },
+      { ...row(19084, "C:\\Windows\\conhost.exe"), parentPid: 56788, creationTicks: scenario === "missing-parent" ? null : current },
+      { pid: 69320, parentPid: 19084, name: "DiscordSystemHelper.exe", executablePath: null, commandLine: null,
+        creationTicks: scenario === "missing-child" ? null : scenario === "equal" ? current : scenario === "newer" ? "639290417680000010" : prior },
+      { ...row(69321, "C:\\unrelated\\identified.exe"), parentPid: 19084, creationTicks: prior },
+    ];
+    const script = path.join(directory, `${scenario}.ps1`);
+    writeFileSync(script, maintenanceFixture(`
+$script:fixtureRows = '${JSON.stringify(fixtures).replaceAll("'", "''")}' | ConvertFrom-Json
+$script:nativeCalls = [Collections.Generic.List[int]]::new()
+function Get-CimInstance { param($ClassName, $Filter)
+  if ($ClassName -ne 'Win32_Process') { throw 'Unexpected service query.' }
+  foreach ($row in $script:fixtureRows) {
+    $created = if ($row.creationTicks) { [DateTime]::new([long]$row.creationTicks, [DateTimeKind]::Utc) } else { $null }
+    [pscustomobject]@{ ProcessId = $row.pid; ParentProcessId = $row.parentPid; SessionId = 1; CreationDate = $created;
+      Name = $row.name; ExecutablePath = $row.executablePath; CommandLine = $row.commandLine }
+  }
+}
+function Get-WebMaintenanceProcess { [CmdletBinding()]param($Id)
+  $script:nativeCalls.Add($Id)
+  if ($Id -eq 69320) { throw 'PRIVATE_LIFETIME_CANARY access denied' }
+  $row = $script:fixtureRows | Where-Object { $_.pid -eq $Id }
+  $process = [pscustomobject]@{ HasExited = $false; Path = $row.executablePath; StartTime = [DateTime]::new([long]100, [DateTimeKind]::Utc) }
+  $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {}
+  return $process
+}
+`, '[Console]::Out.Write("`n" + (ConvertTo-Json -InputObject @($script:nativeCalls) -Compress))'));
+    const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
+      input: JSON.stringify(censusRequest(fixtureAdapter)), encoding: "utf8", windowsHide: true, timeout: 15_000,
+    });
+    assert.equal(result.status, 0, result.stderr); assert.doesNotMatch(result.stderr, /PRIVATE_LIFETIME_CANARY/u);
+    const [snapshot, calls] = result.stdout.trim().split(/\r?\n/u).map(value => JSON.parse(value));
+    const denied = snapshot.processes.find(value => value.pid === 69320);
+    assert.equal(denied.identity, null); assert.equal(denied.probeState, "unknown");
+    assert.equal(denied.creationTicks, fixtures[2].creationTicks);
+    assert.equal(snapshot.processes.find(value => value.pid === 19084).creationTicks, fixtures[1].creationTicks);
+    // Identified unrelated rows require no native access across a positively
+    // stale parent link; missing parent clocks still require that inspection.
+    assert.equal(calls.includes(69321), scenario === "missing-parent");
+    if (scenario === "stale") assert.deepEqual(relevantWebMaintenanceProcesses(snapshot, fixtureAdapter).map(value => value.pid), [56788, 19084]);
+    else assert.throws(() => relevantWebMaintenanceProcesses(snapshot, fixtureAdapter), /matching-identity-unknown/u);
   }
 });
 

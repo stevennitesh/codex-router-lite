@@ -47,6 +47,18 @@ function Get-WebMaintenanceProcessRole([string]$Name) {
   return 'descendant'
 }
 
+function Get-WebMaintenanceCreationTicks([object]$Candidate) {
+  # CIM CreationDate is available independently of protected native image and
+  # command properties. Retain its UTC .NET ticks exactly, never a JS number.
+  try {
+    if ($Candidate.CreationDate -is [DateTime]) {
+      $ticks = $Candidate.CreationDate.ToUniversalTime().Ticks
+      if ($ticks -gt 0) { return $ticks.ToString() }
+    }
+  } catch {}
+  return $null
+}
+
 try {
   $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
   if ($request.action -eq 'census') {
@@ -65,6 +77,8 @@ try {
     # enumeration and property errors must never look like an empty census.
     $rows = @()
     $candidates = @(Get-CimInstance Win32_Process -ErrorAction Stop)
+    $creationTicks = @{}
+    foreach ($candidate in $candidates) { $creationTicks[[int]$candidate.ProcessId] = Get-WebMaintenanceCreationTicks $candidate }
     # Keep every CIM row and every ancestry edge. Native generation inspection
     # is unnecessary only when the snapshot positively identifies an unrelated
     # executable and command. Missing metadata, generic runtimes and descendants
@@ -93,7 +107,12 @@ try {
       $advanced = $false
       foreach ($candidate in $candidates) {
         # Zero is the no-parent sentinel, not ancestry beneath the idle row.
-        if ($candidate.ParentProcessId -ne 0 -and $inspect.Contains([int]$candidate.ParentProcessId) -and $inspect.Add([int]$candidate.ProcessId)) { $advanced = $true }
+        # A child older than the enumerated parent proves that parent PID was
+        # reused. Unknown/equal clocks retain the conservative ancestry edge.
+        $childTicks = $creationTicks[[int]$candidate.ProcessId]
+        $parentTicks = $creationTicks[[int]$candidate.ParentProcessId]
+        $staleParent = $childTicks -and $parentTicks -and [long]$childTicks -lt [long]$parentTicks
+        if ($candidate.ParentProcessId -ne 0 -and -not $staleParent -and $inspect.Contains([int]$candidate.ParentProcessId) -and $inspect.Add([int]$candidate.ProcessId)) { $advanced = $true }
       }
     } while ($advanced)
     foreach ($candidate in $candidates) {
@@ -157,6 +176,7 @@ try {
         }
       }
       $rows += @{ pid = [int]$candidate.ProcessId; parentPid = [int]$candidate.ParentProcessId; name = [string]$candidate.Name;
+        creationTicks = $creationTicks[[int]$candidate.ProcessId];
         sessionId = [int]$candidate.SessionId; probeState = $probeState; service = $service;
         executablePath = $executablePath; identity = $identity; commandLine = $candidate.CommandLine }
     }

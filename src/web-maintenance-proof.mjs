@@ -28,10 +28,20 @@ function helperFailure(phase, stderr, fallback) {
   return failure(phase, fallback);
 }
 
+const creationTicks = value => typeof value === "string" && /^[1-9]\d{0,18}$/u.test(value)
+  && BigInt(value) <= 3155378975999999999n;
+function hasWebMaintenanceParent(child, parent) {
+  // CIM creation clocks describe the enumerated generations even when native
+  // image/identity inspection is denied. Missing clocks cannot disprove ancestry.
+  return parent && child.parentPid !== 0 && child.parentPid === parent.pid
+    && !(creationTicks(child.creationTicks) && creationTicks(parent.creationTicks)
+      && BigInt(child.creationTicks) < BigInt(parent.creationTicks));
+}
+
 export function registeredSystemSandboxBroker(row, rows) {
   const service = row.service, parent = rows.find(item => item.pid === row.parentPid);
   if (row.name.toLowerCase() !== "codex-windows-sandbox-service.exe" || row.sessionId !== 0
-      || parent?.name.toLowerCase() !== "services.exe" || parent.sessionId !== 0 || parent.probeState === "absent"
+      || !hasWebMaintenanceParent(row, parent) || parent.name.toLowerCase() !== "services.exe" || parent.sessionId !== 0 || parent.probeState === "absent"
       || service?.name !== "CodexSandboxService.OpenAI.Codex" || service.processId !== row.pid || service.state !== "Running"
       || !["localsystem", "nt authority\\system"].includes(service.startName?.toLowerCase())
       || !["localsystem", "nt authority\\system"].includes(service.registryAccount?.toLowerCase())
@@ -86,6 +96,7 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
         || !["alive", "absent", "unknown"].includes(row.probeState)
         || row.executablePath != null && !path.isAbsolute(row.executablePath)
         || row.identity != null && !isProcessStartIdentity(row.identity)
+        || row.creationTicks != null && !creationTicks(row.creationTicks)
         || row.commandLine != null && typeof row.commandLine !== "string") throw failure();
     seen.add(row.pid);
     if (row.pid === 0 && (row.name !== "System Idle Process" || row.identity != null || row.executablePath != null)) throw failure();
@@ -103,10 +114,12 @@ export function relevantWebMaintenanceProcesses(census, adapter, { ownPid = proc
     // cohort; it cannot be dismissed as a Router or unrelated application.
     if (named || underCohort || managedCommand || /^(?:node|entry)\.exe$/iu.test(row.name) && (!row.identity || !row.commandLine?.trim())) relevant.add(row.pid);
   }
+  const byPid = new Map(rows.map(row => [row.pid, row]));
   let advanced;
   do {
     advanced = false;
-    for (const row of rows) if (row.pid !== ownPid && relevant.has(row.parentPid) && !relevant.has(row.pid)) { relevant.add(row.pid); advanced = true; }
+    for (const row of rows) if (row.pid !== ownPid && relevant.has(row.parentPid) && !relevant.has(row.pid)
+        && hasWebMaintenanceParent(row, byPid.get(row.parentPid))) { relevant.add(row.pid); advanced = true; }
   } while (advanced);
   return rows.filter(row => {
     if (!relevant.has(row.pid)) return false;
@@ -141,9 +154,9 @@ function blockerEvidence(snapshot, live, adapter, ownPid) {
     if (roots.some(root => command.includes(root))) matches.push("runtime-command");
     if (!matches.length) matches.push("descendant");
     const ancestors = [], seen = new Set([row.pid]);
-    let parent = rows.get(row.parentPid);
-    while (parent && ancestors.length < 4 && !seen.has(parent.pid)) {
-      ancestors.push(describe(parent)); seen.add(parent.pid); parent = rows.get(parent.parentPid);
+    let child = row, parent = rows.get(child.parentPid);
+    while (hasWebMaintenanceParent(child, parent) && ancestors.length < 4 && !seen.has(parent.pid)) {
+      ancestors.push(describe(parent)); seen.add(parent.pid); child = parent; parent = rows.get(child.parentPid);
     }
     return { ...describe(row), matches, ancestors };
   });

@@ -1116,7 +1116,11 @@ registered SYSTEM sandbox broker is verified through Windows service/registry
 ownership, its package image and service-manager ancestry; it is not an app/tool
 client that must exit. Its actual tool descendants remain relevant and no service
 is stopped for maintenance.
-The census retains every process row and ancestry. Native generation inspection
+The census retains every process row and ancestry. It rejects a parent link when
+independently observed creation times prove that the
+child predates the current parent PID. Missing clocks preserve conservative
+ancestry; this proof never substitutes for native process identity.
+Native generation inspection
 is limited to conservative runtime/name/path candidates, incomplete rows and
 their descendants; positively unrelated rows still remain in the census. This
 reduces repeated Windows process opens without treating incomplete identities as
