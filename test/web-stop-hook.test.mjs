@@ -241,6 +241,17 @@ test("Stop code generator bounds its budget and requires absolute configuration 
     assert.throws(() => createWebStopCode({ stateDir, runtimeModule, ...changes }, identity), /validated absolute path/u);
 });
 
+test("Stop retains current-turn authority after v2 abandonment while permanently revoked turns remain blocked", async () => {
+  const recovery = () => ({ stage: "bounded", confirmationSha256: "a".repeat(64), proof: { failedTurnId: id(10) }, revokedTurnIds: [id(10)] });
+  const f = fixture(); f.first.ledger.version = 2; f.first.ledger.recovery = recovery();
+  stopped(await f.run());
+  for (const change of [
+    value => { value.recovery.revokedTurnIds.push(id(11)); },
+    value => { value.recovery.stage = "armed"; },
+    value => { delete value.recovery; },
+  ]) await blocked(f => { f.first.ledger.version = 2; f.first.ledger.recovery = recovery(); change(f.first.ledger); }, "ledger_invalid");
+});
+
 test("the adapter's generated Stop program preserves escaped paths as data", async () => {
   const suffix = '\'"; globalThis.injected = true; //${session_id}';
   const f = fixture({ stateDir: stateDir + suffix, runtimeModule: runtimeModule + suffix });

@@ -8,6 +8,9 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertServiceProcessStopped, assertServiceReplacementOwnership } from "../src/service-process.mjs";
 import { installedSourceRoot } from "../src/install-manifest.mjs";
+import { privateFileIsProtected, writePrivateFile } from "../src/file-security.mjs";
+import { cleanupWebStopAdapterBuilds } from "../src/web-stop-adapter-cleanup.mjs";
+import { createHash } from "node:crypto";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("operational helpers resolve the recorded checkout and refuse missing or relative installation roots", () => {
@@ -16,14 +19,16 @@ test("operational helpers resolve the recorded checkout and refuse missing or re
   assert.throws(() => installedSourceRoot({ current: { sourceRoot: "relative" } }), /explicit installation directory/u);
 });
 
-test("ordinary snapshots capture current adapter identity or explicit absence and reject unknown ownership", { skip: process.platform !== "win32" }, () => {
-  for (const mode of ["installed", "absent", "unknown", "original-before-refresh"]) {
+test("ordinary snapshots privately publish exact adapter metadata for cleanup and preserve failures", { skip: process.platform !== "win32" }, () => {
+  for (const mode of ["installed", "absent", "unknown", "original-before-refresh", "publication-failure"]) {
     const directory = mkdtempSync(path.join(os.tmpdir(), "switchyard-adapter-binding-"));
     try {
       const managedDirectory = path.join(directory, "adapter-\u00e9-\u{1f680}", "e".repeat(64));
       const original = { generation: "e".repeat(64), managedDirectory, managedManifestSha256: "f".repeat(64) };
       const current = { ...original, generation: "a".repeat(64), managedDirectory: path.join(directory, "adapter", "a".repeat(64)) };
       const maintenance = path.join(directory, "maintenance"); mkdirSync(maintenance);
+      const source = path.join(directory, "src"); mkdirSync(source);
+      writeFileSync(path.join(source, "file-security.mjs"), `export * from ${JSON.stringify(pathToFileURL(path.join(root, "src/file-security.mjs")).href)};`);
       // Replace only the adapter ownership boundary. The production PowerShell
       // capture, argument handoff and snapshot metadata assignments run intact.
       writeFileSync(path.join(maintenance, "web-runtime-maintenance.mjs"), `
@@ -35,18 +40,54 @@ process.stdout.write(JSON.stringify(value).replace(/[\\u007f-\\uffff]/g, c => "\
 `);
       const result = spawnSync("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         path.join(root, "test/fixtures/switchyard-recovery.ps1"), "-CodeRoot", root, "-FixtureRoot", directory, "-Mode", "adapter-binding",
-        ...(mode === "original-before-refresh" ? ["-RollbackAdapterJson", JSON.stringify(original)] : [])], { encoding: "utf8", timeout: 15_000 });
+        ...(mode === "original-before-refresh" ? ["-RollbackAdapterJson", JSON.stringify(original)] : []),
+        ...(mode === "publication-failure" ? ["-Case", mode] : [])], { encoding: "utf8", timeout: 25_000 });
       assert.equal(result.status, 0, result.stderr);
       const outcome = JSON.parse(readFileSync(path.join(directory, "outcome.json"), "utf8"));
       if (mode === "unknown") {
         assert.equal(outcome.succeeded, false);
         assert.equal(outcome.snapshotWritten, false);
         assert.match(outcome.error, /ownership is unknown/u);
+      } else if (mode === "publication-failure") {
+        assert.equal(outcome.succeeded, false);
+        assert.equal(outcome.snapshotWritten, true);
+        assert.equal(readFileSync(outcome.metadataPath, "utf8"), "retained recovery metadata");
+        assert.ok(outcome.error.includes(outcome.metadataPath), outcome.error);
+        assert.match(outcome.error, /Failed to publish private rollback metadata/u);
       } else {
         assert.equal(outcome.succeeded, true, outcome.error);
-        const metadata = JSON.parse(readFileSync(path.join(directory, "snapshot.json"), "utf8"));
+        const metadata = JSON.parse(readFileSync(outcome.metadataPath, "utf8"));
+        assert.equal(privateFileIsProtected(outcome.metadataPath), true);
+        assert.deepEqual(metadata, outcome.metadata);
+        assert.equal(metadata.version, 1);
+        assert.equal(metadata.previousRouterCommit, "b".repeat(40));
+        assert.equal(metadata.rollbackRouterRoot, path.join(directory, "previous"));
+        assert.deepEqual(metadata.files, ["routes.toml"]);
         assert.ok(Object.hasOwn(metadata, "webStopAdapter"));
         assert.deepEqual(metadata.webStopAdapter, mode === "absent" ? null : mode === "original-before-refresh" ? original : current);
+        if (mode === "absent") {
+          // Consume the production snapshot through cleanup's strict private
+          // reader, with real protected ownership, build and retention files.
+          const adapterRoot = path.join(directory, "state/web-stop-adapter"), generation = "a".repeat(64);
+          const managedDirectory = path.join(adapterRoot, generation), receiptPath = path.join(adapterRoot, "ownership.json");
+          mkdirSync(managedDirectory, { recursive: true });
+          const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+          const manifest = { owner: "codex-router-web-stop-adapter-v1", version: 1, generation, files: { "entry.exe": hash("fixture entry") } };
+          const manifestText = JSON.stringify(manifest);
+          writePrivateFile(path.join(managedDirectory, "entry.exe"), "fixture entry");
+          writePrivateFile(path.join(managedDirectory, "manifest.json"), manifestText);
+          writePrivateFile(receiptPath, JSON.stringify({ owner: manifest.owner, version: 1, state: "installed", generation,
+            managedDirectory, managedManifestSha256: hash(manifestText) }));
+          const reads = [];
+          const cleanup = cleanupWebStopAdapterBuilds({ root: adapterRoot, receiptPath, stateDir: path.join(directory, "state"),
+            codexHome: path.join(directory, "home"), write: writePrivateFile,
+            isPrivate: file => { reads.push(file); return privateFileIsProtected(file); },
+            verifyManaged: () => manifest, readProcessCensus: () => ({ complete: true, processes: [] }),
+            environment: { readPair: () => ({ CODEX_CLI_PATH: null, CODEX_NODE_REPL_PATH: path.join(managedDirectory, "entry.exe") }) } });
+          assert.equal(cleanup.status, "completed", JSON.stringify(cleanup));
+          assert.ok(reads.includes(outcome.metadataPath));
+          assert.deepEqual(cleanup.removed, []);
+        }
       }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   }

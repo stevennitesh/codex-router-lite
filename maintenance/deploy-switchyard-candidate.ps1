@@ -451,6 +451,25 @@ function Protect-PrivateFile([string]$Path) {
   if ($LASTEXITCODE -ne 0) { throw "Failed to protect private file $Path." }
 }
 
+function Write-PrivateRollbackMetadata([string]$Path, [object]$Metadata) {
+  $module = ([Uri](Join-Path $repoRoot "src\file-security.mjs")).AbsoluteUri
+  $json = $Metadata | ConvertTo-Json -Depth 6
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+  # The shared writer protects an empty staging file before writing any bytes,
+  # then atomically publishes it. Never expose metadata under inherited ACLs.
+  $program = @'
+const { writePrivateFile, privateFileIsProtected } = await import(process.argv[1]);
+const { readFileSync } = await import('node:fs');
+const contents = Buffer.from(process.argv[3], 'base64');
+writePrivateFile(process.argv[2], contents);
+if (!privateFileIsProtected(process.argv[2]) || !readFileSync(process.argv[2]).equals(contents)) {
+  throw new Error('Private rollback metadata publication verification failed.');
+}
+'@
+  & node --input-type=module -e $program $module $Path $encoded
+  if ($LASTEXITCODE -ne 0) { throw "Failed to publish private rollback metadata at $Path." }
+}
+
 function Copy-RuntimeFile([string]$FromRoot, [string]$ToRoot, [string]$Name) {
   Copy-Item -LiteralPath (Join-Path $FromRoot $Name) -Destination (Join-Path $ToRoot $Name) -Force
 }
@@ -624,7 +643,7 @@ try {
       files = @($existing)
       createdAt = (Get-Date).ToUniversalTime().ToString("o")
     }
-    Write-DeploymentJson (Join-Path $rollbackRoot "rollback.json") $rollbackMetadata
+    Write-PrivateRollbackMetadata (Join-Path $rollbackRoot "rollback.json") $rollbackMetadata
     $existing = Get-ValidatedSwitchyardSnapshotMembership $rollbackRoot $rollbackMetadata
   }
 

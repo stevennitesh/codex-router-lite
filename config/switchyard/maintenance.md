@@ -168,6 +168,12 @@ Unknown adapter ownership stops preflight. Archive and recovery preserve this
 field unchanged; older snapshots without it remain readable. Automatic adapter
 build cleanup retains every adapter selected by a physically retained rollback
 set, resolving older snapshots through accepted Web receipts when possible.
+The deployment publishes new `rollback.json` files atomically through the shared
+private-file writer and verifies their protected permissions and exact bytes.
+Cleanup defers when retained metadata is unprotected. Existing metadata may be
+republished with identical bytes only after its source, membership, hashes and
+accepted deployment ownership have been independently reconciled; the repair
+does not discard a rollback or weaken the cleanup reader.
 
 Its preflight report names the candidate, running, and
 rollback Router commits plus the v2 agents allowed by local subagent settings.

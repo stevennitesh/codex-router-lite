@@ -115,6 +115,27 @@ test('only actual generated observation code gains cancellation grace', () => {
   assert.equal(qualifyBrowserCall(call, 'E:\\other-runtime.mjs'), null);
 });
 
+test('a current native recovery call crosses the real adapter without granting failed-turn Stop authority', async t => {
+  const source = ordinary(TURN, 'retain');
+  source.arguments.code = browserScript({ operation: 'recover', bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD,
+    turnId: TURN, frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule, expectedOwnerTurnIds: [TURN2],
+    snapshotSha256: 'a'.repeat(64), recoveryProof: { tabId: 'retained-tab', chatUrl: 'https://chatgpt.com/c/saved-chat',
+      failedTurnId: TURN2, generationTurnKey: GENERATION, sendBaselineReplyIds: [], generationReplyIds: [SESSION],
+      observation: { replyId: SESSION, completed: true, assistantPrefix: { length: 5, sha256: createHash('sha256').update('prior').digest('hex') } } } });
+  const qualified = qualifyBrowserCall(source, STOP_CONFIG.runtimeModule);
+  assert.equal(qualified.config.operation, 'recover'); assert.equal(qualified.observation, false);
+  assert.equal(qualified.identity.turnId, TURN); assert.notEqual(qualified.identity.turnId, qualified.config.recoveryProof.failedTurnId);
+  const f = await protocolFixture(t, () => ordinaryResult);
+  await f.client.callTool(source);
+  assert.equal(f.bridge.cache, null);
+  assert.equal((await f.client.callTool(hook())).isError, true);
+  assert.equal((await f.client.callTool(hook(TURN2))).isError, true);
+  assert.equal(f.calls.length, 1, 'Recovery is forwarded once; no Stop or coding action is injected.');
+  assert.deepEqual(f.calls[0]._meta, source._meta);
+  const changed = clone(source); changed.arguments.code += '\n// arbitrary code';
+  assert.equal(qualifyBrowserCall(changed, STOP_CONFIG.runtimeModule), null);
+});
+
 test('resident observe and retain qualify only with the exact binding, helper version and canonical invocation', () => {
   for (const operation of ['observe', 'retain']) {
     const call = ordinary(TURN, operation), code = call.arguments.code;

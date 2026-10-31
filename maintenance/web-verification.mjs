@@ -10,6 +10,7 @@ import { writePrivateFile, writePrivateJson } from '../src/file-security.mjs';
 import { CODEX_HOME, INSTALL_MANIFEST_PATH, SOURCE_ROOT, STATE_DIR } from '../src/paths.mjs';
 import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram, isBrowserContinuationCacheMiss } from '../src/web-browser.mjs';
 import { WEB_MODEL_REGISTRY, webModelSelection } from '../src/web-models.mjs';
+import { validWebConversationRisk } from '../src/web-runtime.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -89,7 +90,8 @@ function findRollout(threadId, codexHome, explicit, now) {
 }
 
 function validLedger(ledger, threadId, { requireIdle = false } = {}) {
-  requireValue(ledger?.version === 1 && ledger.threadId === threadId && isSavedChatUrl(ledger.chatUrl)
+  requireValue((ledger?.version === 1 || ledger?.version === 2 && validWebConversationRisk(ledger, threadId))
+    && ledger.threadId === threadId && isSavedChatUrl(ledger.chatUrl)
     && typeof ledger.bindingId === 'string' && ledger.bindingId.length > 0
     && ['string', 'number'].includes(typeof ledger.tabId) && String(ledger.tabId).length > 0
     && Array.isArray(ledger.unresolvedCoding) && object(ledger.lastTurn)
@@ -110,7 +112,7 @@ export function prepareWebVerification(options, dependencies = {}) {
   const ledgerPath = path.join(stateDir, 'web-in-app', 'conversations', `${threadId}.json`);
   const ledgerBytes = bytes(ledgerPath), ledger = json(ledgerBytes.toString('utf8'));
   validLedger(ledger, threadId, { requireIdle: true });
-  requireValue(ledger.lastTurn.completed === true && ledger.generationCompleted === true, 'baseline_not_completed');
+  requireValue(ledger.lastTurn.completed === true && ledger.lastTurn.sendState === 'sent' && ledger.generationCompleted === true, 'baseline_not_completed');
   const rolloutPath = findRollout(threadId, codexHome, rollout, dependencies.now ?? Date.now());
   const adapterPath = path.join(stateDir, 'web-stop-adapter', 'ownership.json');
   const ownership = json(bytes(adapterPath).toString('utf8'));
@@ -127,7 +129,8 @@ export function prepareWebVerification(options, dependencies = {}) {
   const protectedLedger = protectLedger ? { path: path.resolve(protectLedger), sha256: hash(bytes(path.resolve(protectLedger))) } : null;
   if (protectedLedger) {
     const protectedValue = json(bytes(protectedLedger.path).toString('utf8'));
-    requireValue(protectedValue.version === 1 && UUID.test(protectedValue.threadId ?? '') && protectedValue.threadId !== threadId, 'protected_ledger_invalid');
+    requireValue((protectedValue.version === 1 || protectedValue.version === 2 && validWebConversationRisk(protectedValue, protectedValue.threadId))
+      && UUID.test(protectedValue.threadId ?? '') && protectedValue.threadId !== threadId, 'protected_ledger_invalid');
   }
   const writeFile = dependencies.writeFile ?? writePrivateFile, writeJson = dependencies.writeJson ?? writePrivateJson;
   mkdirSync(directory, { recursive: true });

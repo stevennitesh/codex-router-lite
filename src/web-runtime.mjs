@@ -32,6 +32,22 @@ const outputTypeFor = new Map(Object.values(webToolKinds).map(kind => [kind.call
 const internalCall = value => typeof value === "string" && /^call_router_web_[a-f0-9]{32}$/u.test(value);
 const fail = (message, code = "web_runtime_unavailable", status = 409) => Object.assign(new Error(message), { code, status });
 const nonempty = value => typeof value === "string" && value.length > 0;
+export const WEB_RECOVERY_NOTICE = "Same-chat recovery boundary recorded. The failed attempt remains abandoned with unconfirmed delivery; no prompt was sent. Send a new instruction to continue.";
+const validRecovery = value => record(value) && ["armed", "bounded", "continued"].includes(value.stage)
+  && sha256(value.ledgerSha256) && sha256(value.snapshotSha256) && sha256(value.confirmationSha256) && record(value.proof)
+  && isSavedChatUrl(value.proof.chatUrl) && nonempty(value.proof.tabId) && uuid.test(value.proof.failedTurnId ?? "")
+  && uuid.test(value.proof.generationTurnKey ?? "") && messageIds(value.proof.sendBaselineReplyIds) && messageIds(value.proof.generationReplyIds)
+  && value.proof.generationReplyIds.every(id => !value.proof.sendBaselineReplyIds.includes(id))
+  && record(value.proof.observation) && value.proof.observation.completed === true
+  && value.proof.generationReplyIds.includes(value.proof.observation.replyId)
+  && record(value.proof.observation.assistantPrefix) && Number.isSafeInteger(value.proof.observation.assistantPrefix.length)
+  && value.proof.observation.assistantPrefix.length >= 1 && value.proof.observation.assistantPrefix.length <= 1024
+  && sha256(value.proof.observation.assistantPrefix.sha256)
+  && Array.isArray(value.revokedTurnIds) && value.revokedTurnIds.length > 0 && value.revokedTurnIds.every(value => uuid.test(value))
+  && new Set(value.revokedTurnIds).size === value.revokedTurnIds.length && value.revokedTurnIds.includes(value.proof.failedTurnId)
+  && (value.proof.priorRevokedTurnIds === undefined || messageIds(value.proof.priorRevokedTurnIds)
+    && value.proof.priorRevokedTurnIds.every(turnId => turnId !== value.proof.failedTurnId && value.revokedTurnIds.includes(turnId)))
+  && (value.stage === "armed" || Array.isArray(value.inputHashes) && value.inputHashes.length > 0 && value.inputHashes.every(sha256));
 const messageIds = values => Array.isArray(values) && values.every(value => typeof value === "string" && uuid.test(value))
   && new Set(values).size === values.length;
 const validSendUrlDiagnostic = value => record(value)
@@ -45,16 +61,19 @@ const instructionProtocol = `You are answering the current native Codex conversa
 // historical browser/checkpoint fields still qualify for current execution.
 export function validWebConversationRisk(value, threadId) {
   const last = value?.lastTurn;
-  return record(value) && value.version === 1 && uuid.test(threadId ?? "") && value.threadId === threadId
+  return record(value) && (value.version === 1 || value.version === 2 && validRecovery(value.recovery)) && uuid.test(threadId ?? "") && value.threadId === threadId
     && typeof value.uncertainSend === "boolean" && Array.isArray(value.unresolvedCoding)
     && value.unresolvedCoding.every(call => record(call) && nonempty(call.callId) && outputTypes.has(call.outputType))
     && new Set(value.unresolvedCoding.map(call => call.callId)).size === value.unresolvedCoding.length
-    && record(last) && uuid.test(last.turnId) && ["unsent", "uncertain", "sent"].includes(last.sendState) && typeof last.completed === "boolean"
+    && record(last) && uuid.test(last.turnId) && ["unsent", "uncertain", "sent", ...(value.version === 2 ? ["abandoned"] : [])].includes(last.sendState) && typeof last.completed === "boolean"
     && value.uncertainSend === (last.sendState === "uncertain")
-    && (!last.completed || last.sendState === "sent" && !value.unresolvedCoding.length);
+    && (!last.completed || ["sent", "abandoned"].includes(last.sendState) && !value.unresolvedCoding.length)
+    && (last.sendState !== "abandoned" || value.recovery?.stage === "bounded" && last.completed)
+    && (value.version !== 2 || value.recovery.stage !== "armed" || value.uncertainSend
+      && last.turnId === value.recovery.proof.failedTurnId && !value.unresolvedCoding.length);
 }
 
-function validConversation(value, threadId) {
+export function validWebConversation(value, threadId) {
   const last = value?.lastTurn, observed = value?.observation;
   return validWebConversationRisk(value, threadId)
     && typeof value.bindingId === "string" && /^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
@@ -79,6 +98,17 @@ function validConversation(value, threadId) {
     && (value.needsHistory === undefined || typeof value.needsHistory === "boolean") && (value.rolloverRequired === undefined || typeof value.rolloverRequired === "boolean")
     && (!value.needsHistory || value.rolloverRequired === true && isSavedChatUrl(value.capacityChatUrl ?? value.chatUrl))
     && (value.previousChatUrls === undefined || Array.isArray(value.previousChatUrls) && value.previousChatUrls.every(isSavedChatUrl))
+    && (value.version !== 2 || uuid.test(value.recovery.proof.failedTurnId ?? "")
+      && (value.recovery.stage !== "bounded" || value.recovery.proof.generationTurnKey === value.generationTurnKey
+        && digest(value.recovery.proof.observation) === digest(value.observation))
+      && (value.recovery.stage !== "armed" || value.recovery.proof.chatUrl === value.chatUrl && value.recovery.proof.tabId === value.tabId
+        && value.uncertainSend && value.lastTurn.turnId === value.recovery.proof.failedTurnId
+        && value.generationCompleted && value.observation?.completed && !value.unresolvedCoding.length
+        && digest(value.recovery.proof.observation) === digest(value.observation)
+        && value.recovery.proof.generationTurnKey === value.generationTurnKey))
+    && (value.attemptedDelivery === undefined || record(value.attemptedDelivery) && uuid.test(value.attemptedDelivery.turnId ?? "")
+      && Array.isArray(value.attemptedDelivery.inputHashes) && value.attemptedDelivery.inputHashes.every(sha256)
+      && sha256(value.attemptedDelivery.instructionsSha256))
     && (observed === undefined || record(observed) && value.checkpoint !== undefined && Number.isSafeInteger(value.sendBaseline)
       && Number.isSafeInteger(observed.replyCount) && observed.replyCount >= 0 && typeof observed.completed === "boolean"
       && (observed.replyId === null && observed.completed === false && observed.assistantPrefix?.length === 0
@@ -161,6 +191,7 @@ function contentText(content) {
 function knownWebAssistant(item, conversation) {
   if (item?.role !== "assistant") return false;
   const text = contentText(item.content);
+  if (conversation.recovery && text === WEB_RECOVERY_NOTICE) return true;
   if (!text.length) return false;
   if (typeof conversation.assistantText === "string" && conversation.assistantText.startsWith(text)) return true;
   const observed = conversation.observation;
@@ -275,9 +306,11 @@ export function createInAppWebRuntime({
   };
   const conversationPath = threadId => path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`);
   const persist = conversation => {
-    // Retain counts for the supported rollback reader's v1 record schema.
+    // Retain historical count fields. Recovery uses v2 so old rollback writers
+    // reject its replay fence instead of silently dropping it.
     // Runtime ownership uses the exact identities; mounted browser counts are irrelevant.
-    const value = { version: 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
+    const value = { version: conversation.version ?? 1, threadId: conversation.threadId, bindingId: conversation.bindingId,
+      recovery: conversation.recovery,
       browserOwnerTurnIds: [...conversation.browserOwnerTurnIds], tabId: conversation.tabId, chatUrl: conversation.chatUrl,
       checkpoint: conversation.checkpoint, sendBaseline: conversation.checkpoint === undefined ? undefined : conversation.sendBaselineReplyIds.length,
       deliveredInstructionsSha256: conversation.deliveredInstructionsSha256,
@@ -289,6 +322,7 @@ export function createInAppWebRuntime({
       activeCompaction: conversation.activeCompaction, pendingCompaction: conversation.pendingCompaction,
       needsHistory: conversation.needsHistory, rolloverRequired: conversation.rolloverRequired, capacityChatUrl: conversation.capacityChatUrl, previousChatUrls: conversation.previousChatUrls,
       uncertainSend: conversation.uncertainSend, unresolvedCoding: [...conversation.unresolvedCoding].map(([callId, outputType]) => ({ callId, outputType })),
+      attemptedDelivery: conversation.attemptedDelivery,
       lastTurn: conversation.lastTurn };
     const serialized = JSON.stringify(value);
     if (serialized === conversation.persistedValue) return conversation.writeTail ?? Promise.resolve();
@@ -303,7 +337,7 @@ export function createInAppWebRuntime({
   const loadConversation = threadId => {
     const filePath = conversationPath(threadId), stored = readJsonFile(filePath);
     if (stored.status === "missing") return undefined;
-    if (stored.status !== "present" || !stateIsProtected(filePath) || !validConversation(stored.value, threadId)) {
+    if (stored.status !== "present" || !stateIsProtected(filePath) || !validWebConversation(stored.value, threadId)) {
       throw fail("The saved Web conversation record is unreadable or invalid; refusing to create another chat.", "web_conversation_state");
     }
     const value = { ...stored.value };
@@ -334,7 +368,7 @@ export function createInAppWebRuntime({
       for (const callId of resolved) conversation.unresolvedCoding.delete(callId);
       await persist(conversation);
     }
-    if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
+    if (conversation.uncertainSend && conversation.recovery?.stage !== "armed") throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
     if (conversation.unresolvedCoding.size) throw fail("A previously emitted native coding action has no actual paired result; continuation is blocked.", "web_coding_uncertain");
   };
   const compactTail = (conversation, raw, deliveredCoding, acknowledge = true) => {
@@ -394,6 +428,9 @@ export function createInAppWebRuntime({
     const owner = webTurnIdentity(payload, headers);
     const conversation = conversations.get(owner.threadId) ?? loadConversation(owner.threadId);
     if (!conversation) return seed();
+    if (conversation.recovery && ["armed", "bounded"].includes(conversation.recovery.stage)) {
+      throw fail("Complete one fresh accepted Web turn after explicit recovery before compaction.", "web_recovery_pending");
+    }
     conversations.set(owner.threadId, conversation);
     if (conversation.activeTurn && conversation.activeTurn !== owner.turnId) throw fail("A different native turn owns this Web conversation's compaction.");
     if (conversation.compacting || [...turns.values()].some(turn => turn.conversation === conversation && turn.busy)) throw fail("A native Web request is already advancing this conversation.");
@@ -510,6 +547,8 @@ export function createInAppWebRuntime({
         ...(recovery ? { recovery } : {}),
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt, turnToken: turn.token } : {}),
+        ...(operation === "recover" ? { recoveryProof: conversation.recovery.proof,
+          snapshotSha256: conversation.recovery.snapshotSha256, expectedOwnerTurnIds: [...conversation.browserOwnerTurnIds] } : {}),
         ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token,
           turn.pendingDelivery ? turn.inputObservationRevision ?? broker.revision(turn.token) : broker.revision(turn.token)) },
           ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),
@@ -519,16 +558,20 @@ export function createInAppWebRuntime({
     // Bootstrap can be interrupted before open is emitted. Keep it idempotent
     // until that tab-creating handoff may actually have reached native Codex.
     if (operation === "open") conversation.restartInitialization = false;
-    if (["open", "continue", "rollover"].includes(operation) || operation === "bootstrap" && conversation.browserOwnerTurnIds.length) {
+    if (["open", "continue", "rollover", "recover"].includes(operation) || operation === "bootstrap" && conversation.browserOwnerTurnIds.length) {
       conversation.browserOwnerTurnIds = [...new Set([...conversation.browserOwnerTurnIds, turn.turnId])];
     }
     if (operation === "send") {
       turn.sendState = "uncertain"; turn.conversation.uncertainSend = true;
+      // This is attempted input, never proof that ChatGPT accepted it. Retain
+      // its hashes before dispatch so explicit abandonment can fence replay.
+      conversation.attemptedDelivery = { turnId: turn.turnId, inputHashes: [...turn.promptCheckpoint],
+        instructionsSha256: turn.promptInstructionsSha256 };
       // Keep activity during native Send queued for the first owned observation,
       // including when it precedes both the receipt and the eventual DOM anchor.
       turn.inputObservationRevision = broker.revision(turn.token);
     }
-    conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
+    if (operation !== "recover") conversation.lastTurn = { turnId: turn.turnId, sendState: turn.sendState ?? "unsent", completed: false };
     turn.pending = { kind: "browser", operation, frameToken, calls: [call], fullContinuation };
     await persist(conversation);
     if (operation === "observe") turn.pending.completionRevision = broker.beginCompletion(turn.token);
@@ -549,14 +592,18 @@ export function createInAppWebRuntime({
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
-    const current = transcript(payload), hashes = current.map(digest), checkpoint = conversation.checkpoint;
+    const current = transcript(payload), hashes = current.map(digest);
+    // Abandonment is a replay fence, separate from the accepted checkpoint.
+    const recoveryBoundary = conversation.recovery?.stage === "bounded";
+    const checkpoint = recoveryBoundary ? conversation.recovery.inputHashes : conversation.checkpoint;
     let history = current;
     if (checkpoint && !conversation.needsHistory) {
-      const retained = compactTail(conversation, readableInput(payload), undefined, false);
+      const retained = recoveryBoundary ? undefined : compactTail(conversation, readableInput(payload), undefined, false);
       let common = 0;
       while (common < checkpoint.length && common < hashes.length && checkpoint[common] === hashes[common]) common += 1;
       if (retained) history = transcript({ input: retained });
       else if (common !== checkpoint.length) {
+        if (recoveryBoundary) throw fail("Native history changed across the explicit abandoned-input boundary; refusing to replay it.", "web_history_mismatch");
         // Readable compaction is an explicit replacement of native history. Its
         // existing renderer retains the checkpoint's evidence and loss notices.
         if (!Array.isArray(payload.input) || !payload.input.some(item => item?.type === "compaction" && decodeCompaction(item.encrypted_content)
@@ -614,6 +661,7 @@ export function createInAppWebRuntime({
     turn.sendState = "sent";
     conversation.uncertainSend = false;
     conversation.checkpoint = delivery.checkpoint;
+    if (conversation.recovery?.stage === "bounded") conversation.recovery.stage = "continued";
     conversation.deliveredInstructionsSha256 = delivery.instructionsSha256;
     conversation.deliveredInstructionsGenerationTurnKey = delivery.generationTurnKey;
     conversation.pendingCompaction = undefined; conversation.activeCompaction = undefined;
@@ -660,6 +708,27 @@ export function createInAppWebRuntime({
   const freshPostToolAnswer = (turn, value) => !turn.preToolAnswer || value.replyId !== turn.preToolAnswer.replyId || value.assistantText !== turn.preToolAnswer.text;
   const advance = async (turn, payload, value, pending) => {
     const operation = value?.operation;
+    if (operation === "recover") {
+      const conversation = turn.conversation, recovery = conversation.recovery;
+      if (recovery?.stage !== (turn.recoveryResume ? "bounded" : "armed") || value.inspectionOnly !== false || value.snapshotSha256 !== recovery.snapshotSha256
+          || digest(value.snapshot) !== recovery.snapshotSha256 || digest(transcript(payload).map(digest)) !== digest(turn.recoveryInputHashes)
+          || !nonempty(value.tabId) || conversation.unresolvedCoding.size) throw fail("The recovery receipt or native input changed; the failed attempt remains guarded.", "web_recovery_changed");
+      recovery.boundTabId = value.tabId; conversation.tabId = value.tabId;
+      recovery.boundEffects = value.effects;
+      conversation.browserOwnerTurnIds = [...new Set([...conversation.browserOwnerTurnIds, turn.turnId])];
+      conversation.interruptedTurnId = undefined; conversation.interruptedSendState = undefined;
+      turn.interruptedTurnId = undefined; turn.interruptedSendState = undefined;
+      if (turn.recoveryResume) return emitBrowser(turn, "continue", payload);
+      recovery.stage = "bounded"; recovery.inputHashes = turn.recoveryInputHashes;
+      conversation.uncertainSend = false;
+      conversation.lastTurn = { turnId: turn.turnId, sendState: "abandoned", completed: true };
+      await persist(conversation);
+      broker.cancel(turn.token);
+      await closeWatcher(turn);
+      turn.done = true; conversation.activeTurn = undefined;
+      return webResponseRecord(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
+        content: [{ type: "output_text", text: WEB_RECOVERY_NOTICE, annotations: [] }] }]);
+    }
     if (Object.hasOwn(value, "sendFailure")) {
       if (pending.operation !== "send" || operation !== "send" || Object.keys(value).some(key => !["operation", "sendFailure", "sendDiagnostic", "sendUrlDiagnostic"].includes(key))
           || !["anchor-conflict", "saved-url"].includes(value.sendFailure)
@@ -840,6 +909,7 @@ export function createInAppWebRuntime({
       }
     }
     if (conversation?.activeTurn || conversation?.compacting) throw fail("A Web generation or compaction already owns this native conversation.");
+    if (conversation?.recovery?.revokedTurnIds.includes(owner.turnId)) throw fail("The abandoned Web turn is permanently revoked; use a new native turn.", "web_turn_cancelled");
     if (!conversation) {
       if (conversations.size >= 64) throw fail("The in-app Web conversation limit was reached. Restart Router after closing finished Web chats.");
       conversation = { threadId: owner.threadId, bindingId: `b${randomBytes(12).toString("hex")}`, browserOwnerTurnIds: [], uncertainSend: false, unresolvedCoding: new Map() };
@@ -866,6 +936,22 @@ export function createInAppWebRuntime({
       conversation, interruptedTurnId: conversation.interruptedTurnId, interruptedSendState: conversation.interruptedSendState,
       initialBrowserOperation: conversation.restartInitialization || !conversation.browserOwnerTurnIds.length ? "bootstrap" : "continue",
       cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
+    if (conversation.recovery?.stage === "armed") {
+      turn.initialBrowserOperation = "recover";
+      turn.recoveryInputHashes = transcript(payload).map(digest);
+      if (!conversation.checkpoint.every((hash, index) => turn.recoveryInputHashes[index] === hash)
+          || !transcript(payload).slice(conversation.checkpoint.length).some(item => item.role === "user")) {
+        conversation.activeTurn = undefined;
+        throw fail("The recovery-only request must retain the exact accepted history and current native user input.", "web_history_mismatch");
+      }
+    } else if (conversation.recovery?.stage === "bounded") {
+      // The accepted answer can precede already abandoned user turns. Restore
+      // only their exact reviewed snapshot before ordinary cache installation;
+      // keep the existing no-replay boundary and this fresh request's input.
+      turn.initialBrowserOperation = "recover";
+      turn.recoveryResume = true;
+      turn.recoveryInputHashes = transcript(payload).map(digest);
+    }
     conversation.activeTurn = owner.turnId;
     const check = () => {
       if (signal?.aborted) cancel(turn, signal.reason instanceof Error ? signal.reason : fail("Native Web request cancelled.", "web_turn_cancelled"));

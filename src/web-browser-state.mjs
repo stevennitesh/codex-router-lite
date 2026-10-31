@@ -169,7 +169,8 @@ export function createRecoveryBrowserState(tab, { ui, proof }) {
   const complete = proof.completed ? ` and count(${turn}//*[@${ui.turnStateAttribute}])=1 and ${turn}//*[@${ui.turnStateAttribute}='${ui.completeTurnState}']` : "";
   const message = proof.replyId ? `//*[@${ui.messageIdAttribute}='${proof.replyId}']` : null;
   const checkpoint = message ? ` and count(${message})=1 and ${turn}//*[@${ui.messageIdAttribute}='${proof.replyId}']` : "";
-  let ready = tab.playwright.locator(`xpath=//body[count(${turn})=1 and ${latestTurn}${complete}${checkpoint}]`);
+  const order = proof.controlledAbandonment === true ? "" : ` and ${latestTurn}`;
+  let ready = tab.playwright.locator(`xpath=//body[count(${turn})=1${order}${complete}${checkpoint}]`);
   // Raw DOM text length is unrelated to the normalized reply length: paragraph,
   // BR and CodeMirror boundaries can contribute characters absent from textContent.
   // Wait for the owned answer renderer, then let the exact projection/digest

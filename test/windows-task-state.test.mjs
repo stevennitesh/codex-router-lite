@@ -47,6 +47,14 @@ test("scheduled task queries parse observed state and retain inconclusive failur
   assert.equal(invocation.options.env.CODEX_ROUTER_TASK, "Codex Router");
 });
 
+test("offline maintenance distinguishes a disabled scheduled task from enabled or unknown state", async () => {
+  for (const [output, enabled] of [["0|0|0|0", false], ["0|0|0|1", true], ["0|0|0", undefined], ["0|0|0|unknown", undefined]]) {
+    const state = await windowsScheduledTaskState({ platform: "win32", includeEnabled: true,
+      execFile: (_executable, _args, _options, callback) => callback(null, output) });
+    assert.equal(state.enabled, enabled);
+  }
+});
+
 test("the generated task query requires its registered launcher and excludes unrelated and self processes", { skip: process.platform !== "win32" }, async () => {
   const launcher = "C:\\fixture\\start-codex-router-hidden.vbs";
   const processes = {

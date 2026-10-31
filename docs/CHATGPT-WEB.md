@@ -135,6 +135,17 @@ be repeated accidentally. A full ChatGPT conversation can transfer readable Code
 context once to a successor chat when the page presents its explicit maximum-length
 notice. Input is text only; media upload is unsupported.
 
+An uncertain Send with a completed earlier answer can be deliberately abandoned
+through [controlled same-chat recovery](agents/web-integration.md#controlled-same-chat-abandonment).
+The maintenance helper first inspects the exact retained chat without changing it,
+then prepares a SHA-256 confirmation bound to that chat, failed attempt and ledger.
+Only explicit approval of that plan permits offline confirmation after Codex and
+Router have stopped. Original evidence remains archived. Active generation, a
+draft, unacknowledged assistant output or unresolved native actions blocks recovery.
+The first request after confirmation records a local recovery boundary and sends
+nothing; send a fresh instruction afterward. The abandoned prompt is never resent.
+This also supports older records that lack attempted-input hashes.
+
 ## Immediate Stop
 
 Immediate browser cancellation uses the Router MCP adapter and a separately trusted
