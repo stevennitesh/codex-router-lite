@@ -235,7 +235,7 @@ test("controlled recovery refuses changed browser, unresolved actions, stale con
   for (const [name, change] of [
     ["active Stop", h => { h.browser.ui.stop = true; }],
     ["restored draft", h => { h.browser.ui.composer = "Failed restored draft"; }],
-    ["changed accepted reply", h => { h.browser.ui.texts[0] = "Changed accepted answer"; }],
+    ["changed accepted reply", h => { h.browser.ui.texts[0] = "Changed accepted answer with a long enough body to reject its digest immediately."; }],
     ["foreign reply", h => { h.browser.ui.texts.push("Unconfirmed assistant output"); }],
     ["foreign URL", h => { const savedUrl = h.browser.ui.url; h.browser.ui.url = "https://chatgpt.com/c/foreign";
       h.browser.browser.tabs.list = async () => [{ id: h.browser.ui.tabId, url: savedUrl }]; }],
@@ -254,6 +254,127 @@ test("controlled recovery refuses changed browser, unresolved actions, stale con
   writeFileSync(h.stateFile, JSON.stringify(changed));
   assert.throws(() => inspectControlledWebRecovery(threadId, options), /unresolved actions/u);
   await assert.rejects(confirmControlledWebRecovery(plan, confirmationSha256, options));
+});
+
+test("controlled inspection waits on the known completed answer's content event without granting authority or Send", { timeout: 5000 }, async t => {
+  for (const [short, reopened] of [["", false], ["Accepted", false], ["", true]]) await t.test(`initial content: ${JSON.stringify(short)}, reopened: ${reopened}`, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+    const expected = h.browser.ui.texts[0], owner = h.browserOwner(), marks = h.browser.ui.marks, sends = h.browser.ui.sends.length;
+    const subscribed = Promise.withResolvers(), released = Promise.withResolvers(); t.after(() => released.resolve());
+    h.browser.ui.texts[0] = short;
+    if (reopened) {
+      h.browser.ui.savedReplies.set(h.browser.ui.url, h.browser.ui.texts);
+      h.browser.ui.savedTurns.set(h.browser.ui.url, structuredClone(h.browser.ui.turns));
+      h.browser.ui.savedStops = new Map([[h.browser.ui.url, false]]); h.browser.ui.present = false;
+    }
+    h.browser.ui.onRecoveryContentWait = async ({ matched }) => {
+      assert.equal(matched, false); subscribed.resolve(); await released.promise;
+    };
+    const inspecting = fixture.inspect();
+    const stage = await Promise.race([subscribed.promise.then(() => "waiting"), inspecting.then(() => "finished", () => "rejected")]);
+    assert.equal(stage, "waiting", "A mounted empty answer needs a content event, not immediate rejection.");
+    assert.equal(h.browser.ui.marks, marks); assert.equal(h.browserOwner(), owner); assert.equal(h.browser.ui.sends.length, sends);
+    h.browser.ui.texts[0] = expected; released.resolve();
+    const receipt = await inspecting;
+    const plan = prepareControlledWebRecovery(fixture.inspection.request, receipt, fixture.options).plan;
+    assert.equal(plan.snapshot.emptyComposer, true); assert.equal(plan.inspectionEffects.tabReopened, reopened);
+    assert.equal(h.browser.ui.recoveryContentWaits, 1);
+    assert.equal(h.browserOwner(), owner); assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.browser.ui.stopMarks.length, 0);
+    assert.equal(h.browser.ui.marks, marks + Number(reopened));
+    assert.deepEqual(readFileSync(h.stateFile), fixture.original);
+  });
+});
+
+test("controlled content readiness shares its remaining deadline and never accepts an unrelated wake or unfilled answer", { timeout: 5000 }, async t => {
+  for (const mode of ["unrelated then expected", "partial then expected", "never fills"]) await t.test(mode, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+    const expected = h.browser.ui.texts[0], owner = h.browserOwner(), sends = h.browser.ui.sends.length, marks = h.browser.ui.marks;
+    let now = 0; h.browser.ui.clock = { now: () => now };
+    const waitUrl = h.browser.tab.playwright.waitForURL;
+    h.browser.tab.playwright.waitForURL = async (...args) => { now += 2000; return waitUrl(...args); };
+    h.browser.ui.texts[0] = "";
+    h.browser.ui.onRecoveryContentWait = ({ timeoutMs, matched }) => {
+      assert.equal(matched, false); assert.ok(timeoutMs > 0 && timeoutMs <= 7000);
+      assert.equal(h.browser.ui.marks, marks); assert.equal(h.browserOwner(), owner);
+      if (mode !== "never fills" && h.browser.ui.recoveryContentWaits === 2) h.browser.ui.texts[0] = expected;
+      else if (mode === "partial then expected") h.browser.ui.texts[0] = expected.slice(0, 5);
+      else now += mode === "never fills" ? timeoutMs : 1000;
+    };
+    if (mode === "never fills") await assert.rejects(fixture.inspect(), /reply-prefix-too-short/u);
+    else await fixture.inspect();
+    assert.equal(h.browser.ui.recoveryContentWaits, mode === "never fills" ? 1 : 2);
+    assert.ok(now <= 10000); assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.browserOwner(), owner);
+    assert.equal(h.browser.ui.marks, marks); assert.equal(h.browser.ui.stopMarks.length, 0);
+    assert.deepEqual(readFileSync(h.stateFile), fixture.original);
+  });
+});
+
+test("controlled recovery accepts only a full fresh proof when hydration arrives at an SDK timeout boundary", async t => {
+  for (const mode of ["valid at timeout", "wrong digest at timeout", "owner changed at timeout", "non-timeout SDK error"]) await t.test(mode, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+    const expected = h.browser.ui.texts[0], owner = h.browserOwner(), sends = h.browser.ui.sends.length, marks = h.browser.ui.marks;
+    let now = 0; h.browser.ui.clock = { now: () => now };
+    const waitUrl = h.browser.tab.playwright.waitForURL;
+    h.browser.tab.playwright.waitForURL = async (...args) => { now += 2000; return waitUrl(...args); };
+    h.browser.ui.texts[0] = "";
+    h.browser.ui.onRecoveryContentWait = ({ timeoutMs, matched }) => {
+      assert.equal(matched, false); assert.equal(timeoutMs, 7000);
+      now += timeoutMs; h.browser.ui.texts[0] = expected;
+      if (mode === "wrong digest at timeout") h.browser.ui.texts[0] = "Wrong completed answer with enough characters to reject the accepted digest.";
+      if (mode === "owner changed at timeout") h.replaceBrowserOwner({ turnId: "99002233-4455-6677-8899-aabbccddeeff", state: {} });
+      throw new Error(mode === "non-timeout SDK error" ? "Native browser transport failed" : "Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+    };
+    if (mode === "valid at timeout") {
+      const receipt = await fixture.inspect();
+      assert.equal(prepareControlledWebRecovery(fixture.inspection.request, receipt, fixture.options).plan.snapshot.emptyComposer, true);
+      assert.equal(h.browserOwner(), owner);
+    } else await assert.rejects(fixture.inspect(), /ownership-changed/u);
+    assert.equal(now, 9000); assert.equal(h.browser.ui.recoveryContentWaits, 1);
+    assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.browser.ui.marks, marks); assert.equal(h.browser.ui.stopMarks.length, 0);
+    assert.deepEqual(readFileSync(h.stateFile), fixture.original);
+  });
+});
+
+test("controlled content wakes recheck every ownership and noncontent guard before accepting hydration", async t => {
+  for (const [name, change, reason] of [
+    ["wrong digest", h => { h.browser.ui.texts[0] = "Wrong hydrated answer with enough characters to fail the accepted prefix digest."; }, "ownership-changed"],
+    ["owner changed", h => { h.replaceBrowserOwner({ turnId: "99002233-4455-6677-8899-aabbccddeeff", state: {} }); }, "ownership-changed"],
+    ["session changed", h => { h.browser.agent.browsers.list = async () => [{ type: "iab", id: h.browser.browser.browserId, metadata: { codexSessionId: followupId } }]; }, "ownership-changed"],
+    ["URL changed", h => { h.browser.ui.url = "https://chatgpt.com/c/foreign"; }, "ownership-changed"],
+    ["generation changed", h => { h.browser.ui.turns[0].key = "99002233-4455-6677-8899-aabbccddeeff"; }, "ownership-changed"],
+    ["draft appeared", h => { h.browser.ui.composer = "PRIVATE_DRAFT_MUST_REMAIN"; }, "composer-draft-present"],
+    ["generation resumed", h => { h.browser.ui.stop = true; }, "generation-active"],
+  ]) await t.test(name, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+    const expected = h.browser.ui.texts[0], sends = h.browser.ui.sends.length, marks = h.browser.ui.marks;
+    h.browser.ui.texts[0] = "";
+    h.browser.ui.onRecoveryContentWait = () => { h.browser.ui.texts[0] = expected; change(h); };
+    await assert.rejects(fixture.inspect(), new RegExp(reason, "u"));
+    assert.equal(h.browser.ui.recoveryContentWaits, 1); assert.equal(h.browser.ui.sends.length, sends);
+    assert.equal(h.browser.ui.marks, marks); assert.equal(h.browser.ui.stopMarks.length, 0);
+    if (name === "draft appeared") assert.equal(h.browser.ui.composer, "PRIVATE_DRAFT_MUST_REMAIN");
+    assert.deepEqual(readFileSync(h.stateFile), fixture.original);
+  });
+  const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+  h.browser.ui.texts[0] = "Wrong settled content with enough characters to reject before any content wait.";
+  await assert.rejects(fixture.inspect(), /ownership-changed/u);
+  assert.equal(h.browser.ui.recoveryContentWaits ?? 0, 0);
+});
+
+test("controlled inspection cannot wait for content before the noncontent ownership proof qualifies", async t => {
+  for (const [name, change] of [
+    ["draft already present", h => { h.browser.ui.composer = "A retained draft"; }],
+    ["Stop already active", h => { h.browser.ui.stop = true; }],
+    ["unknown failed marker", h => { h.browser.ui.turns.at(-1).prompt = "An unknown later user turn"; }],
+    ["commentary instead of answer", h => { const reply = replyElement("", messageId(0)); reply.commentary = true; h.browser.ui.replyElements = [reply]; }],
+  ]) await t.test(name, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h } = fixture;
+    h.browser.ui.texts[0] = ""; change(h);
+    h.browser.ui.onRecoveryContentWait = () => assert.fail("Unqualified content must never acquire a pending wait.");
+    await assert.rejects(fixture.inspect(), /ROUTER_WEB_RECOVERY_DIAGNOSTIC/u);
+    assert.equal(h.browser.ui.recoveryContentWaits ?? 0, 0);
+    assert.deepEqual(readFileSync(h.stateFile), fixture.original);
+  });
 });
 
 test("controlled recovery rechecks the browser after offline confirmation and preserves the guard on failure", async t => {
@@ -282,7 +403,7 @@ test("controlled same-chat recovery rebinds one restored tab identity only with 
     h.loseKernel(); h.browser.ui.tabId = "restored-tab-after-normal-quit";
     if (fault === "foreign session") h.browser.agent.browsers.list = async () => [{ type: "iab", id: h.browser.browser.browserId,
       metadata: { codexSessionId: "99002233-4455-6677-8899-aabbccddeeff" } }];
-    if (fault === "changed content") h.browser.ui.texts[0] = "Foreign same-URL answer";
+    if (fault === "changed content") h.browser.ui.texts[0] = "Foreign same-URL answer with enough characters to reject the changed prefix immediately.";
     if (fault === "changed failed prompt") h.browser.ui.turns.at(-1).prompt += " Changed failed input";
     if (fault === "duplicate saved URL") h.browser.browser.tabs.list = async () => [{ id: h.browser.ui.tabId, url: h.browser.ui.url }, { id: "duplicate", url: h.browser.ui.url }];
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record the recovery-only boundary");
@@ -545,7 +666,7 @@ function fakeBrowser() {
       }
       return turns;
     };
-    const matched = () => {
+    const matched = relativeSelector => {
       if (scope && !scope.fixtureCount()) return 0;
       let count = 1;
       if (bodyQuery && name !== "body") {
@@ -558,6 +679,12 @@ function fakeBrowser() {
           const { body } = currentRender ?? render(), messages = body.querySelectorAll(`[data-chatgpt-selection-message-id="${replyId}"]`);
           if (messages.length !== 1 || messages[0].closest(browserDom.turnSelector)?.getAttribute(browserDom.turnKeyAttribute) !== key) count = 0;
         }
+      } else if (kind === "selector" && name.startsWith("xpath=self::*[string(.) != ")) {
+        const expression = name.slice("xpath=self::*[string(.) != ".length, -1);
+        const expected = [...expression.matchAll(/'([^']*)'|"([^"]*)"/gu)].map(match => match[1] ?? match[2]).join("");
+        const selector = scope?.selector ?? relativeSelector;
+        const { body } = currentRender ?? render(), wrappers = selector ? body.querySelectorAll(selector) : [];
+        count = Number(wrappers.length === 1 && wrappers[0].textContent !== expected);
       } else if (name === "Stop") count = ui.stopCount ?? 1;
       else if (kind === "selector" && [browserDom.assistantFinalReplySelector, browserDom.assistantSelector].includes(name)) {
         const { body } = currentRender ?? render();
@@ -572,11 +699,12 @@ function fakeBrowser() {
       else if (kind === "menuitemradio") count = 0;
       if (visibleOnly && (name === "Stop" && (!ui.stop || ui.full) || name === "Start Voice" && !(ui.idleVisible ?? (!ui.stop || ui.full)))) count = 0;
       if (visibleOnly && kind === "button" && name === browserDom.temporaryButtonName && !ui.normalHome) count = 0;
-      if (filters.some(({ has, hasNot }) => has && !has.fixtureCount() || hasNot && hasNot.fixtureCount())) count = 0;
+      if (filters.some(({ has, hasNot }) => has && !has.fixtureCount(kind === "selector" && !bodyQuery ? name : undefined) || hasNot && hasNot.fixtureCount())) count = 0;
       return offset === undefined ? count : offset < count ? 1 : 0;
     };
     return {
     kind, name,
+    recoveryContentChange: name?.startsWith("xpath=self::*[string(.) != ") || filters.some(filter => filter.has?.recoveryContentChange),
     fixtureCount: matched,
     or(other) {
       const first = this;
@@ -648,9 +776,13 @@ function fakeBrowser() {
     async isEnabled() { return true; },
     async press(key) { if (name === "Power") { if (key === "Escape") ui.menu = false; else ui.power += key === "ArrowLeft" ? -1 : 1; } },
     async type(text) { ui.composer = (ui.composer ?? "") + text; },
-    async waitFor({ state }) {
+    async waitFor({ state, timeoutMs }) {
       if (bodyQuery) {
         assert.equal(state, "visible");
+        if (this.recoveryContentChange) {
+          ui.recoveryContentWaits = (ui.recoveryContentWaits ?? 0) + 1;
+          await ui.onRecoveryContentWait?.({ timeoutMs, matched: matched() === 1 });
+        }
         if (matched() !== 1) throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
       } else if (state === "attached") {
         assert.equal(kind, "selector"); assert.equal(name, browserDom.turnSelector);
@@ -770,8 +902,8 @@ function harness(t, { tools = [nativeJs, currentRead], toolChoice = "auto", inst
     observations.bindings.push(binding);
     let framed;
     const nativeFetch = () => { observations.fetchCalls += 1; throw new Error("Native browser sandbox does not allow loopback fetch."); };
-    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "fetch", "globalThis", args.code);
-    await execute({ write: value => { framed = value; } }, nativeFetch, nativeContext);
+    const execute = new (Object.getPrototypeOf(async function () {}).constructor)("nodeRepl", "fetch", "globalThis", "Date", args.code);
+    await execute({ write: value => { framed = value; } }, nativeFetch, nativeContext, browser.ui.clock ?? Date);
     const token = framed.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/)?.[1];
     const value = parseBrowserOutput(framed, token);
     observations.nativeOperations.push(value.operation);

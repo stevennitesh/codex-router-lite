@@ -1644,16 +1644,21 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
   const tabs = (await browser.tabs.list()).filter(tab => tab.url === proof.chatUrl);
   if (tabs.length > 1) refuse("ownership-changed");
   const effects = { tabReopened: tabs.length === 0, tabNavigated: false, handoffMarked: false };
-  const allowance = lifecycle.createAllowance(Date.now() + 10000, () => refusal("ownership-changed"));
+  let contentPending = false;
+  const allowance = lifecycle.createAllowance(Date.now() + 10000, () => refusal(contentPending ? "reply-prefix-too-short" : "ownership-changed"));
   const tab = tabs.length ? await browser.tabs.get(tabs[0].id) : await browser.tabs.new(), currentTabId = tab.id;
   if (!currentTabId || tabs.length && currentTabId !== tabs[0].id) refuse("ownership-changed");
+  const assertOwner = () => {
+    if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner || browser.browserId !== browsers[0].id
+        || tab.id !== currentTabId) refuse("ownership-changed");
+  };
   if (effects.tabReopened) { effects.tabNavigated = true; await tab.goto(proof.chatUrl); }
   try { await tab.playwright.waitForURL(proof.chatUrl, { timeoutMs: allowance(1000) }); }
   catch { refuse("ownership-changed"); }
-  const ready = lifecycle.recoveryState(tab, { ui: options.ui, proof: { generationTurnKey: proof.generationTurnKey,
-    replyId: proof.observation.replyId, completed: true, controlledAbandonment: true } }).ready;
-  const mounted = await lifecycle.browserReadiness(ready, { nextTimeout: () => allowance(1000),
-    inspect: async () => tab.id === currentTabId && await tab.url() === proof.chatUrl && await ready.count() === 1,
+  const recoveryState = lifecycle.recoveryState(tab, { ui: options.ui, proof: { generationTurnKey: proof.generationTurnKey,
+    replyId: proof.observation.replyId, completed: true, controlledAbandonment: true } });
+  const mounted = await lifecycle.browserReadiness(recoveryState.ready, { nextTimeout: () => { assertOwner(); return allowance(1000); },
+    inspect: async () => tab.id === currentTabId && await tab.url() === proof.chatUrl && await recoveryState.ready.count() === 1,
     ready: value => value === true });
   if (!mounted) refuse("ownership-changed");
   const state = { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule,
@@ -1662,6 +1667,9 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
     lifecycle.pendingUrl, lifecycle.observationState, lifecycle.sendState, lifecycle.navigationObserver);
   const context = createContext(state, options, nodeRepl, readReplies, viewFactory, lifecycle);
   const inspect = async () => {
+    allowance(); assertOwner();
+    const currentBrowsers = (await agent.browsers.list()).filter(value => value.type === "iab" && value.metadata?.codexSessionId === options.sessionId);
+    if (currentBrowsers.length !== 1 || currentBrowsers[0].id !== browser.browserId) refuse("ownership-changed");
     if (tab.id !== currentTabId || await tab.url() !== proof.chatUrl) refuse("ownership-changed");
     const snapshot = await context.mutationSnapshot({ includeReplies: true, projection: "recovery" });
     const mutation = snapshot.mutation, replies = snapshot.replies, turns = snapshot.turns;
@@ -1673,9 +1681,7 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
         || new Set(turns.map(turn => turn.turnKey)).size !== turns.length) refuse("ownership-changed");
     const accepted = turns.filter(turn => turn.turnKey === proof.generationTurnKey);
     const reply = replies.find(reply => reply.messageId === proof.observation.replyId);
-    if (accepted.length !== 1 || accepted[0].complete !== true || !reply || reply.turnKey !== proof.generationTurnKey
-        || reply.text.length < proof.observation.assistantPrefix.length
-        || hash(reply.text.slice(0, proof.observation.assistantPrefix.length)) !== proof.observation.assistantPrefix.sha256) refuse("ownership-changed");
+    if (accepted.length !== 1 || accepted[0].complete !== true || !reply || reply.turnKey !== proof.generationTurnKey) refuse("ownership-changed");
     const allowed = new Set([...proof.sendBaselineReplyIds, ...proof.generationReplyIds]);
     if (replies.some(reply => !allowed.has(reply.messageId)) || replies.at(-1)?.messageId !== proof.observation.replyId) refuse("ownership-changed");
     const anchors = await context.snapshot(tab, `Router generation: ${proof.failedTurnId}`, undefined, "recovery-anchor", []);
@@ -1689,14 +1695,37 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
           || markers[0] === abandoned.length - 1 && turn !== anchors.turns.at(-1)) refuse("ownership-changed");
       used.add(markers[0]); previousMarkerIndex = markers[0];
     }
+    assertOwner(); allowance();
+    if (reply.text.length < proof.observation.assistantPrefix.length) {
+      if (reply.answer !== true || typeof reply.recoveryTextContent !== "string") refuse("ownership-changed");
+      return { pendingText: reply.recoveryTextContent };
+    }
+    if (hash(reply.text.slice(0, proof.observation.assistantPrefix.length)) !== proof.observation.assistantPrefix.sha256) refuse("ownership-changed");
     return { originalTabId: proof.tabId, chatUrl: proof.chatUrl, turns: anchors.turns.map(turn => ({ turnKey: turn.turnKey, failed: turn.matchesGenerationMarker, sha256: hash(turn.textContent) })),
       replies: replies.map(reply => ({ messageId: reply.messageId, turnKey: reply.turnKey, sha256: hash(reply.text) })), idle: true, emptyComposer: true };
   };
-  const first = await inspect(), snapshot = await inspect(), snapshotSha256 = hash(snapshot);
+  const completeInspect = async () => {
+    let result = await inspect();
+    while (Object.hasOwn(result, "pendingText")) {
+      contentPending = true;
+      let changed = false;
+      const observed = await lifecycle.browserReadiness(recoveryState.contentChangedSince(result.pendingText), {
+        nextTimeout: () => { assertOwner(); return allowance(1000); },
+        afterWait: ({ error, timedOut }) => { assertOwner(); changed = !error; if (error && !timedOut) refuse("ownership-changed"); },
+        inspect: async () => ({ result: await inspect(), changed }),
+        ready: value => value.changed || !Object.hasOwn(value.result, "pendingText"),
+      });
+      if (!observed.changed && Object.hasOwn(observed.result, "pendingText")) refuse("reply-prefix-too-short");
+      result = observed.result;
+    }
+    contentPending = false;
+    return result;
+  };
+  const first = await completeInspect(), snapshot = await completeInspect(), snapshotSha256 = hash(snapshot);
   if (hash(first) !== snapshotSha256 || options.snapshotSha256 !== undefined && snapshotSha256 !== options.snapshotSha256) refuse("snapshot-changed");
   if (effects.tabReopened) {
     await tab.markHandoff(); effects.handoffMarked = true;
-    if (hash(await inspect()) !== snapshotSha256) refuse("snapshot-changed");
+    if (hash(await completeInspect()) !== snapshotSha256) refuse("snapshot-changed");
   }
   if (!options.inspectionOnly) {
     if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner) refuse("ownership-changed");
