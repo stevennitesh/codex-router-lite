@@ -64,10 +64,21 @@ const headers = (turn = turnId) => ({ "x-codex-turn-metadata": JSON.stringify(me
 const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? "tool_search_output" : "function_call_output", call_id: call.call_id,
   ...(call.type === "tool_search_call" ? { tools: output, execution: "client", status: "completed" } : { output }) });
 
-async function controlledRecoveryFixture(t, { executed = true, legacy = true } = {}) {
-  const h = harness(t), { call } = await h.toObserve();
+async function controlledRecoveryFixture(t, { executed = true, legacy = true, compaction, harnessOptions } = {}) {
+  const h = harness(t, harnessOptions);
+  if (compaction) h.input().unshift({ role: "developer", content: "Accepted native developer context before compaction" });
+  const { call } = await h.toObserve();
   await h.completeAnswer(call, "Accepted answer retained through recovery.");
   const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  if (compaction) {
+    h.append({ role: "user", content: "FAILED PRE-COMPACTION INPUT MUST NOT BE REPLAYED" });
+    const v2 = compaction.startsWith("v2"), original = structuredClone(h.input());
+    const compact = () => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: v2 },
+      { ...(v2 ? { compactV2: true } : { compact: true }), headers: headers() });
+    const result = v2 ? [await nativeV2Checkpoint(await compact())] : (await (await compact()).json()).output;
+    h.input().splice(0, h.input().length, ...(v2 ? [...nativeV2Users(original), ...result] : result));
+    if (compaction.endsWith("active")) await compact(); // The newer proposed window is deliberately not applied.
+  }
   h.newTurn(followupId, "FAILED PRIVATE PROMPT MUST NEVER BE REPLAYED");
   let response = await h.request();
   while (JSON.parse(response.output[0].arguments).title !== "ChatGPT Web: send") response = await h.answerBrowser(response.output[0]);
@@ -128,6 +139,95 @@ test("controlled legacy recovery archives exact failure and consumes one native 
     await h.restartRuntime();
     h.newTurn(followupId, "Attempt to revive the permanently revoked failed turn.");
     await assert.rejects(h.request(), { code: "web_turn_cancelled" });
+  });
+});
+
+test("controlled recovery verifies pending and active native compaction aliases before bounding abandoned input", async t => {
+  for (const compaction of ["v1-pending", "v1-active", "v2-pending", "v2-active"]) await t.test(compaction, async t => {
+    const fixture = await controlledRecoveryFixture(t, { compaction }), { h, options, accepted } = fixture;
+    const original = JSON.parse(fixture.original);
+    assert.ok(original[compaction.endsWith("active") ? "activeCompaction" : "pendingCompaction"]);
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const sends = h.browser.ui.sends.length;
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record only the approved compacted recovery boundary");
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    assert.equal(h.browser.ui.sends.length, sends);
+    const bounded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.deepEqual(bounded.checkpoint, accepted.checkpoint);
+    assert.deepEqual(bounded.pendingCompaction, original.pendingCompaction);
+    assert.deepEqual(bounded.activeCompaction, original.activeCompaction);
+    h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "FRESH INPUT AFTER COMPACTED RECOVERY");
+    const { call } = await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "FRESH INPUT AFTER COMPACTED RECOVERY" }]);
+    await h.completeAnswer(call, "Compaction-aware same-chat recovery completed.");
+  });
+  await t.test("changed retained alias tail", async t => {
+    const fixture = await controlledRecoveryFixture(t, { compaction: "v1-pending" }), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.input().find(item => item.role === "user").content = "Changed retained native input";
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "A changed alias must still refuse recovery");
+    const operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: "web_history_mismatch" });
+    assert.equal(h.observations.nativeOperations.length, operations);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.stage, "armed");
+  });
+  await t.test("unverified opaque native compaction", async t => {
+    const fixture = await controlledRecoveryFixture(t, { compaction: "v1-pending" }), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.input()[0].encrypted_content = "opaque-native-compaction-without-a-verified-alias";
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Opaque compaction cannot authorize recovery");
+    const operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: "encrypted_v2_unsupported" });
+    assert.equal(h.observations.nativeOperations.length, operations);
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).uncertainSend, true);
+  });
+});
+
+test("cancelled recovery finalization cannot release a successor during persistence or watcher shutdown", { timeout: 5000 }, async t => {
+  for (const delayed of ["persistence", "watcher shutdown"]) await t.test(delayed, async t => {
+    const reached = Promise.withResolvers(), allowWrite = Promise.withResolvers(), allowClose = Promise.withResolvers();
+    t.after(() => { allowWrite.resolve(); allowClose.resolve(); });
+    const recoveryId = "33002233-4455-6677-8899-aabbccddeeff", successorId = "44002233-4455-6677-8899-aabbccddeeff";
+    let firstWrite = true;
+    const fixture = await controlledRecoveryFixture(t, { harnessOptions: {
+      storage: { ...syntheticStorage, writeState: async (file, value) => {
+        if (delayed === "persistence" && firstWrite && value.recovery?.stage === "bounded" && value.lastTurn.turnId === recoveryId) {
+          firstWrite = false; reached.resolve(); await allowWrite.promise;
+        }
+        await syntheticStorage.writeState(file, value);
+      } },
+      watcherClosure: async watcher => { if (watcher.turnId === recoveryId) { if (delayed === "watcher shutdown") reached.resolve(); await allowClose.promise; } },
+    } });
+    const { h, options } = fixture, { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.newTurn(recoveryId, "Record the approved recovery boundary");
+    const recoveryCall = (await h.request()).output[0];
+    const finishing = assert.rejects(h.answerBrowser(recoveryCall), { code: "web_turn_cancelled" });
+    await reached.promise;
+    h.observations.watchers.find(watcher => watcher.turnId === recoveryId).onCancel();
+    h.newTurn(successorId, "The successor owns the fresh request");
+    const next = h.request();
+    const successorInput = structuredClone(h.input());
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "A third request must not steal the successor reservation");
+    await assert.rejects(h.request(), /already owns this native conversation/u);
+    allowWrite.resolve();
+    const successorCall = (await next).output[0];
+    assert.equal(readBrowserProgram(JSON.parse(successorCall.arguments).code).turnId, successorId);
+    const saved = readFileSync(h.stateFile, "utf8");
+    allowClose.resolve(); await finishing;
+    h.newTurn("66002233-4455-6677-8899-aabbccddeeff", "Old recovery completion cannot release the successor either");
+    await assert.rejects(h.request(), /already owns this native conversation/u);
+    assert.equal(readFileSync(h.stateFile, "utf8"), saved);
+    assert.equal(h.runtime.maintenanceState().activeTurns, 1);
+    h.newTurn(successorId, "Restore the successor's original native request");
+    h.input().splice(0, h.input().length, ...successorInput);
+    await h.answerBrowser(successorCall);
+    const { call } = await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "The successor owns the fresh request" }]);
+    await h.completeAnswer(call, "The successor continued after cancelled recovery finalization.");
   });
 });
 

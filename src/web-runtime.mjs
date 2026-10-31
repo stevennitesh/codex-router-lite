@@ -723,9 +723,12 @@ export function createInAppWebRuntime({
       conversation.uncertainSend = false;
       conversation.lastTurn = { turnId: turn.turnId, sendState: "abandoned", completed: true };
       await persist(conversation);
+      if (turn.cancelled) throw turn.error;
       broker.cancel(turn.token);
       await closeWatcher(turn);
-      turn.done = true; conversation.activeTurn = undefined;
+      if (turn.cancelled) throw turn.error;
+      turn.done = true;
+      if (conversation.activeTurn === turn.turnId) conversation.activeTurn = undefined;
       return webResponseRecord(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
         content: [{ type: "output_text", text: WEB_RECOVERY_NOTICE, annotations: [] }] }]);
     }
@@ -916,6 +919,7 @@ export function createInAppWebRuntime({
       conversations.set(conversationKey, conversation);
     }
     conversation.activeTurn = owner.turnId;
+    let retained;
     try {
       transcript(payload); // Validate readable history before any browser or persistence effects.
       const previousWrite = conversation.writeTail;
@@ -929,7 +933,7 @@ export function createInAppWebRuntime({
           await persist(conversation);
         } else await conversation.writeTail;
       }
-      const retained = compactTail(conversation, readableInput(payload), undefined, false);
+      retained = compactTail(conversation, readableInput(payload), undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
     } catch (error) { conversation.activeTurn = undefined; throw error; }
     const turn = { ...owner, settings, selection: model, model: payload.model, executor, tools,
@@ -938,9 +942,13 @@ export function createInAppWebRuntime({
       cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
     if (conversation.recovery?.stage === "armed") {
       turn.initialBrowserOperation = "recover";
-      turn.recoveryInputHashes = transcript(payload).map(digest);
-      if (!conversation.checkpoint.every((hash, index) => turn.recoveryInputHashes[index] === hash)
-          || !transcript(payload).slice(conversation.checkpoint.length).some(item => item.role === "user")) {
+      const current = transcript(payload);
+      turn.recoveryInputHashes = current.map(digest);
+      // A verified alias proves the same accepted history across native
+      // compaction. Checking it cannot acknowledge the abandoned input.
+      const tail = retained === undefined ? current.slice(conversation.checkpoint.length) : transcript({ input: retained });
+      if (retained === undefined && !conversation.checkpoint.every((hash, index) => turn.recoveryInputHashes[index] === hash)
+          || !tail.some(item => item.role === "user")) {
         conversation.activeTurn = undefined;
         throw fail("The recovery-only request must retain the exact accepted history and current native user input.", "web_history_mismatch");
       }
