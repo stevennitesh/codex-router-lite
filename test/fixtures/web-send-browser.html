@@ -24,6 +24,7 @@
   <button data-case="draft-only">Restored draft alone</button>
   <button data-case="edited-draft">Error with edited draft</button>
   <button data-case="accepted-answer">Accepted answer</button>
+  <button data-case="structured-answer">Structured answer</button>
 </nav>
 <output id="contract-status" data-case="none" data-retries="0">Choose a scenario.</output>
 <section id="chat" aria-label="Rendered chat"></section>
@@ -72,6 +73,19 @@
     regenerate.textContent = 'Regenerate';
     element.append(regenerate);
   }
+  function structuredAnswer(element) {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-chatgpt-selection-message-id', '33333333-3333-4333-8333-333333333333');
+    wrapper.setAttribute('data-message-author-role', 'assistant');
+    wrapper.innerHTML = '<div data-markdown-text-style="assistant-message"><p>See <a href="https://example.test/guide?q=a%20b">guidance</a>.</p><table><tbody><tr><th>Name</th><th>Value</th></tr><tr><td>Alpha</td><td>Beta</td></tr></tbody></table></div>'
+      + '<div data-markdown-text-style="assistant-message"><pre><code>  literal ``` fence\n\n    indented\n</code></pre></div>'
+      + '<div data-markdown-text-style="assistant-message"><ol start="3"><li>First</li><li>Second</li></ol><p>Done.</p></div>';
+    element.append(wrapper);
+    const regenerate = document.createElement('button');
+    regenerate.setAttribute('aria-label', 'Regenerate response');
+    regenerate.textContent = 'Regenerate';
+    element.append(regenerate);
+  }
   for (const button of document.querySelectorAll('[data-case]')) button.addEventListener('click', () => {
     if (button.tagName !== 'BUTTON') return;
     const name = button.dataset.case;
@@ -88,7 +102,8 @@
     if (name === 'quoted-user') current.querySelector('[data-message-author-role="user"]').append(errorGroup());
     if (name === 'quoted-assistant') answer(current, true);
     if (name === 'accepted-answer') answer(current, false);
-    if (!['optimistic-bubble', 'accepted-answer'].includes(name)) composer.textContent = name === 'edited-draft' ? 'User edited this draft.' : submitted;
+    if (name === 'structured-answer') structuredAnswer(current);
+    if (!['optimistic-bubble', 'accepted-answer', 'structured-answer'].includes(name)) composer.textContent = name === 'edited-draft' ? 'User edited this draft.' : submitted;
     if (name === 'attachment-error') {
       const attachment = document.createElement('span');
       attachment.setAttribute('contenteditable', 'false');

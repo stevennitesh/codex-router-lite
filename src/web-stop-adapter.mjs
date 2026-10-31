@@ -588,6 +588,8 @@ export class AdapterBridge {
             && isSavedChatUrl(value.url) && typeof value.tabId === 'string' && value.tabId.length > 0
             && uuid(value.generationTurnKey) && !browserObservationOwnershipLost(value)
             && typeof value.completed === 'boolean' && typeof value.assistantText === 'string'
+            && (value.assistantRenderedText === undefined || typeof value.assistantRenderedText === 'string'
+              && (value.replyId !== null || value.assistantRenderedText === ''))
             && Array.isArray(value.baselineReplyIds) && value.baselineReplyIds.every(uuid)
             && Array.isArray(value.generationReplyIds) && value.generationReplyIds.every(uuid)
             && new Set(value.baselineReplyIds).size === value.baselineReplyIds.length

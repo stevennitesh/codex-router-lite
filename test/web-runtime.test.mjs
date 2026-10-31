@@ -435,7 +435,7 @@ test("opaque quarantine refuses unresolved visible native actions and accepts on
   const historicalCall = { type: "function_call", call_id: "native-inspector-call", name: "mcp__node_repl.js", arguments: "{}" };
   const historicalResult = { type: "function_call_output", call_id: historicalCall.call_id, output: "Actual terminal native inspector result" };
   const searchCall = { type: "tool_search_call", call_id: "native-search-call", execution: "client", arguments: { query: "js" } };
-  const searchResult = { type: "tool_search_output", call_id: searchCall.call_id, status: "completed", tools: [] };
+  const searchResult = { type: "tool_search_output", call_id: searchCall.call_id, execution: "client", status: "completed", tools: [] };
   const customCall = { type: "custom_tool_call", call_id: "native-custom-call", name: "apply_patch", input: "historic native input" };
   const customResult = { type: "custom_tool_call_output", call_id: customCall.call_id, output: "Actual terminal native custom result" };
   for (const [name, records, code] of [
@@ -447,9 +447,13 @@ test("opaque quarantine refuses unresolved visible native actions and accepts on
     ["missing output", [historicalCall, { type: "function_call_output", call_id: historicalCall.call_id }], "web_tool_result"],
     ["unpaired search", [searchCall], "web_coding_uncertain"],
     ["missing search result", [searchCall, { ...searchResult, tools: undefined }], "web_tool_result"],
+    ["incomplete search result", [searchCall, { ...searchResult, status: "in_progress" }], "web_tool_result"],
+    ["foreign search execution", [searchCall, { ...searchResult, execution: "server" }], "web_tool_result"],
+    ["malformed search declarations", [searchCall, { ...searchResult, tools: [{ type: "namespace", name: "broken" }] }], "web_tool_result"],
     ["unpaired custom", [customCall], "web_coding_uncertain"],
     ["actual function pair", [historicalCall, historicalResult], null],
     ["actual search pair", [searchCall, searchResult], null],
+    ["failed search pair", [searchCall, { ...searchResult, status: "failed", tools: undefined }], null],
     ["actual custom pair", [customCall, customResult], null],
     ["orphan historical data", [{ type: "function_call_output", call_id: "unknown-historical-owner", output: "Unconfirmed orphan data" }], null],
   ]) await t.test(name, async t => {
@@ -1889,7 +1893,10 @@ test("the native runtime accepts a new reply identity after mounted counts shrin
 test("fragmented message DOM reaches native completion with all prose and code and retains its saved binding", async t => {
   const h = harness(t), { call } = await h.toObserve();
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
-  const fragments = [domElement("div", {}, domElement("p", {}, domText("Before code."))),
+  const fragments = [domElement("div", {}, domElement("p", {}, domText("Before code. "), domElement("a", { href: "https://example.test/report" }, domText("report")))),
+    domElement("div", {}, domElement("table", {},
+      domElement("tr", {}, domElement("th", {}, domText("Tool")), domElement("th", {}, domText("Result"))),
+      domElement("tr", {}, domElement("td", {}, domText("read")), domElement("td", {}, domText("actual"))))),
     domElement("div", {}, domElement("div", { "data-markdown-copy": "code-block" }, domElement("code", {}, domText(source)))),
     domElement("div", {}, domElement("p", {}, domText("After code.")))];
   domElement("div", { "data-chatgpt-selection-message-id": messageId(0) }, ...fragments);
@@ -1898,9 +1905,11 @@ test("fragmented message DOM reaches native completion with all prose and code a
   const frame = await h.executeBrowser(call);
   const frameToken = frame.match(/^ROUTER_WEB_BROWSER_([A-Za-z0-9_-]+)_BEGIN\n/u)[1];
   const observed = parseBrowserOutput(frame, frameToken);
-  const expected = `Before code.\n\n${source}\n\nAfter code.`;
+  const custody = `Before code. report\n\nToolResult\nreadactual\n\n${source}\n\nAfter code.`;
+  const expected = `Before code. [report](<https://example.test/report>)\n\n| Tool | Result |\n| --- | --- |\n| read | actual |\n\n\`\`\`\n${source}\`\`\`\n\nAfter code.`;
   assert.equal(observed.completed, true);
-  assert.equal(observed.assistantText, expected);
+  assert.equal(observed.assistantText, custody);
+  assert.equal(observed.assistantRenderedText, expected);
   assert.equal(observed.replyId, messageId(0));
   h.append(call, outputFor(call, frame));
   const retained = await h.request();
@@ -1912,12 +1921,20 @@ test("fragmented message DOM reaches native completion with all prose and code a
   assert.equal(saved.tabId, "owned-saved-tab");
   assert.equal(saved.observation.replyId, messageId(0));
   assert.equal(saved.observation.completed, true);
+  assert.deepEqual(saved.observation.assistantPrefix, { length: custody.length, sha256: createHash("sha256").update(custody).digest("hex") });
+  assert.equal(saved.assistantRenderedSha256, createHash("sha256").update(expected).digest("hex"));
   assert.equal(saved.bindingId, h.observations.bindings[0].replace(/^routerWeb_/u, ""));
   assert.equal(h.browserOwner().state.retained, true);
   assert.equal(h.browser.ui.sends.length, 1);
   assert.equal(h.browser.ui.newTabs, 1);
   assert.equal(h.browser.ui.closes, 0);
   assert.equal(new Set(h.observations.bindings).size, 1);
+  h.append(final.output[0]);
+  await h.restartRuntime(); h.loseKernel();
+  h.newTurn(followupId, "Continue after the formatted answer.");
+  await h.toObserve();
+  assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue after the formatted answer." }]);
+  assert.equal(h.browser.ui.newTabs, 1);
 });
 
 test("native continuation identity failure exposes bounded structural evidence before another Send", async t => {
@@ -2723,15 +2740,17 @@ test("terminal turns release their native schema after request, watcher and chec
     const h = harness(t, { watcherClosure: () => closureAllowed });
     let tools = structuredClone([nativeJs, currentRead]);
     const schema = new WeakRef(tools[0].tools[0].parameters);
-    let response = await h.request({ tools }); tools = undefined;
-    while (JSON.parse(response.output[0].arguments).title !== "Wait for ChatGPT or its next Codex tool request") response = await h.answerBrowser(response.output[0]);
+    const answer = async call => { h.append(call, outputFor(call, await h.executeBrowser(call))); return h.request({ tools }); };
+    let response = await h.request({ tools });
+    while (JSON.parse(response.output[0].arguments).title !== "Wait for ChatGPT or its next Codex tool request") response = await answer(response.output[0]);
     let terminal;
     if (completed) {
       h.browser.ui.texts.push("Completed owned answer"); h.browser.ui.complete = true;
-      const retain = (await h.answerBrowser(response.output[0])).output[0];
-      terminal = h.answerBrowser(retain);
+      const retain = (await answer(response.output[0])).output[0];
+      terminal = answer(retain);
       await new Promise(resolve => setImmediate(resolve));
     } else h.observations.watchers[0].onCancel();
+    tools = undefined;
     await new Promise(resolve => setImmediate(resolve)); global.gc();
     assert.ok(schema.deref(), "An unsettled watcher still owns the terminal turn.");
     release();
@@ -3631,6 +3650,56 @@ test("attributed compaction preserves undelivered native items without resending
   });
 });
 
+test("local compaction preserves a browser executor declared only in current additional tools", async t => {
+  for (const v2 of [false, true]) await t.test(v2 ? "native V2" : "local V1", async t => {
+    const h = harness(t), { call } = await h.toObserve();
+    await h.completeAnswer(call, "Accepted answer before local compaction.");
+    const original = structuredClone(h.input());
+    const response = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: v2, input: h.input() },
+      { ...(v2 ? { compactV2: true } : { compact: true }), headers: headers() });
+    const output = v2 ? [...nativeV2Users(original), await nativeV2Checkpoint(response)] : (await response.json()).output;
+    h.input().splice(0, h.input().length, ...output, { type: "additional_tools", tools: [nativeJs] });
+    h.newTurn(followupId, "Continue using the current additional executor.", { tools: [currentRead] });
+    const { call: observation } = await h.toObserve();
+    assert.ok(h.broker.list(h.token()).tools.some(tool => tool.namespace === "mcp__node_repl"));
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Continue using the current additional executor." }]);
+    await h.completeAnswer(observation, "The current additional executor completed the compacted turn.");
+    assert.equal(h.browser.ui.sends.length, 2);
+    assert.equal(h.browser.ui.newTabs, 1);
+  });
+});
+
+test("retained coding continuations use current additional schemas and choices, then remove absent declarations", async t => {
+  const h = harness(t, { tools: [nativeJs] });
+  h.append({ type: "additional_tools", tools: [currentRead] });
+  const { call } = await h.toObserve(), token = h.token();
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
+  const result = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "already-emitted.txt" } });
+  void result.catch(() => {});
+  const emitted = (await h.answerBrowser(call)).output[0];
+  const queued = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "older-schema.txt" } });
+  const revoked = assert.rejects(queued, { code: "web_tool_policy_changed" });
+  h.append(emitted, outputFor(emitted, "Actual execution before compaction"));
+  const original = structuredClone(h.input());
+  const checkpoint = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", stream: true, input: h.input() },
+    { compactV2: true, headers: headers() }));
+  const changedRead = structuredClone(currentRead); changedRead.tools[0].parameters.required.push("limit");
+  const additional = { type: "additional_tools", tools: [changedRead] };
+  h.input().splice(0, h.input().length, ...nativeV2Users(original), checkpoint, additional);
+  const observation = (await h.request({ tool_choice: { type: "function", namespace: "mcp__work", name: "read" } })).output[0];
+  await revoked;
+  assert.deepEqual(await result, { content: [{ type: "text", text: "Actual execution before compaction" }] });
+  assert.deepEqual(h.broker.list(token).tools.map(tool => tool.parameters.required), [["path", "limit"]]);
+  assert.equal(JSON.parse(observation.arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  h.input().splice(h.input().indexOf(additional), 1);
+  h.append(observation, outputFor(observation, await h.executeBrowser(observation)));
+  await h.request({ tool_choice: "auto" });
+  assert.equal(h.broker.list(token).tools.some(tool => tool.name === "read"), false);
+  await assert.rejects(h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "removed.txt", limit: 1 } }), { code: "invalid_web_tool_call" });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
 test("confirmed capacity rejection with no answer or coding action transfers history once and refreshes native authority", async t => {
   const instructions = "Successor chats retain the current full native authority.";
   const h = harness(t, { instructions }), { call } = await h.toObserve();
@@ -4151,6 +4220,142 @@ test("an MCP call queued after the delivered batch is emitted after that batch c
   assert.deepEqual(await secondResult, { content: [{ type: "text", text: "second actual result" }] });
   assert.equal(JSON.parse(observation.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
   assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("ordinary browser continuations replace current tool authority before invocation or queued emission", async t => {
+  for (const change of ["removed", "none", "schema"]) for (const queued of [false, true]) await t.test(`${change}; queued ${queued}`, async t => {
+    const h = harness(t), { call } = await h.toObserve(), token = h.token();
+    const read = h.broker.list(token).tools.find(tool => tool.name === "read");
+    const result = queued ? h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "never-emitted.txt" } }) : undefined;
+    const rejected = result && assert.rejects(result, { code: "web_tool_policy_changed" });
+    const changedRead = structuredClone(currentRead);
+    changedRead.tools[0].parameters.required.push("limit");
+    const tools = change === "removed" ? [nativeJs] : [nativeJs, change === "schema" ? changedRead : currentRead];
+    h.append(call, outputFor(call, await h.executeBrowser(call)));
+    const response = await h.request({ tools, tool_choice: change === "none" ? "none" : "auto" });
+    if (rejected) await rejected;
+    assert.equal(JSON.parse(response.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+    const listed = h.broker.list(token).tools.find(tool => tool.name === "read");
+    if (change === "schema") assert.deepEqual(listed.parameters.required, ["path", "limit"]);
+    else {
+      assert.equal(listed, undefined);
+      await assert.rejects(h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "removed.txt" } }), { code: "invalid_web_tool_call" });
+    }
+  });
+});
+
+test("policy replacement preserves emitted call identity and results while revoking a later queued call", async t => {
+  const h = harness(t), { call } = await h.toObserve(), token = h.token();
+  const read = h.broker.list(token).tools.find(tool => tool.name === "read");
+  const firstResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "already-emitted.txt" } });
+  void firstResult.catch(() => {});
+  const emitted = (await h.answerBrowser(call)).output[0];
+  const secondResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "queued-after-emission.txt" } });
+  const rejected = assert.rejects(secondResult, { code: "web_tool_policy_changed" });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, [{ callId: emitted.call_id, outputType: "function_call_output" }]);
+  h.append(emitted, outputFor(emitted, "Original native execution result"));
+  const response = await h.request({ tools: [nativeJs], tool_choice: "none" });
+  await rejected;
+  assert.deepEqual(await firstResult, { content: [{ type: "text", text: "Original native execution result" }] });
+  assert.equal(h.broker.list(token).total, 0);
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+  assert.equal(JSON.parse(response.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("a browser continuation cannot emit a cached executor removed from current native declarations", async t => {
+  const h = harness(t), { call } = await h.toObserve();
+  h.append(call, outputFor(call, await h.executeBrowser(call)));
+  const operations = h.observations.nativeOperations.length;
+  await assert.rejects(h.request({ tools: [currentRead] }), { code: "web_browser_capability_gap" });
+  assert.equal(h.observations.nativeOperations.length, operations);
+  assert.equal(h.browser.ui.sends.length, 1);
+});
+
+test("malformed native search arguments can be corrected before any native execution is emitted", async t => {
+  const h = harness(t, { tools: [nativeJs, search] }), { call } = await h.toObserve(), token = h.token();
+  const definition = h.broker.list(token).tools.find(tool => tool.kind === "tool_search");
+  await assert.rejects(h.broker.invoke(token, { wireName: definition.wireName, arguments: {} }), { code: "invalid_web_tool_call" });
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+  const corrected = h.broker.invoke(token, { wireName: definition.wireName, arguments: { query: "current tools", limit: 1 } });
+  void corrected.catch(() => {});
+  const emitted = (await h.answerBrowser(call)).output[0];
+  assert.equal(emitted.type, "tool_search_call");
+  h.append(emitted, outputFor(emitted, [currentRead]));
+  await h.request();
+  assert.equal((await corrected).isError, undefined);
+  assert.ok(h.broker.list(token).tools.some(tool => tool.namespace === "mcp__work"));
+  assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+});
+
+test("search completion rejects incomplete or malformed results across live and durable reconciliation", async t => {
+  for (const malformed of ["status", "execution", "declarations"]) await t.test(malformed, async t => {
+    const h = harness(t, { tools: [nativeJs, search, currentRead] }), { call } = await h.toObserve(), token = h.token();
+    const definition = h.broker.list(token).tools.find(tool => tool.kind === "tool_search");
+    const result = h.broker.invoke(token, { wireName: definition.wireName, arguments: { query: "workspace" } });
+    const rejected = assert.rejects(result);
+    const read = h.broker.list(token).tools.find(tool => tool.name === "read");
+    const readResult = h.broker.invoke(token, { wireName: read.wireName, arguments: { path: "actual.txt" } });
+    const readRejected = assert.rejects(readResult);
+    const [emitted, emittedRead] = (await h.answerBrowser(call)).output;
+    const output = outputFor(emitted, [currentRead]);
+    if (malformed === "status") output.status = "in_progress";
+    else if (malformed === "execution") delete output.execution;
+    else output.tools = [{ type: "function" }];
+    h.append(emitted, emittedRead, output, outputFor(emittedRead, "Actual read result retained as part of the whole batch"));
+    await assert.rejects(h.request(), { code: "invalid_web_tool_call" });
+    await Promise.all([rejected, readRejected]);
+    const unresolved = [{ callId: emitted.call_id, outputType: "tool_search_output" }, { callId: emittedRead.call_id, outputType: "function_call_output" }];
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, unresolved);
+    await h.restartRuntime();
+    h.newTurn(followupId, "Resume only after the actual terminal result.");
+    await assert.rejects(h.request(), { code: "web_tool_result" });
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, unresolved);
+    Object.assign(output, outputFor(emitted, []));
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "The actual terminal result is now present.");
+    assert.equal((await h.request()).output[0].type, "function_call");
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+  });
+});
+
+test("terminal native search failures resolve their action without granting returned declarations", async t => {
+  for (const failure of [{ status: "failed" }, { isError: true }]) await t.test(JSON.stringify(failure), async t => {
+    const h = harness(t, { tools: [nativeJs, search] }), { call } = await h.toObserve(), token = h.token();
+    const definition = h.broker.list(token).tools.find(tool => tool.kind === "tool_search");
+    const result = h.broker.invoke(token, { wireName: definition.wireName, arguments: { query: "workspace" } });
+    void result.catch(() => {});
+    const emitted = (await h.answerBrowser(call)).output[0];
+    h.append(emitted, { ...outputFor(emitted, [currentRead]), ...failure });
+    const observation = await h.request();
+    assert.equal((await result).isError, true);
+    assert.equal(h.broker.list(token).tools.some(tool => tool.namespace === "mcp__work"), false);
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).unresolvedCoding, []);
+    assert.equal(JSON.parse(observation.output[0].arguments).title, "Wait for ChatGPT or its next Codex tool request");
+  });
+});
+
+test("browser executor discovery requires a completed client search result before opening a tab", async t => {
+  for (const override of [{ status: "in_progress" }, { execution: "server" }, { tools: [{ type: "namespace", name: "broken" }] }]) {
+    const h = harness(t, { tools: [search] }), call = (await h.request()).output[0];
+    h.append(call, { ...outputFor(call, [nativeJs]), ...override });
+    await assert.rejects(h.request(), { code: "web_tool_result" });
+    assert.equal(h.browser.ui.newTabs, 0);
+  }
+});
+
+test("historical native search declarations require the shared call and completion contracts", () => {
+  const call = { type: "tool_search_call", call_id: "historical-search", execution: "client", arguments: { query: "current native executor", limit: 1 } };
+  const output = outputFor(call, [nativeJs]);
+  assert.deepEqual(collectWebTools({ tools: [], input: [call, output] }), [nativeJs]);
+  for (const input of [[call, call, output], [call, output, output]]) assert.deepEqual(collectWebTools({ tools: [], input }), []);
+  for (const [invalidCall, invalidOutput] of [
+    [{ ...call, call_id: "" }, { ...output, call_id: "" }],
+    [{ ...call, arguments: {} }, output], [{ ...call, arguments: { query: "js", limit: 0 } }, output],
+    [call, { ...output, status: "in_progress" }], [call, { ...output, execution: "server" }],
+    [call, { ...output, tools: [{ type: "function" }] }], [call, { ...output, isError: true }],
+    [call, { ...output, status: "failed" }],
+  ]) assert.deepEqual(collectWebTools({ tools: [], input: [invalidCall, invalidOutput] }), []);
 });
 
 test("a changed request without the pending native result is rejected instead of replaying an uncertain call", async t => {

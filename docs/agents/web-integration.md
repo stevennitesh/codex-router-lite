@@ -95,8 +95,13 @@ its uncertainty and no-replay rules. The first anchored observation also supplie
 current delivery evidence to Stop; before an anchor exists, cancellation can drain
 native work but cannot safely click an unowned page control.
 
+Send first verifies that the settled inline composer contains the complete intended
+prompt, allowing only CRLF or CR line endings to normalize to LF. Truncated text and transformations
+that cannot be verified stop preparation before Send and preserve the draft. An
+empty composer and enabled Send do not prove that an automatic text attachment
+contains the prompt; without payload proof that transformation cannot be sent.
 Current-generation substantive assistant output or an authenticated current-token
-broker handler acknowledges input. Registration, declaration updates, Stop visibility
+broker handler then acknowledges the verified input. Registration, declaration updates, Stop visibility
 and complete turn state do not. Until that proof, the active turn keeps its URL,
 reply baseline, generation and proposed checkpoint privately; the durable prior
 checkpoint, instruction digest and compaction aliases remain unchanged, with Send
@@ -110,10 +115,9 @@ delivery record requires full instructions;
 changed instructions explicitly supersede the earlier instructions. A successor
 chat receives full instructions. Existing rollback readers can still read these
 records and resume with their ordinary full instruction delivery.
-After paste settlement, Send appends the current tool-token directive beside the
-generation marker in the visible composer. This keeps the current authority out
-of an automatically created text attachment without discarding its context. The
-structured token comes from the current broker registration, never from parsing
+After verified paste settlement, Send appends the current tool-token directive
+beside the generation marker in the visible composer. The structured token comes
+from the current broker registration, never from parsing
 historical transcript text; exact draft checks cover both visible additions.
 Checkpoint matching and construction reuse the same request-local item digests;
 the complete request fingerprint and changed-result checks remain independent.
@@ -383,6 +387,10 @@ generation and uncertain-action checks.
 
 Each reply snapshot retains mounted turn/message identities and order, while
 reconstructing answer text and completion details only for the owned generation.
+One DOM traversal produces stable custody text for saved-prefix proofs and rich
+answer text for native delivery. The latter preserves link destinations, table
+cells and rows, fenced code, lists and paragraphs. Formatting does not change the
+existing custody hashes or make historical answer text new native input.
 Send baselines read identities without historical answer bodies. New-turn
 anchoring reads the candidate marker, then independently verifies global
 uniqueness and latest-turn ownership. Ordinary continuation reads the owned
@@ -502,9 +510,24 @@ request to native Codex for execution and approval. Router itself does not run
 shell commands or bypass Codex approvals. Tool results return to the same active
 browser turn before ChatGPT continues. Private turn tokens and the tunnel runtime
 key are transport state and must not appear in answers or logs.
-An unchanged declaration set reuses its private accepted registry. Each update
-still evaluates current tool choice and advances its broker revision; changed
-schemas rebuild the registry without reassigning reserved wire identities.
+Every accepted native request reconciles its declarations and tool choice before
+new connector invocations or coding-tool emissions. Browser transport separately
+requires the current exact JavaScript executor declaration. Calls already emitted
+retain their original identity until their actual paired result arrives. Queued calls that the
+new policy removes, disallows or changes are rejected before emission. An unchanged
+declaration set reuses its private accepted registry. A semantically unchanged
+policy preserves its revision; changed schemas rebuild the registry without
+reassigning reserved wire identities.
+Compacted history supplies search evidence independently of the current request's
+`tools` and `additional_tools`; retaining history cannot replace current declarations.
+
+`src/web-tool-contract.mjs` owns native client-search arguments and authoritative
+results. Search arguments are validated before queueing or durable action creation.
+Only a correctly paired completed client-search result with valid tool declarations
+can grant discovered tools or resolve successful discovery. Incomplete and malformed
+results preserve unresolved work. Live execution, historical reconstruction and
+durable reconciliation use the same contract; an empty-ID error cannot resolve a
+pending call.
 
 The official tunnel exposes health snapshots, not a reliable readiness event
 stream. Its owned health-URL file is watched before launch to wake the first
@@ -745,6 +768,9 @@ Run native-tool verification separately when the tool path changes. A recovery
 check does not need a native command, and a browser-contract fixture does not
 need a tool connector. Reuse passing checks while their relevant inputs remain
 unchanged; documentation edits do not require another manual Stop trial.
+Verification requires exact native tool identities and call kinds, unique call IDs,
+matching output kinds and call-before-result ordering. An ID prefix or a tool-name
+suffix alone cannot establish execution identity.
 
 ### Automatic agent-run verification
 

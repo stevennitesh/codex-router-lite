@@ -11,6 +11,7 @@ import { CODEX_HOME, INSTALL_MANIFEST_PATH, SOURCE_ROOT, STATE_DIR } from '../sr
 import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram, isBrowserContinuationCacheMiss } from '../src/web-browser.mjs';
 import { WEB_MODEL_REGISTRY, webModelSelection } from '../src/web-models.mjs';
 import { validWebConversationRisk } from '../src/web-runtime.mjs';
+import { completedWebToolSearchOutput, validWebToolSearchCall, webToolIdentity, webToolKinds } from '../src/web-tool-contract.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -29,6 +30,32 @@ const requireValue = (condition, code) => { if (!condition) fail(code); };
 const normalize = value => value.replace(/\r\n?/gu, '\n').replace(/\n+$/u, '');
 const identity = ledger => ({ chatUrl: ledger.chatUrl, tabId: String(ledger.tabId), bindingId: ledger.bindingId });
 const sameIdentity = (a, b) => a.chatUrl === b.chatUrl && a.tabId === b.tabId && a.bindingId === b.bindingId;
+const successfulToolOutputEnvelope = output => output.isError !== true
+  && (!Object.hasOwn(output, 'status') || output.status === 'completed');
+const callKinds = new Map(Object.entries(webToolKinds).map(([kind, contract]) => [contract.callType, kind]));
+const outputKinds = new Set(Object.values(webToolKinds).map(contract => contract.outputType));
+// Runtime calls retain an explicit namespace. Desktop rollout records may
+// flatten that exact identity, and omit the default functions namespace.
+// These are the complete accepted evidence spellings, independent of call IDs.
+const browserIdentities = new Set([
+  { namespace: 'mcp__node_repl', name: 'js', kind: 'function' },
+  { name: 'mcp__node_repl.js', kind: 'function' },
+].map(webToolIdentity));
+const commandIdentities = new Set([
+  { namespace: 'functions', name: 'exec_command', kind: 'function' },
+  { name: 'functions.exec_command', kind: 'function' },
+  { name: 'exec_command', kind: 'function' },
+].map(webToolIdentity));
+
+function verificationCallKind(call) {
+  const kind = callKinds.get(call.type);
+  requireValue(call.namespace === undefined || typeof call.namespace === 'string', 'unexpected_native_tool');
+  const key = webToolIdentity({ namespace: call.namespace, name: call.name, kind });
+  if (browserIdentities.has(key)) return 'browser';
+  if (commandIdentities.has(key)) return 'native';
+  if (kind === 'tool_search' && call.namespace === undefined && call.name === undefined && validWebToolSearchCall(call)) return 'discovery';
+  fail('unexpected_native_tool');
+}
 
 function expectedModel(options) {
   const hasModel = options.model !== undefined, hasEffort = options.effort !== undefined;
@@ -246,7 +273,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       requireValue(receipt.nativeModelVerified, 'native_model_or_effort_mismatch');
     }
     const calls = new Map(), outputs = new Map(), finals = [];
-    let firstResponseItem = true;
+    let firstResponseItem = true, pendingBrowserCall;
     const switchPrefix = [
       [['model_switch.instructions']],
       [['collaboration_mode.instructions'], ['host_skills.instructions', 'collaboration_mode.instructions']],
@@ -286,23 +313,33 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       }
       requireValue(prefixLength === 0 || prefixLength === switchPrefix.length, 'unsupported_app_model_switch_prefix');
       firstResponseItem = false;
-      if (['function_call', 'custom_tool_call', 'tool_search_call'].includes(p?.type)) {
-        requireValue(typeof p.call_id === 'string' && !calls.has(p.call_id), 'duplicate_or_invalid_call'); calls.set(p.call_id, p);
+      if (callKinds.has(p?.type)) {
+        requireValue(typeof p.call_id === 'string' && p.call_id.length > 0 && !calls.has(p.call_id), 'duplicate_or_invalid_call');
+        if (verificationCallKind(p) === 'browser') {
+          requireValue(pendingBrowserCall === undefined, 'browser_call_before_result');
+          pendingBrowserCall = p.call_id;
+        }
+        calls.set(p.call_id, p);
       }
-      if (['function_call_output', 'custom_tool_call_output', 'tool_search_output'].includes(p?.type)) {
-        requireValue(typeof p.call_id === 'string' && !outputs.has(p.call_id), 'duplicate_or_invalid_output'); outputs.set(p.call_id, p.output);
+      if (outputKinds.has(p?.type)) {
+        requireValue(typeof p.call_id === 'string' && p.call_id.length > 0 && !outputs.has(p.call_id), 'duplicate_or_invalid_output');
+        const call = calls.get(p.call_id);
+        requireValue(call, 'unpaired_output');
+        requireValue(p.type === webToolKinds[callKinds.get(call.type)].outputType, 'tool_output_kind_mismatch');
+        outputs.set(p.call_id, p);
+        if (p.call_id === pendingBrowserCall) pendingBrowserCall = undefined;
       }
       if (p?.type === 'message' && p.role === 'assistant' && p.phase === 'final_answer') {
         requireValue(Array.isArray(p.content) && p.content.every(block => block.type === 'output_text' && typeof block.text === 'string'), 'unsupported_final_message');
         finals.push(p.content.map(block => block.text).join('\n'));
       }
     }
-    for (const id of outputs.keys()) requireValue(calls.has(id), 'unpaired_output');
     const browser = [], native = [], discovery = []; let pending = false, fullContinuationPending = false, sendCalls = 0;
     for (const [id, call] of calls) {
-      const paired = outputs.has(id), result = outputs.get(id);
+      const paired = outputs.has(id), output = outputs.get(id), result = output?.output;
       if (!paired) pending = true;
-      if (/^call_router_web_[a-f0-9]{32}$/u.test(id)) {
+      const kind = verificationCallKind(call);
+      if (kind === 'browser') {
         let args; try { args = json(call.arguments); } catch { fail('unsupported_browser_call'); }
         const config = readBrowserProgram(args?.code);
         requireValue(config && config.sessionId === run.threadId && config.turnId === turnId && config.bindingId === run.baseline.bindingId, 'browser_identity_mismatch');
@@ -310,6 +347,11 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         if (config.operation === 'send') requireValue(++sendCalls === 1, 'duplicate_send');
         if (fullContinuationPending) requireValue(config.operation === 'continue' && config.fullContinuation === true, 'full_continuation_required');
         else requireValue(config.fullContinuation !== true, 'unexpected_full_continuation');
+        if (config.operation === 'send') requireValue(browser.at(-1)?.config.operation === 'continue', 'browser_sequence_mismatch');
+        if (config.operation === 'observe') requireValue(browser.some(item => item.config.operation === 'send')
+          && !browser.some(item => item.config.operation === 'retain'), 'browser_sequence_mismatch');
+        if (config.operation === 'retain') requireValue(browser.at(-1)?.config.operation === 'observe', 'browser_sequence_mismatch');
+        if (config.operation === 'continue') requireValue(sendCalls === 0, 'browser_sequence_mismatch');
         if (expected && config.operation === 'send') {
           receipt.observedFamily = knownFamily(config.modelFamily);
           receipt.observedPower = knownPower(config.power);
@@ -317,6 +359,12 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         }
         if (['recall', 'ready', 'continuation'].includes(phase) && config.operation === 'send') requireValue(typeof config.prompt === 'string' && !config.prompt.includes(run.marker), 'marker_supplied_to_recall');
         if (!paired) continue;
+        const interruptedObservation = phase === 'stop' && config.operation === 'observe' && id === [...calls.keys()].at(-1)
+          && typeof result === 'string' && /^aborted by user after \d+(?:\.\d+)?s$/u.test(result);
+        // A success-looking body cannot erase a failed native envelope. The
+        // exact interruption terminal is separate evidence; only the Stop
+        // checks below can qualify it using the actual interruption + adapter.
+        requireValue(successfulToolOutputEnvelope(output) || interruptedObservation, 'unsuccessful_tool_output');
         let frame;
         try { frame = parseBrowserOutput(result, config.frameToken); }
         catch {
@@ -324,8 +372,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
           // observation has no browser frame. Merely recognizing this shape
           // grants no success: the Stop phase below still requires the actual
           // interrupted event and its exact positive adapter terminal receipt.
-          if (phase === 'stop' && config.operation === 'observe' && id === [...calls.keys()].at(-1)
-            && typeof result === 'string' && /^aborted by user after \d+(?:\.\d+)?s$/u.test(result)) continue;
+          if (interruptedObservation) continue;
           fail('unsupported_browser_output');
         }
         if (Object.hasOwn(frame, 'needsFullContinuation') || Object.hasOwn(frame, 'noActions')) {
@@ -357,11 +404,14 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
           if (expected) receipt.browserSelectionVerified = true;
         }
         browser.push({ config, frame });
-      } else if (call.type === 'tool_search_call') discovery.push(call);
+      } else if (kind === 'discovery') {
+        if (paired) requireValue(completedWebToolSearchOutput(output, id), 'discovery_output_failed');
+        discovery.push(call);
+      }
       else {
-        const name = (call.name ?? '').split('.').at(-1);
-        requireValue(name === 'exec_command', 'unexpected_native_tool');
         native.push({ call, paired, result });
+        receipt.nativeCommandCount = native.length;
+        if (paired) requireValue(successfulToolOutputEnvelope(output), 'unsuccessful_tool_output');
       }
     }
     receipt.nativeCommandCount = native.length;
@@ -390,6 +440,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         && ['authority_replaced', 'hook_authority_invalidated', 'hook_scope_closed', 'transport_error', 'request_id_collision'].includes(row.code)), 'adapter_authority_invalidated');
     }
     if (phase === 'ready') {
+      if (pending) return { receipt };
       if (!accepted || ledger.unresolvedCoding.length !== 0 || sends.length !== 1 || !receipt.currentGenerationObserved || observation.stopVisible !== true || observation.completed !== false || ledger.generationCompleted !== false || !authority) return { receipt };
       requireValue(!receipt.nativeInterrupted, 'stop_preceded_readiness');
       requireValue(!eventRows.some(row => row.generation === authority.generation && row.code === 'stop_native_dispatched'), 'stop_preceded_readiness');
@@ -418,6 +469,7 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
         requireValue(receipt.adapterStopConfirmed, 'native_stop_unconfirmed');
       }
       if (!receipt.nativeInterrupted || !receipt.adapterStopConfirmed) return { receipt };
+      requireValue(!pending, 'missing_terminal_tool_output');
       receipt.status = 'passed'; receipt.code = 'native_interruption_and_adapter_stop_confirmed';
       return { receipt };
     }

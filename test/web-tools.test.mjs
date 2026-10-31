@@ -5,6 +5,7 @@ import test from "node:test";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { collectWebTools } from "../src/web-runtime.mjs";
+import { completedWebToolSearchOutput, terminalWebToolSearchOutput, validWebToolSearchArguments, validWebToolSearchCall, webToolSearchParameters } from "../src/web-tool-contract.mjs";
 import { createWebToolBroker } from "../src/web-tools.mjs";
 
 const fn = (name, extra = {}) => ({ type: "function", name, description: `${name} tool`, parameters: { type: "object", properties: {} }, ...extra });
@@ -88,7 +89,8 @@ test("collected declarations retain wire names, native schemas, and call identit
   assert.deepEqual(broker.list(token, { names: ["a__b"] }).tools, [tools[2]], "Exact wire names take precedence over colliding native aliases.");
   assert.deepEqual(broker.list(token, { query: "a__b" }).tools, [tools[2]]);
   assert.deepEqual(broker.list(token, { names: ["a.b"] }).tools, [tools[1], tools[2]], "A native-qualified identity may retain distinct function and custom kinds.");
-  const results = tools.map(tool => broker.invoke(token, { wireName: tool.wireName, ...(tool.kind === "custom" ? { input: "raw" } : {}) }));
+  const results = tools.map(tool => broker.invoke(token, { wireName: tool.wireName, ...(tool.kind === "custom" ? { input: "raw" }
+    : tool.kind === "tool_search" ? { arguments: { query: "native tools" } } : {}) }));
   const items = broker.takeCalls(token);
   assert.deepEqual(items.map(item => [item.type, item.name, item.namespace]), [
     ["function_call", "a__b", undefined], ["function_call", "b", "a"], ["custom_tool_call", "b", "a"],
@@ -140,13 +142,137 @@ test("a delivered batch is stable while a later MCP call queues for the next nat
   finish(broker, token);
 });
 
+test("native search advertises and validates its arguments before queuing any action", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [search], { toolChoice: "required" });
+  assert.deepEqual(broker.list(token).tools[0].parameters, webToolSearchParameters);
+  for (const args of [undefined, {}, { query: "" }, { query: "  " }, { query: 1 },
+    { query: "files", limit: null }, { query: "files", limit: 0 }, { query: "files", limit: -1 },
+    { query: "files", limit: 1.5 }, { query: "files", limit: Number.MAX_SAFE_INTEGER + 1 },
+    { query: "files", limit: Infinity }, { query: "files", names: ["read"] }]) {
+    assert.equal(validWebToolSearchArguments(args), false);
+    await assert.rejects(broker.invoke(token, { wireName: "tool_search", arguments: args }), { code: "invalid_web_tool_call" });
+    assert.deepEqual(broker.takeCalls(token), []);
+    assert.equal(broker.hasPendingCalls(token), false);
+  }
+  assert.equal(finish(broker, token), false, "Invalid arguments cannot satisfy required tool use.");
+  for (const args of [{ query: "files" }, { query: " files ", limit: 1 }, { query: "files", limit: Number.MAX_SAFE_INTEGER }]) {
+    const result = broker.invoke(token, { wireName: "tool_search", arguments: args });
+    const [call] = broker.takeCalls(token);
+    assert.equal(validWebToolSearchCall(call), true);
+    assert.deepEqual(call.arguments, args);
+    broker.complete(token, [output(call, [])]);
+    await result;
+  }
+  assert.equal(finish(broker, token), true);
+});
+
+test("malformed or incomplete search results cannot settle any part of a delivered batch", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [fn("read"), search]);
+  const first = broker.invoke(token, { wireName: "read" });
+  const second = broker.invoke(token, { wireName: "tool_search", arguments: { query: "native tools" } });
+  const [read, call] = broker.takeCalls(token);
+  let settled = false;
+  void first.then(() => { settled = true; });
+  const complete = output(call, [fn("found")]);
+  for (const bad of [
+    { type: "tool_search_output", call_id: call.call_id },
+    { ...complete, execution: undefined }, { ...complete, execution: "server" },
+    { ...complete, status: undefined }, { ...complete, status: "in_progress" },
+    { ...complete, tools: undefined }, { ...complete, tools: {} },
+    { ...complete, tools: [fn("valid"), null] },
+    { ...complete, tools: [{ type: "namespace", name: "broken", tools: [{}] }] },
+    { ...complete, tools: [fn("bad_schema", { parameters: [] })] },
+    { ...complete, tools: [fn("duplicate"), fn("duplicate")] },
+    { ...complete, tools: [{ type: "namespace", name: "same", tools: [fn("duplicate")] }, fn("duplicate", { namespace: "same" })] },
+    { ...complete, tools: [fn("bad_namespace", { namespace: 3 })] },
+    { ...complete, status: "failed", tools: [null] },
+  ]) {
+    assert.equal(terminalWebToolSearchOutput(bad, call.call_id), false);
+    assert.throws(() => broker.complete(token, [output(read, "ok"), bad]), { code: "invalid_web_tool_call" });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    assert.deepEqual(broker.takeCalls(token), [read, call]);
+  }
+  assert.equal(completedWebToolSearchOutput(complete, call.call_id), true);
+  assert.equal(completedWebToolSearchOutput(output(call, [fn("same", { namespace: "native" }), custom("same"),
+    { type: "namespace", name: "native", tools: [custom("same")] }]), call.call_id), true,
+  "Flat namespaces and distinct native kinds retain their supported identities.");
+  assert.equal(completedWebToolSearchOutput({ ...complete, call_id: "" }), false);
+  assert.equal(completedWebToolSearchOutput(complete, "different"), false);
+  broker.complete(token, [output(read, "ok"), complete]);
+  await Promise.all([first, second]);
+  assert.equal(finish(broker, token), true);
+});
+
+test("terminal failed searches resolve their exact action without granting declarations", async () => {
+  const broker = createWebToolBroker();
+  const { token } = register(broker, [search]);
+  for (const extra of [{ status: "failed", tools: undefined }, { status: "failed", tools: [fn("ungranted")] },
+    { status: "completed", tools: [fn("ungranted")], isError: true }]) {
+    const result = broker.invoke(token, { wireName: "tool_search", arguments: { query: "native" } });
+    const [call] = broker.takeCalls(token);
+    const failed = output(call, [], extra);
+    assert.equal(terminalWebToolSearchOutput(failed, call.call_id), true);
+    assert.equal(completedWebToolSearchOutput(failed, call.call_id), false);
+    broker.complete(token, [failed]);
+    assert.equal((await result).isError, true);
+    await assert.rejects(broker.invoke(token, { wireName: "ungranted" }), /not declared/);
+  }
+  assert.equal(finish(broker, token), true);
+});
+
+test("new policy revokes queued work while emitted calls retain their original pairing", async () => {
+  const broker = createWebToolBroker();
+  const tools = [fn("read"), fn("write")];
+  const { token } = register(broker, tools);
+  const emitted = broker.invoke(token, { wireName: "read" });
+  const [call] = broker.takeCalls(token);
+  const queued = broker.invoke(token, { wireName: "write" });
+  const rejected = assert.rejects(queued, { code: "web_tool_policy_changed" });
+  broker.update(token, { tools, toolChoice: "none" });
+  await rejected;
+  assert.equal(broker.hasPendingCalls(token), true);
+  assert.deepEqual(broker.takeCalls(token), [call]);
+  broker.complete(token, [output(call, "original execution")]);
+  assert.deepEqual(await emitted, { content: [{ type: "text", text: "original execution" }] });
+  assert.equal(broker.hasPendingCalls(token), false);
+  await assert.rejects(broker.invoke(token, { wireName: "read" }), /not declared and allowed/);
+  assert.equal(finish(broker, token), true);
+});
+
+test("catalog updates reject stale queued schemas and unchanged updates preserve completion revision", async () => {
+  const broker = createWebToolBroker();
+  const tools = [fn("read")];
+  const { token } = register(broker, tools, { toolChoice: "required" });
+  const queued = broker.invoke(token, { wireName: "read" });
+  const rejected = assert.rejects(queued, { code: "web_tool_policy_changed" });
+  const next = [fn("read", { parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } })];
+  broker.update(token, { tools: next, toolChoice: "required" });
+  await rejected;
+  assert.deepEqual(broker.takeCalls(token), []);
+  assert.equal(finish(broker, token), false);
+  const revision = broker.revision(token);
+  broker.update(token, { tools: structuredClone(next), toolChoice: "required" });
+  assert.equal(broker.revision(token), revision);
+  const result = broker.invoke(token, { wireName: "read", arguments: { path: "current" } });
+  const [call] = broker.takeCalls(token);
+  broker.complete(token, [output(call, "ok")]);
+  await result;
+  const completion = broker.beginCompletion(token);
+  broker.update(token, { tools: next, toolChoice: "required" });
+  assert.equal(broker.finish(token, completion), true);
+});
+
 test("only current declarations authorize dynamic discovery and wire identities stay stable", async () => {
   const broker = createWebToolBroker();
   const { token } = register(broker, [search]);
   await assert.rejects(broker.invoke(token, { wireName: "new_tool" }), /not declared/);
   const result = broker.invoke(token, { wireName: "tool_search", arguments: { query: "new tool" } });
   const [call] = broker.takeCalls(token);
-  assert.throws(() => broker.update(token, { tools: [fn("new_tool")] }), { code: "web_tools_pending" });
+  broker.update(token, { tools: [search] });
+  assert.equal(broker.hasPendingCalls(token), true);
   broker.complete(token, [output(call, [fn("new_tool")])]);
   await result;
   // Discovery content alone does not manufacture a callable declaration.
@@ -198,8 +324,8 @@ test("unchanged registries reevaluate mutable current policy and preserve pendin
   await assert.rejects(broker.invoke(token, { wireName: "read" }), /not declared and allowed/u);
   assert.equal(finish(broker, token), false, "Required policy still applies on the unchanged declaration path.");
   const result = broker.invoke(token, { wireName: "write" });
-  assert.throws(() => broker.update(token, { tools: declarations, toolChoice: "none" }), { code: "web_tools_pending" });
   const [call] = broker.takeCalls(token);
+  broker.update(token, { tools: declarations, toolChoice: policy });
   assert.equal(call.name, "write");
   broker.complete(token, [output(call, "actual write result")]);
   await result;
@@ -456,7 +582,7 @@ test("Router-created object and search results use one complete JSON representat
   const canonicalBytes = protocolBody(canonical).byteLength;
   assert.ok(canonicalBytes < duplicatedBytes);
   t.diagnostic(`Synthetic JSON-RPC object result body, 20 rows each with index, Unicode text and 100-byte details: mirrored=${duplicatedBytes} bytes; canonical=${canonicalBytes} bytes.`);
-  const searchResult = broker.invoke(token, { wireName: "tool_search" });
+  const searchResult = broker.invoke(token, { wireName: "tool_search", arguments: { query: "discovered" } });
   const [searchCall] = broker.takeCalls(token);
   const searchOutput = output(searchCall, [fn("discovered")]);
   broker.complete(token, [searchOutput]);
@@ -546,6 +672,8 @@ test("client acceptance is independent of registration and declaration revisions
   assert.equal(broker.hasClientActivity(token), false);
   broker.list(token).tools;
   broker.update(token, { tools: [fn("read")], toolChoice: "auto" });
+  assert.equal(broker.revision(token), 0);
+  broker.update(token, { tools: [fn("write")], toolChoice: "auto" });
   assert.ok(broker.revision(token) > 0);
   assert.equal(broker.hasClientActivity(token), false);
   const release = broker.beginActivity(token);
@@ -660,7 +788,7 @@ test("observation cancellation and deadline remove their subscription without re
   assert.equal(getEventListeners(deadline.signal, "abort").length, 0);
   const wake = new AbortController();
   const changed = broker.waitForChange(token, revision, { signal: wake.signal });
-  broker.update(token, { tools: [fn("read")] });
+  broker.update(token, { tools: [fn("write")] });
   assert.deepEqual(await changed, { revision: revision + 1, closed: false });
   assert.equal(getEventListeners(wake.signal, "abort").length, 0);
   assert.equal(finish(broker, token), true);

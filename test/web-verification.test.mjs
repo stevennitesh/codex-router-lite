@@ -416,6 +416,164 @@ test('native verification requires one exact paired command and its real exit/ou
   assert.equal(result.code, 'native_command_missing'); assert.equal(result.nativeCommandCount, 0);
 });
 
+test('verification recognizes exact tool identities independently of call-id spelling', () => {
+  for (const browser of [{ namespace: 'mcp__node_repl', name: 'js' }, { name: 'mcp__node_repl.js' }]) {
+    for (const command of [{ namespace: 'functions', name: 'exec_command' }, { name: 'functions.exec_command' }, { name: 'exec_command' }]) {
+      const input = evidence('native');
+      let index = 0;
+      for (const entry of input.sessionRows) {
+        const call = entry.payload;
+        if (call?.type !== 'function_call') continue;
+        const browserCall = call.name === 'mcp__node_repl.js';
+        Object.assign(call, browserCall ? browser : command);
+        const output = input.sessionRows.find(row => row.payload.type === 'function_call_output' && row.payload.call_id === call.call_id).payload;
+        // A browser-looking ID cannot promote a native command into a browser.
+        call.call_id = browserCall ? `ordinary-browser-id-${++index}` : `call_router_web_${'f'.repeat(32)}`;
+        output.call_id = call.call_id;
+      }
+      assert.equal(evaluateWebPhase(input).receipt.status, 'passed', JSON.stringify({ browser, command }));
+    }
+  }
+});
+
+test('verification rejects foreign namespaces, lookalike names and wrong call kinds', () => {
+  const changes = [
+    input => { input.send.call.name = 'unrelated.noop'; },
+    input => { input.send.call.namespace = 'unrelated'; input.send.call.name = 'js'; },
+    input => { input.send.call.namespace = 'unrelated'; },
+    input => { input.send.call.namespace = null; },
+    input => { input.send.call.type = 'custom_tool_call'; },
+    input => { input.sessionRows.find(row => row.payload.call_id === 'native-command').payload.name = 'unrelated.exec_command'; },
+    input => { input.sessionRows.find(row => row.payload.call_id === 'native-command').payload.namespace = 'unrelated'; },
+    input => { input.sessionRows.find(row => row.payload.call_id === 'native-command').payload.type = 'custom_tool_call'; },
+  ];
+  for (const change of changes) {
+    const input = evidence('native'); change(input);
+    assert.equal(evaluateWebPhase(input).receipt.code, 'unexpected_native_tool');
+  }
+});
+
+test('each tool result requires its preceding unique call and exact output kind', () => {
+  for (const target of ['browser', 'native']) {
+    for (const type of ['custom_tool_call_output', 'tool_search_output']) {
+      const input = evidence('native');
+      const output = target === 'browser' ? input.send.output
+        : input.sessionRows.find(row => row.payload.call_id === 'native-command' && row.payload.type === 'function_call_output').payload;
+      output.type = type;
+      assert.equal(evaluateWebPhase(input).receipt.code, 'tool_output_kind_mismatch');
+    }
+    const reversed = evidence('native');
+    const call = target === 'browser' ? reversed.send.call : reversed.sessionRows.find(row => row.payload.call_id === 'native-command').payload;
+    const callIndex = reversed.sessionRows.findIndex(row => row.payload === call);
+    [reversed.sessionRows[callIndex], reversed.sessionRows[callIndex + 1]] = [reversed.sessionRows[callIndex + 1], reversed.sessionRows[callIndex]];
+    assert.equal(evaluateWebPhase(reversed).receipt.code, 'unpaired_output');
+  }
+  for (const [change, code] of [
+    [input => { input.sessionRows.push(row('response_item', structuredClone(input.send.call))); }, 'duplicate_or_invalid_call'],
+    [input => { input.sessionRows.push(row('response_item', structuredClone(input.send.output))); }, 'duplicate_or_invalid_output'],
+    [input => { input.send.call.call_id = ''; input.send.output.call_id = ''; }, 'duplicate_or_invalid_call'],
+    [input => { input.send.output.call_id = 'orphan'; }, 'unpaired_output'],
+    [input => { input.send.call.call_id = input.continuation.call.call_id; input.send.output.call_id = input.continuation.call.call_id; }, 'duplicate_or_invalid_call'],
+  ]) {
+    const input = evidence('native'); change(input);
+    assert.equal(evaluateWebPhase(input).receipt.code, code);
+  }
+});
+
+test('unsuccessful native and browser output envelopes cannot prove success through their bodies', () => {
+  for (const target of ['native', 'browser']) {
+    for (const fields of [{ isError: true }, ...['failed', 'incomplete', 'in_progress', 'cancelled', 'unknown', null, false].map(status => ({ status }))]) {
+      const input = evidence('native');
+      const output = target === 'browser' ? input.send.output
+        : input.sessionRows.find(row => row.payload.call_id === 'native-command' && row.payload.type === 'function_call_output').payload;
+      Object.assign(output, fields);
+      const receipt = evaluateWebPhase(input).receipt;
+      assert.equal(receipt.status, 'failed', JSON.stringify({ target, fields }));
+      assert.equal(receipt.code, 'unsuccessful_tool_output');
+      if (target === 'native') assert.equal(receipt.nativeCommandCount, 1);
+    }
+    const completed = evidence('native');
+    const output = target === 'browser' ? completed.send.output
+      : completed.sessionRows.find(row => row.payload.call_id === 'native-command' && row.payload.type === 'function_call_output').payload;
+    Object.assign(output, { status: 'completed', isError: false });
+    assert.equal(evaluateWebPhase(completed).receipt.status, 'passed');
+  }
+});
+
+test('failed interruption envelopes qualify only for the final owned observation with native and adapter proof', () => {
+  for (const fields of [{ isError: true }, { status: 'failed' }, { status: 'incomplete', isError: true }]) {
+    const input = evidence('stop');
+    Object.assign(input.observation.output, fields, { output: 'aborted by user after 47.1s' });
+    assert.equal(evaluateWebPhase(input).receipt.status, 'passed');
+    input.sessionRows.pop();
+    assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
+    input.sessionRows.push(row('event_msg', { type: 'turn_aborted', turn_id: turnId, reason: 'interrupted' }));
+    input.eventRows.pop();
+    assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
+    const wrongOperation = evidence('stop');
+    Object.assign(wrongOperation.send.output, fields, { output: 'aborted by user after 47.1s' });
+    assert.equal(evaluateWebPhase(wrongOperation).receipt.code, 'unsuccessful_tool_output');
+    const successBody = evidence('stop');
+    Object.assign(successBody.observation.output, fields);
+    assert.equal(evaluateWebPhase(successBody).receipt.code, 'unsuccessful_tool_output');
+  }
+});
+
+test('browser continuation, Send and observation evidence must retain their execution order', () => {
+  const missing = evidence('native');
+  missing.sessionRows = missing.sessionRows.filter(row => row.payload.call_id !== missing.continuation.call.call_id);
+  assert.equal(evaluateWebPhase(missing).receipt.code, 'browser_sequence_mismatch');
+  const reordered = evidence('native');
+  const first = reordered.sessionRows.findIndex(row => row.payload === reordered.continuation.call);
+  reordered.sessionRows.splice(first, 4, ...reordered.sessionRows.slice(first + 2, first + 4), ...reordered.sessionRows.slice(first, first + 2));
+  assert.equal(evaluateWebPhase(reordered).receipt.code, 'browser_sequence_mismatch');
+  const overlapping = evidence('native');
+  const outputIndex = overlapping.sessionRows.findIndex(row => row.payload === overlapping.send.output);
+  const [output] = overlapping.sessionRows.splice(outputIndex, 1);
+  overlapping.sessionRows.splice(outputIndex + 1, 0, output);
+  assert.equal(evaluateWebPhase(overlapping).receipt.code, 'browser_call_before_result');
+});
+
+test('missing tool terminals stay pending until a completed or interrupted turn fails closed', () => {
+  for (const phase of ['ready', 'stop', 'native']) {
+    const input = evidence(phase);
+    const output = phase === 'native'
+      ? input.sessionRows.find(row => row.payload.call_id === 'native-command' && row.payload.type === 'function_call_output').payload
+      : input.observation.output;
+    input.sessionRows = input.sessionRows.filter(row => row.payload !== output);
+    const receipt = evaluateWebPhase(input).receipt;
+    assert.equal(receipt.status, phase === 'ready' ? 'pending' : 'failed');
+    assert.equal(receipt.code, phase === 'ready' ? 'awaiting_evidence' : 'missing_terminal_tool_output');
+  }
+});
+
+test('native discovery requires a completed client-search result in the same ordered evidence', () => {
+  const discovery = () => {
+    const input = evidence('ready');
+    const call = { type: 'tool_search_call', call_id: 'browser-discovery', execution: 'client', arguments: { query: '+mcp__node_repl js', limit: 1 } };
+    const output = { type: 'tool_search_output', call_id: call.call_id, execution: 'client', status: 'completed', tools: [] };
+    input.sessionRows.splice(3, 0, row('response_item', call), row('response_item', output));
+    return { input, call, output };
+  };
+  assert.equal(evaluateWebPhase(discovery().input).receipt.status, 'passed');
+  for (const [change, code] of [
+    [record => { record.call.namespace = 'unrelated'; }, 'unexpected_native_tool'],
+    [record => { record.call.name = 'unrelated'; }, 'unexpected_native_tool'],
+    [record => { record.call.execution = 'server'; }, 'unexpected_native_tool'],
+    [record => { record.output.type = 'function_call_output'; }, 'tool_output_kind_mismatch'],
+    [record => { record.output.status = 'failed'; }, 'discovery_output_failed'],
+    [record => { record.output.tools = [{ type: 'unrelated' }]; }, 'discovery_output_failed'],
+  ]) {
+    const record = discovery(); change(record);
+    assert.equal(evaluateWebPhase(record.input).receipt.code, code);
+  }
+  const pending = discovery(); pending.input.sessionRows = pending.input.sessionRows.filter(row => row.payload !== pending.output);
+  assert.equal(evaluateWebPhase(pending.input).receipt.status, 'pending');
+  const reversed = discovery();
+  [reversed.input.sessionRows[3], reversed.input.sessionRows[4]] = [reversed.input.sessionRows[4], reversed.input.sessionRows[3]];
+  assert.equal(evaluateWebPhase(reversed.input).receipt.code, 'unpaired_output');
+});
+
 test('zero-exec safety refusal cannot pass and private canaries never enter receipts', () => {
   const input = evidence('native');
   input.sessionRows = input.sessionRows.filter(entry => entry.payload?.call_id !== 'native-command');

@@ -16,7 +16,7 @@ import { webResponseRecord, webCompactOutput, webCompactResponse } from "./web-r
 import { createWebToolBroker } from "./web-tools.mjs";
 import { startWebTunnel } from "./web-tunnel.mjs";
 import { watchWebTurnCancellation } from "./web-turn-cancellation.mjs";
-import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
+import { webToolIdentity, webToolKinds, validWebToolSearchCall, completedWebToolSearchOutput, terminalWebToolSearchOutput } from "./web-tool-contract.mjs";
 
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -104,6 +104,7 @@ export function validWebConversation(value, threadId) {
     && (value.tabId === undefined || nonempty(value.tabId)) && (value.chatUrl === undefined || isSavedChatUrl(value.chatUrl))
     && (value.capacityChatUrl === undefined || isSavedChatUrl(value.capacityChatUrl) && value.rolloverRequired === true)
     && (value.deliveredInstructionsSha256 === undefined || sha256(value.deliveredInstructionsSha256) && value.checkpoint !== undefined)
+    && (value.assistantRenderedSha256 === undefined || sha256(value.assistantRenderedSha256) && value.checkpoint !== undefined)
     && (value.deliveredInstructionsGenerationTurnKey === undefined || uuid.test(value.deliveredInstructionsGenerationTurnKey) && value.checkpoint !== undefined)
     && (value.checkpoint === undefined
       ? [value.chatUrl, value.sendBaseline, value.sendBaselineReplyIds, value.generationTurnKey, value.generationReplyIds, value.generationCompleted].every(field => field === undefined)
@@ -156,7 +157,9 @@ export function webTurnIdentity(payload, headers = {}) {
 
 // Merge declarations, not tool prose or invented schemas. Native additional_tools
 // and paired search results are the current caller's discovery authority.
-export function collectWebTools(payload, discovered = []) {
+// A retained history projection supplies search evidence only; current request
+// declarations still come from the original payload, including additional_tools.
+export function collectWebTools(payload, discovered = [], history = payload.input) {
   const entries = new Map();
   const add = (tool, namespace, current = false) => {
     if (!record(tool)) throw fail("Invalid current native tool declaration.", "web_tool_declaration", 400);
@@ -172,15 +175,19 @@ export function collectWebTools(payload, discovered = []) {
     if (current && previous?.current && digest(previous.tool) !== digest(clean)) throw fail("Conflicting current native tool declarations.", "web_tool_declaration", 400);
     entries.set(key, { namespace: own, tool: clean, current });
   };
-  const searches = new Set(), completed = new Set();
-  for (const item of Array.isArray(payload.input) ? payload.input : []) {
-    if (item?.type === "tool_search_call" && item.execution === "client" && typeof item.call_id === "string"
-        && typeof item.arguments?.query === "string" && item.arguments.query.trim()) searches.add(item.call_id);
-    else if (item?.type === "tool_search_output" && searches.has(item.call_id) && !completed.has(item.call_id)
-        && item.status === "completed" && Array.isArray(item.tools)) {
-      completed.add(item.call_id);
-      for (const tool of item.tools) add(tool);
-    }
+  const input = Array.isArray(history) ? history : [];
+  const pairCounts = new Map();
+  for (const item of input) if (["tool_search_call", "tool_search_output"].includes(item?.type)) {
+    const counts = pairCounts.get(item.call_id) ?? { calls: 0, outputs: 0 };
+    counts[item.type === "tool_search_call" ? "calls" : "outputs"] += 1;
+    pairCounts.set(item.call_id, counts);
+  }
+  const searches = new Set();
+  for (const item of input) {
+    const counts = pairCounts.get(item?.call_id);
+    if (counts?.calls !== 1 || counts.outputs !== 1) continue;
+    if (validWebToolSearchCall(item)) searches.add(item.call_id);
+    else if (searches.has(item?.call_id) && completedWebToolSearchOutput(item, item.call_id)) for (const tool of item.tools) add(tool);
   }
   for (const tool of discovered) add(tool);
   for (const tool of payload.tools ?? []) add(tool, undefined, true);
@@ -213,6 +220,8 @@ function knownWebAssistant(item, conversation) {
   if (conversation.recovery && text === WEB_RECOVERY_NOTICE) return true;
   if (!text.length) return false;
   if (typeof conversation.assistantText === "string" && conversation.assistantText.startsWith(text)) return true;
+  if (typeof conversation.assistantRenderedText === "string" && conversation.assistantRenderedText.startsWith(text)
+      || conversation.assistantRenderedSha256 === textDigest(text)) return true;
   const observed = conversation.observation;
   return observed?.completed === true && observed.assistantPrefix.length === text.length && observed.assistantPrefix.sha256 === textDigest(text);
 }
@@ -233,7 +242,7 @@ function validateQuarantineActions(payload) {
     } else if (outputTypes.has(item.type) && calls.has(item.call_id)) {
       const call = calls.get(item.call_id);
       if (call.resolved || item.type !== call.outputType || (item.type === "tool_search_output"
-        ? item.status !== "completed" || !Array.isArray(item.tools) : item.output === undefined)) {
+        ? !terminalWebToolSearchOutput(item, item.call_id) : item.output === undefined)) {
         throw fail("Quarantine has an invalid or duplicated native result.", "web_tool_result", 400);
       }
       call.resolved = true;
@@ -363,6 +372,7 @@ export function createInAppWebRuntime({
       checkpoint: conversation.checkpoint, sendBaseline: conversation.checkpoint === undefined ? undefined : conversation.sendBaselineReplyIds.length,
       deliveredInstructionsSha256: conversation.deliveredInstructionsSha256,
       deliveredInstructionsGenerationTurnKey: conversation.deliveredInstructionsGenerationTurnKey,
+      assistantRenderedSha256: conversation.assistantRenderedSha256,
       sendBaselineReplyIds: conversation.sendBaselineReplyIds,
       generationTurnKey: conversation.generationTurnKey, generationReplyIds: conversation.generationReplyIds, generationCompleted: conversation.generationCompleted,
       observation: conversation.observation && { ...conversation.observation,
@@ -409,7 +419,8 @@ export function createInAppWebRuntime({
     const resolved = new Set();
     for (const output of Array.isArray(payload.input) ? payload.input : []) if (conversation.unresolvedCoding.has(output?.call_id) && outputTypes.has(output?.type)) {
       if (resolved.has(output.call_id) || output.type !== conversation.unresolvedCoding.get(output.call_id)
-          || output.type !== "tool_search_output" && output.output === undefined) throw fail("Invalid paired result for an unresolved native Web call.", "web_tool_result", 400);
+          || (output.type === "tool_search_output" ? !terminalWebToolSearchOutput(output, output.call_id)
+            : output.output === undefined)) throw fail("Invalid paired result for an unresolved native Web call.", "web_tool_result", 400);
       resolved.add(output.call_id);
     }
     if (resolved.size) {
@@ -617,6 +628,9 @@ export function createInAppWebRuntime({
     return value;
   };
   const emitBrowser = async (turn, operation, payload, { fullContinuation = false } = {}) => {
+    // Browser transport is separate from connector tool choice, but its native
+    // declaration must still be current for each newly emitted operation.
+    turn.executor = discoverBrowserExecutor(turn.tools);
     const frameToken = randomBytes(24).toString("hex");
     const conversation = turn.conversation;
     const observed = conversation.observation;
@@ -690,6 +704,14 @@ export function createInAppWebRuntime({
     await persist(turn.conversation);
     return webResponseRecord(payload, calls);
   };
+  const updateTools = (turn, payload, retained) => {
+    const tools = collectWebTools(payload, turn.discovered, retained ?? payload.input);
+    // A native continuation replaces current authority before any queued call
+    // can be emitted. The broker retains emitted identities until real results,
+    // while reconciling accepted but un-emitted calls against this authority.
+    broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto" });
+    turn.tools = tools;
+  };
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
@@ -746,9 +768,8 @@ export function createInAppWebRuntime({
     if (value.normal !== true || value.tabId !== conversation.tabId || value.url !== (conversation.capacityChatUrl ?? conversation.chatUrl) || !isSavedChatUrl(value.url)) throw fail("The full-conversation signal does not belong to the connected saved chat.");
     if (conversation.uncertainSend || conversation.unresolvedCoding.size) throw fail("An uncertain Send or native coding action blocks saved-chat rollover.", "web_capacity_uncertain");
     if (turn.rollovers) throw fail("The successor chat also reached capacity; another rollover in this native turn is blocked.", "web_conversation_full");
-    // Updating the existing declaration rejects any queued or delivered MCP
-    // invocation. Do not abandon it and then repeat its request in a new chat.
-    broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
+    // Capacity transfer cannot abandon an accepted queued or emitted invocation.
+    if (broker.hasPendingCalls(turn.token)) throw fail("Cannot transfer a saved Web chat with unresolved calls.", "web_tools_pending");
     const previousToken = turn.token;
     tokenOwners.delete(previousToken);
     broker.cancel(previousToken, fail("The saved conversation reached capacity; its old tool token is revoked.", "web_turn_cancelled"));
@@ -782,6 +803,7 @@ export function createInAppWebRuntime({
     conversation.generationCompleted = false;
     conversation.observation = delivery.observation;
     conversation.assistantText = undefined;
+    conversation.assistantRenderedText = undefined; conversation.assistantRenderedSha256 = undefined;
     conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: false };
     turn.pendingDelivery = undefined;
     turn.inputObservationRevision = undefined;
@@ -800,6 +822,8 @@ export function createInAppWebRuntime({
         || value.requestError !== undefined && value.requestError !== "unknown_error"
         || !messageIds(value.generationReplyIds) || value.generationReplyIds.some(replyId => value.baselineReplyIds.includes(replyId))
         || typeof value.assistantText !== "string" || typeof value.completed !== "boolean"
+        || value.assistantRenderedText !== undefined && (typeof value.assistantRenderedText !== "string"
+          || value.replyId === null && value.assistantRenderedText !== "")
         || (value.replyId === null ? value.assistantText !== "" || value.completed && !nonempty(value.replyUnavailableReason) : typeof value.replyId !== "string" || !uuid.test(value.replyId)
           || value.baselineReplyIds.includes(value.replyId)
           || !value.generationReplyIds.includes(value.replyId))) throw fail("The browser observation has no verified conversation evidence.");
@@ -992,11 +1016,14 @@ export function createInAppWebRuntime({
         return calls.length ? emitCoding(turn, calls, payload) : emitBrowser(turn, "observe", payload);
       }
       turn.conversation.assistantText = value.assistantText;
+      const answer = (value.assistantRenderedText ?? value.assistantText).replaceAll(turn.token, "[private turn]");
       turn.pending = undefined;
       // Cancellation can admit a successor during either wait. Keep ownership
       // until durable completion, and never finalize after that cancellation.
       await closeWatcher(turn);
       if (turn.cancelled) throw turn.error;
+      turn.conversation.assistantRenderedText = answer;
+      turn.conversation.assistantRenderedSha256 = textDigest(answer);
       turn.conversation.generationCompleted = true;
       turn.conversation.lastTurn = { turnId: turn.turnId, sendState: "sent", completed: true };
       await persist(turn.conversation);
@@ -1006,7 +1033,7 @@ export function createInAppWebRuntime({
       turn.prompt = undefined; turn.promptCheckpoint = undefined; turn.promptInstructionsSha256 = undefined; turn.tools = []; turn.discovered = []; turn.processed.clear(); turn.deliveredCoding?.clear();
       turn.cache.clear();
       return webResponseRecord(payload, [{ type: "message", id: id("msg"), role: "assistant", status: "completed", phase: "final_answer",
-        content: [{ type: "output_text", text: value.assistantText.replaceAll(turn.token, "[private turn]"), annotations: [] }] }]);
+        content: [{ type: "output_text", text: answer, annotations: [] }] }]);
     }
     throw fail("Unexpected native Web browser stage.");
   };
@@ -1160,14 +1187,14 @@ export function createInAppWebRuntime({
             if (pending.kind === "browser") {
               const value = parseBrowserOutput(outputs[0].output, pending.frameToken, pending.operation, savedChatRecoveryError);
               if (value.operation !== pending.operation) throw fail("Native browser output belongs to another stage.");
+              updateTools(turn, payload, retained);
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
               response = await advance(turn, payload, value, pending);
             } else if (pending.kind === "discovery") {
-              if (outputs[0].type !== "tool_search_output" || !Array.isArray(outputs[0].tools)) throw fail("Browser discovery did not return current native declarations.");
+              if (!completedWebToolSearchOutput(outputs[0], pending.calls[0].call_id)) throw fail("Browser discovery did not return completed current native declarations.", "web_tool_result", 400);
               turn.discovered.push(...outputs[0].tools);
-              turn.tools = collectWebTools(payload, turn.discovered);
+              updateTools(turn, payload, retained);
               turn.executor = discoverBrowserExecutor(turn.tools);
-              broker.update(turn.token, { tools: turn.tools, toolChoice: payload.tool_choice ?? "auto" });
               turn.processed.set(outputs[0].call_id, outputDigest(outputs[0])); turn.pending = undefined;
               response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
             } else {
@@ -1177,26 +1204,24 @@ export function createInAppWebRuntime({
               for (const output of outputs) {
                 turn.conversation.unresolvedCoding.delete(output.call_id);
                 turn.processed.set(output.call_id, outputDigest(output));
-                if (output.type === "tool_search_output" && Array.isArray(output.tools)) turn.discovered.push(...output.tools);
+                if (completedWebToolSearchOutput(output, output.call_id)) turn.discovered.push(...output.tools);
               }
-              const tools = collectWebTools(retained ? { ...payload, input: retained } : payload, turn.discovered);
-              // Parallel MCP requests can arrive after an earlier batch was
-              // delivered. Drain those exact calls before changing schemas.
+              updateTools(turn, payload, retained);
               const queued = broker.takeCalls(turn.token);
-              if (!queued.length) {
-                broker.update(turn.token, { tools, toolChoice: payload.tool_choice ?? "auto" });
-                turn.tools = tools;
-              }
               turn.pending = undefined;
               if (queued.length) response = await emitCoding(turn, queued, payload);
               else response = await emitBrowser(turn, "observe", payload);
             }
           }
         } else if (!turn.executor) {
+          updateTools(turn, payload, retained);
           const call = { type: "tool_search_call", id: id("ts"), call_id: id("call_router_web"), execution: "client", arguments: { limit: 1, query: "+mcp__node_repl js persistent JavaScript browser runtime" } };
           turn.pending = { kind: "discovery", calls: [call] };
           response = webResponseRecord(payload, [call]);
-        } else response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
+        } else {
+          updateTools(turn, payload, retained);
+          response = await emitBrowser(turn, turn.initialBrowserOperation, payload);
+        }
         if (turn.cancelled) throw turn.error;
         // The response owner serializes each complete reply once. Cache that
         // wire record and give every caller an independent response body.

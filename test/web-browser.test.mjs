@@ -30,6 +30,43 @@ const sourceBlock = source => domElement("div", { "data-markdown-copy": "code-bl
   domElement("div", { "data-markdown-copy": "exclude" }, domText("Plain text")),
   domElement("div", { "data-code-block-source": "true" }, domElement("code", {}, domElement("span", {}, domText(source)))));
 
+const structuredSource = "  literal ``` fence\n\n    indented\n";
+const structuredCustody = `See guidance.\n\nNameValue\nAlphaBeta\n\n${structuredSource}\n\nFirst\nSecond\n\nDone.`;
+const structuredRendered = `See [guidance](<https://example.test/guide?q=a%20b>).\n\n| Name | Value |\n| --- | --- |\n| Alpha | Beta |\n\n\`\`\`\`\n${structuredSource}\`\`\`\`\n\n3. First\n4. Second\n\nDone.`;
+const structuredFragments = () => {
+  const root = (...children) => domElement("div", { "data-markdown-text-style": "assistant-message" }, ...children);
+  return [root(domElement("p", {}, domText("See "), domElement("a", { href: "https://example.test/guide?q=a%20b" }, domText("guidance")), domText(".")),
+    domElement("table", {}, domElement("tbody", {}, domElement("tr", {}, domElement("th", {}, domText("Name")), domElement("th", {}, domText("Value"))),
+      domElement("tr", {}, domElement("td", {}, domText("Alpha")), domElement("td", {}, domText("Beta")))))),
+  root(sourceBlock(structuredSource)), root(domElement("ol", { start: "3" }, domElement("li", {}, domText("First")), domElement("li", {}, domText("Second"))),
+    domElement("p", {}, domText("Done.")))];
+};
+
+test("one structured projection preserves link destinations, table boundaries, exact fenced code, lists and fragments while retaining custody text", () => {
+  const roots = structuredFragments();
+  const wrapper = domElement("div", { [browserDom.messageIdAttribute]: messageId(0) }, ...roots);
+  const before = wrapper.textContent;
+  const snapshot = runInNewContext(`(${readBrowserReplies.toString()})`)(roots, replyOptions);
+  assert.equal(snapshot.replies.length, 1);
+  assert.equal(snapshot.replies[0].text, structuredCustody);
+  assert.equal(snapshot.replies[0].renderedText, structuredRendered);
+  assert.equal(wrapper.textContent, before, "Both representations come from one read without changing source content.");
+  assert.equal(snapshot.replies[0].renderedText.includes(structuredSource), true);
+});
+
+test("linked inline code retains literal brackets and backslashes while ordinary link label text is escaped", () => {
+  const source = String.raw`items[0]\path[1]`;
+  const plain = String.raw`label [index]\path`;
+  const destination = "https://example.test/reference";
+  const root = domElement("div", { "data-markdown-text-style": "assistant-message" },
+    domElement("a", { href: destination }, domText(plain + " "), domElement("code", {}, domText(source)),
+      domElement("span", {}, domText(" [tail]\\end"))));
+  const reply = readReplies([root]).replies[0];
+  assert.equal(reply.text, plain + " " + source + " [tail]\\end");
+  assert.equal(reply.renderedText, "[label \\[index\\]\\\\path `" + source + "` \\[tail\\]\\\\end](<" + destination + ">)");
+  assert.ok(reply.renderedText.includes("`" + source + "`"), "Markdown code receives its original source without link-label escapes.");
+});
+
 test("reply projection excludes the observed code toolbar while preserving literal code, indentation and blank lines", () => {
   const source = "  FORMAT_ONE\n\n    FORMAT_TWO\nFORMAT_THREE\n";
   const root = domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("div", {}, sourceBlock(source)));
@@ -1689,38 +1726,50 @@ test("a long paste waits for Send readiness, types its payload and short marker 
   assert.equal(f.ui.sendClicks, 1);
 });
 
-test("a settled pasted attachment keeps the short generation marker visible and cannot replay Send", async () => {
-  const f = fixture({ fastTimers: true }); await f.ready();
-  const prompt = 'Full native context\n'.repeat(4000);
-  f.ui.sendEnabled = false;
-  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
-  const sent = await f.run('send', { ...plugin, prompt });
-  assert.equal(sent.sent, true);
-  assert.deepEqual(f.ui.typed, [` ${prompt}`, `\nRouter generation: ${base.turnId}`]);
-  assert.equal(f.ui.userMessages[0].text, `\nRouter generation: ${base.turnId}`);
-  assert.equal(typeof sent.generationTurnKey, 'string');
-  await assert.rejects(f.run('send', { ...plugin, prompt }), /cannot be replayed/);
-  assert.equal(f.ui.sendClicks, 1);
+test("generated Send refuses truncated paste and unverified attachments before marker or dispatch, preserving the actual draft", async () => {
+  for (const change of ["truncated initial paste", "empty converted paste", "attachment label", "mismatched attachment", "expected label without payload proof"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const prompt = 'Full native context\n'.repeat(4000), turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
+    if (change === "truncated initial paste") f.ui.onType = () => { f.ui.composerText = f.ui.composerText.slice(0, 120); };
+    else {
+      f.ui.sendEnabled = false;
+      f.ui.onWait = () => {
+        f.ui.composerText = change === "empty converted paste" ? "" : "Pasted text.txt";
+        if (change !== "empty converted paste") f.ui.composerNode = domElement("div", { contenteditable: "true" },
+          domElement("span", { contenteditable: "false", "data-file-name": "Pasted text.txt" },
+            domText(change === "mismatched attachment" ? "Different text" : change === "expected label without payload proof" ? prompt : "Pasted text.txt")));
+        f.ui.sendEnabled = true;
+      };
+    }
+    await assert.rejects(f.run('send', { ...plugin, prompt, turnToken }), /complete intended inline payload could not be verified/u, change);
+    assert.equal(f.ui.sendClicks, 0, change);
+    assert.deepEqual(f.ui.userMessages, [], "No submitted payload exists, even though Send was enabled.");
+    assert.deepEqual(f.ui.typed, [` ${prompt}`], "Authority and generation marker are never appended to unverified context.");
+    assert.equal(f.getState().unsentDraft, ` ${prompt}`);
+    assert.equal(f.getState().sendClicked, false);
+    assert.equal(f.ui.draftCleared, false);
+    assert.equal(f.ui.composerText, change === "truncated initial paste" ? ` ${prompt}`.slice(0, 120)
+      : change === "empty converted paste" ? "" : "Pasted text.txt");
+    await assert.rejects(f.run('send', { ...plugin, prompt }), /cannot be replayed/u);
+  }
 });
 
-test("a pasted attachment preserves full context and leaves only the explicit newest tool directive and marker visible", async () => {
+test("generated Send submits the exact normalized full inline context, current directive and marker once", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   const turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
   const olderToken = 'web_turn_fedcba9876543210fedcba9876543210';
-  const prompt = `Historical tool result: use turn_token ${olderToken}.\nFull native context\n`.repeat(4000);
-  f.ui.sendEnabled = false;
-  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
+  const prompt = `Historical tool result: use turn_token ${olderToken}.\r\nFull native context\r\n`.repeat(4000);
   const sent = await f.run('send', { ...plugin, prompt, turnToken });
   const visible = f.ui.userMessages[0].text;
-  assert.equal(f.ui.typed[0], ` ${prompt}`, 'The complete input remains in the original pasted payload.');
-  assert.equal(f.ui.typed.length, 2, 'The current directive and marker are appended once after paste conversion.');
-  assert.equal(f.ui.typed[1], visible);
+  assert.equal(f.ui.typed[0], ` ${prompt}`.replace(/\r\n/gu, '\n'), 'Only the understood line-ending normalization changes the intended payload.');
+  assert.equal(f.ui.typed.length, 2, 'The current directive and marker are appended once after exact payload proof.');
+  assert.equal(visible, f.ui.typed.join(''), 'The actual submitted browser payload contains the complete intended context.');
   assert.equal(visible.split(turnToken).length - 1, 1);
   assert.ok(visible.includes(`Use turn_token ${turnToken} unchanged with every Codex MCP tool call in this response.`));
   assert.ok(visible.includes('instead of tokens quoted in the attached transcript, earlier messages, or tool results'));
-  assert.ok(visible.startsWith(`\nRouter generation: ${base.turnId}\nUse turn_token `));
+  assert.ok(visible.startsWith(` ${prompt}`.replace(/\r\n/gu, '\n')));
   assert.ok(visible.endsWith('Never expose the token in your answer.'));
-  assert.equal(visible.includes(olderToken), false, 'A historical token cannot supply the structured current directive.');
+  assert.ok(visible.includes(olderToken), 'Full historical context is preserved, alongside the explicit current directive.');
   assert.equal(f.getState().submittedComposerText, visible);
   assert.equal(f.getState().generationMarker, `Router generation: ${base.turnId}`, 'Generation ownership retains only the nonsecret marker.');
   assert.equal(sent.sent, true); assert.equal(f.ui.sendClicks, 1);
@@ -3390,6 +3439,23 @@ test("unchanged paragraph, BR and CodeMirror checkpoints recover when normalized
   }
 });
 
+test("structured answer recovery preserves an existing custody digest and returns rich presentation without replay", async () => {
+  const f = await recoverableFixture({ text: structuredCustody });
+  const priorPrefix = { ...f.recovery.assistantPrefix };
+  f.loseBinding(); f.ui.present = false;
+  f.ui.onGoto = () => {
+    const wrapper = domElement("div", { [browserDom.messageIdAttribute]: f.recovery.replyId }, ...structuredFragments());
+    f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [wrapper]));
+  };
+  const continued = await f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+  assert.equal(continued.recovered, true);
+  assert.equal(continued.assistantText, structuredCustody);
+  assert.equal(continued.assistantRenderedText, structuredRendered);
+  assert.deepEqual(assistantPrefix(continued.assistantText), priorPrefix, "Presentation syntax does not replace saved ownership evidence.");
+  assert.notDeepEqual(assistantPrefix(continued.assistantRenderedText), priorPrefix);
+  assert.equal(f.ui.sendClicks, 1);
+});
+
 test("semantic checkpoint readiness owns its exact message renderer and preserves valid message fragments", async () => {
   for (const form of ["missing renderer", "foreign renderer", "duplicate wrapper", "settled short body", "fragments"]) {
     const f = await recoverableFixture({ text: "Before.\n\nAfter." }); f.loseBinding(); f.ui.present = false;
@@ -4651,15 +4717,13 @@ test("quoted Regenerate buttons do not supply or duplicate completion authority"
 test("a same-generation rejection after retention requires the exact restored visible token directive and marker", async () => {
   const f = fixture({ fastTimers: true }); await f.ready();
   const turnToken = 'web_turn_0123456789abcdef0123456789abcdef';
-  f.ui.sendEnabled = false;
-  f.ui.onWait = () => { f.ui.composerText = ''; f.ui.sendEnabled = true; };
   await f.run("send", { ...plugin, prompt: "Request that may be rejected after retention", turnToken });
   f.ui.texts.push("Answer before late broker activity."); f.ui.complete = true;
   const completed = await f.run("observe");
   await f.run("retain");
   const submitted = f.ui.userMessages.at(-1).text;
   assert.ok(submitted.includes(turnToken));
-  assert.equal(submitted.includes('Request that may be rejected after retention'), false, 'The restored draft uses the actual post-conversion composer text.');
+  assert.equal(submitted.includes('Request that may be rejected after retention'), true, 'The restored draft retains the verified complete submitted payload.');
   const error = domElement("div", {}, domText("Unknown error"));
   const retry = domElement("button", {}, domText("Retry"));
   const errorRegion = domElement("div", {}, error, retry);

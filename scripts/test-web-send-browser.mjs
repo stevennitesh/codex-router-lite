@@ -18,6 +18,7 @@ const scenarios = {
   "draft-only": ["Restored draft alone", false],
   "edited-draft": ["Error with edited draft", false],
   "accepted-answer": ["Accepted answer", false],
+  "structured-answer": ["Structured answer", false],
 };
 
 export async function serveWebSendBrowserFixture() {
@@ -66,8 +67,11 @@ export async function runWebSendBrowserContract({ tab, fixtureUrl, timeoutMs = 2
       const retries = await tab.playwright.locator("#contract-status").getAttribute("data-retries", { timeoutMs });
       const error = projection.observation.requestError ?? null;
       const acceptedText = name !== "accepted-answer" || projection.replies.some(reply => reply.text === "FIXTURE_ACCEPTED");
+      const structuredText = name !== "structured-answer" || projection.replies.length === 1
+        && projection.replies[0].text === "See guidance.\n\nNameValue\nAlphaBeta\n\n  literal ``` fence\n\n    indented\n\n\nFirst\nSecond\n\nDone."
+        && projection.replies[0].renderedText === "See [guidance](<https://example.test/guide?q=a%20b>).\n\n| Name | Value |\n| --- | --- |\n| Alpha | Beta |\n\n````\n  literal ``` fence\n\n    indented\n````\n\n3. First\n4. Second\n\nDone.";
       results.push({ case: name, passed: error === (expectedError ? "unknown_error" : null) && before === after
-        && retries === "0" && acceptedText, requestError: error, draftPreserved: before === after, retryClicks: Number(retries) });
+        && retries === "0" && acceptedText && structuredText, requestError: error, draftPreserved: before === after, retryClicks: Number(retries) });
     } catch {
       results.push({ case: name, passed: false, code: "browser_contract_operation_failed" });
     }

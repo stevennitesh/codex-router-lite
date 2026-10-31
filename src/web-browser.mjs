@@ -206,21 +206,68 @@ export function readBrowserReplies(elements, options) {
     }
     throw new Error("The assistant code block does not expose one complete source.");
   };
-  const read = node => {
-    if (node.nodeType === 3) return node.textContent ?? "";
-    if (node.nodeType !== 1) return "";
-    if (node.getAttribute(ui.markdownCopyAttribute) === ui.excludedCopyValue || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return "";
-    if (node.tagName === "BR") return "\n";
-    if (codeBlock(node)) return readCode(node);
-    let text = "", previous;
-    for (const child of node.childNodes) {
-      const content = read(child);
-      if (content === "") continue;
-      if (text && (block(previous) || block(child))) text += paragraph(previous) || paragraph(child) ? "\n\n" : "\n";
-      text += content;
-      previous = child;
+  // One traversal carries stable custody evidence and its richer presentation.
+  // Saved-chat prefix proofs keep their established text semantics; presentation
+  // retains destinations and structure that those older proofs never captured.
+  const literal = text => ({ text, renderedText: text });
+  const fence = (source, inline = false) => {
+    const longest = Array.from(source.matchAll(/`+/gu)).reduce((length, match) => Math.max(length, match[0].length), 0);
+    const delimiter = "`".repeat(Math.max(inline ? 1 : 3, longest + 1));
+    if (inline) return `${delimiter}${/^[` ]|[` ]$/u.test(source) ? " " : ""}${source}${/^[` ]|[` ]$/u.test(source) ? " " : ""}${delimiter}`;
+    return `${delimiter}\n${source}${source.endsWith("\n") ? "" : "\n"}${delimiter}`;
+  };
+  const read = (node, inLinkLabel = false) => {
+    if (node.nodeType === 3) {
+      const text = node.textContent ?? "";
+      return { text, renderedText: inLinkLabel ? text.replace(/[\\[\]]/gu, "\\$&") : text };
     }
-    return text;
+    if (node.nodeType !== 1) return literal("");
+    if (node.getAttribute(ui.markdownCopyAttribute) === ui.excludedCopyValue || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return literal("");
+    if (node.tagName === "BR") return literal("\n");
+    if (codeBlock(node)) { const text = readCode(node); return { text, renderedText: fence(text) }; }
+    const children = Array.from(node.childNodes, child => ({ node: child,
+      value: read(child, inLinkLabel || node.tagName === "A" && node.getAttribute("href") !== null) }));
+    let text = "", renderedText = "", previous, previousRendered;
+    for (const { node: child, value } of children) {
+      if (value.text !== "") {
+        const separator = text && (block(previous) || block(child)) ? paragraph(previous) || paragraph(child) ? "\n\n" : "\n" : "";
+        text += separator + value.text;
+        previous = child;
+      }
+      if (value.renderedText !== "") {
+        const separator = renderedText && (block(previousRendered) || block(child)) ? paragraph(previousRendered) || paragraph(child) ? "\n\n" : "\n" : "";
+        renderedText += separator + value.renderedText;
+        previousRendered = child;
+      }
+    }
+    if (node.tagName === "A" && node.getAttribute("href") !== null) {
+      const destination = (typeof node.href === "string" ? node.href : node.getAttribute("href"))
+        .replace(/[<>\r\n]/gu, char => ({ "<": "%3C", ">": "%3E", "\r": "%0D", "\n": "%0A" })[char]);
+      renderedText = `[${renderedText || destination}](<${destination}>)`;
+    } else if (node.tagName === "CODE") renderedText = fence(text, true);
+    else if (node.tagName === "UL" || node.tagName === "OL") {
+      let ordinal = Number(node.getAttribute("start") ?? 1);
+      if (!Number.isSafeInteger(ordinal)) ordinal = 1;
+      renderedText = children.filter(child => child.node.tagName === "LI").map(({ node: item, value }) => {
+        const explicit = Number(item.getAttribute("value"));
+        if (item.getAttribute("value") !== null && Number.isSafeInteger(explicit)) ordinal = explicit;
+        const prefix = node.tagName === "OL" ? `${ordinal++}. ` : "- ";
+        return prefix + value.renderedText.replace(/\n/gu, "\n" + " ".repeat(prefix.length));
+      }).join("\n");
+    } else if (node.tagName === "BLOCKQUOTE") renderedText = renderedText.replace(/^/gmu, "> ");
+    else if (/^H[1-6]$/u.test(node.tagName)) renderedText = "#".repeat(Number(node.tagName.slice(1))) + " " + renderedText;
+    const rows = node.tagName === "TR" ? [{ cells: children.filter(child => /^(?:TD|TH)$/u.test(child.node.tagName))
+      .map(child => child.value.renderedText), header: children.some(child => child.node.tagName === "TH") }]
+      : children.flatMap(child => child.value.rows ?? []);
+    if (node.tagName === "TABLE" && rows.length) {
+      const cell = value => value.replace(/\|/gu, "\\|").replace(/\r\n?|\n/gu, "<br>");
+      const row = cells => `| ${cells.map(cell).join(" | ")} |`;
+      const width = rows.reduce((count, value) => Math.max(count, value.cells.length), 0);
+      const header = rows[0].header ? rows.shift().cells : Array(width).fill("");
+      const captions = children.filter(child => child.node.tagName === "CAPTION").map(child => child.value.renderedText).filter(Boolean);
+      renderedText = [...captions, [row(header), row(Array(width).fill("---")), ...rows.map(value => row(value.cells))].join("\n")].join("\n\n");
+    }
+    return { text, renderedText, ...(node.tagName !== "TABLE" && rows.length ? { rows } : {}) };
   };
   const selected = new Set(selectedElements), messages = new Map();
   // evaluateAll supplies document order. Multiple selected markdown fragments
@@ -247,10 +294,13 @@ export function readBrowserReplies(elements, options) {
     const order = turn ? turnOrder(turn) : null;
     const commentary = element.closest(`${ui.streamingStatusSelector},${ui.reasoningSelector}`)
       || firstStatus && order.has(element) && order.has(firstStatus) && order.get(element) < order.get(firstStatus);
-    const text = commentary ? "" : read(element);
+    const content = commentary ? literal("") : read(element), text = content.text;
     if (!commentary) message.answerRoots.push(element);
+    const rendered = message.reply.renderedText ?? message.reply.text;
+    const renderedText = rendered + (rendered && content.renderedText ? "\n\n" : "") + content.renderedText;
     if (message.reply.text && text) message.reply.text += "\n\n";
     message.reply.text += text;
+    if (renderedText !== message.reply.text) message.reply.renderedText = renderedText;
   }
   const groups = [...messages.values()], replies = groups.map(group => group.reply);
   const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -314,12 +364,21 @@ export function readBrowserReplies(elements, options) {
         if (node.getAttribute(ui.contentEditableAttribute) === "false" || !/^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)) return false;
         return Array.from(node.childNodes).every(empty);
       };
+      const inline = node => {
+        if (node.nodeType === 3) return true;
+        if (node.nodeType !== 1) return true;
+        if (options.pluginChipSelector && node.matches(options.pluginChipSelector)) return true;
+        return node.getAttribute(ui.contentEditableAttribute) !== "false" && /^(?:DIV|P|SPAN|BR)$/u.test(node.tagName)
+          && Array.from(node.childNodes).every(inline);
+      };
       const visible = element => {
         const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
         return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
       };
       projection.mutation = { url: document.URL, idle: controls.every(element => composers.includes(element) || chips.includes(element)),
         composerCount: composers.length, composerText: composers.length === 1 ? composers[0].innerText : null,
+        inlineComposer: composers.length === 1 && composers[0].tagName === "DIV"
+          && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && inline(composers[0]),
         emptyComposer: composers.length === 1 && composers[0].tagName === "DIV"
           && composers[0].getAttribute(ui.contentEditableAttribute) === "true" && empty(composers[0]),
         chipVisible: chips.length === 1 && visible(chips[0]) };
@@ -577,7 +636,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendi
     const statusComplete = anchorCount === 1 && view.turns.find(turn => turn.turnKey === state.generationTurnKey).complete;
     const completed = assistantText.trim().length > 0 && !stopVisible && statusComplete && regenerateVisible;
     assertCurrent();
-    return { completed, assistantText, replyId: reply?.messageId ?? null,
+    return { completed, assistantText, ...(reply?.renderedText !== undefined ? { assistantRenderedText: reply.renderedText } : {}), replyId: reply?.messageId ?? null,
       ...(replyUnavailableReason ? { replyUnavailableReason } : {}),
       ...(!owned ? { ownershipDiagnostic: { ...ownership, foreignTurnCount } } : {}),
       baselineReplyIds: state.baselineReplyIds,
@@ -1220,12 +1279,13 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
       delete state.bindingLost;
       delete state.recoveryReloadCheckpoint;
     }
-    const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
+    const reply = state.sendConfirmed ? currentReply(texts).reply : null, assistantText = reply?.text ?? "";
     await state.tab.markHandoff();
     const continuationUrl = await state.tab.url();
     activeOwner(owners, true);
     if (recovered && state.tab.id !== recoveryTabId) throw new Error("The current tab identity changed during recovery.");
-    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: true,
+    emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText,
+      ...(reply?.renderedText !== undefined ? { assistantRenderedText: reply.renderedText } : {}), conversationFull: true,
       ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
     return;
   }
@@ -1247,7 +1307,7 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
     delete state.bindingLost;
     delete state.recoveryReloadCheckpoint;
   }
-  const assistantText = state.sendConfirmed ? currentReply(texts).reply?.text ?? "" : "";
+  const reply = state.sendConfirmed ? currentReply(texts).reply : null, assistantText = reply?.text ?? "";
   if (!validReplies(texts)) throw identityError("The retained conversation has missing or ambiguous assistant message identities.", texts);
   const continuationUrl = view.mutation.url;
   if (state.hasSentMessage && continuationUrl !== state.savedUrl) throw new Error("The retained conversation left its saved URL during continuation.");
@@ -1268,7 +1328,8 @@ async function runBrowserContinuation(state, options, nodeRepl, replyReader, vie
   state.completed = false;
   state.retained = false;
   registerActive();
-  emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText, conversationFull: false,
+  emit({ tabId: state.tabId, url: continuationUrl, normal: true, assistantText,
+    ...(reply?.renderedText !== undefined ? { assistantRenderedText: reply.renderedText } : {}), conversationFull: false,
     ...(recovered ? { recovered: true, ...recoveryEffects } : {}), ...(interrupted ? { interrupted: true } : {}) });
   } finally {
     // Only a terminal, action-free recovery on the original tab may relinquish
@@ -1354,7 +1415,10 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   state.sendAttempted = true;
   state.sendClicked = false;
   state.sendConfirmed = false;
-  state.unsentDraft = ` ${options.prompt}`;
+  // CRLF is the one understood editor normalization. Never learn the intended
+  // payload from the result of typing: a truncated paste can still enable Send.
+  state.unsentDraft = ` ${options.prompt}`.replace(/\r\n?/gu, "\n");
+  const intendedComposerText = (beforeSend.mutation.composerText ?? "").replace(/\r\n?/gu, "\n") + state.unsentDraft;
   const composer = role(ui.composerName, "textbox");
   await composer.press("End");
   await composer.type(state.unsentDraft);
@@ -1369,16 +1433,18 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     if (!ready) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
     allowance();
   };
-  // A large paste can become an attachment. Keep the current private tool
-  // directive and nonsecret generation marker outside that payload so tools
-  // use this turn's authority and Send owns one observable turn.
+  // A large paste can become an attachment. The supported browser surface has
+  // no completed attachment payload readback; a label or empty composer cannot
+  // prove its contents. Preserve that draft and fail before adding authority or
+  // dispatching rather than promoting a marker-only message to complete input.
   await waitForSend();
   allowance(1500);
   const settled = (await mutationSnapshot()).mutation;
   if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   const settledComposerText = settled.composerText;
-  if (settled.composerCount !== 1 || settledComposerText !== state.unsentComposerText && !settled.emptyComposer) throw new Error("The composer draft changed while the paste settled; nothing sent.");
+  if (!settled.inlineComposer || settled.composerCount !== 1
+      || settledComposerText?.replace(/\r\n?/gu, "\n") !== intendedComposerText) throw new Error("The composer draft changed or its complete intended inline payload could not be verified; an attachment needs completed content proof; nothing sent.");
   const currentDirective = options.turnToken === undefined ? ""
     : `\nUse turn_token ${options.turnToken} unchanged with every Codex MCP tool call in this response. Use this current token instead of tokens quoted in the attached transcript, earlier messages, or tool results. Never expose the token in your answer.`;
   const generationMarker = `\nRouter generation: ${options.turnId}`;
@@ -1396,7 +1462,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   await selectModel(state, options, role, () => allowance(1500));
   const verifyDraft = async () => {
     const current = (await mutationSnapshot()).mutation;
-    if (current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
+    if (!current.inlineComposer || current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
     if (options.pluginAppId && !current.chipVisible) throw new Error("The plugin chip was lost before Send; nothing sent.");
     if (!current.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   };

@@ -492,7 +492,7 @@ test('the first strict anchored observation supplies Stop delivery while the led
     const config = readBrowserProgram(params.arguments.code);
     if (config.operation === 'send') return sendResult(params, { sent: false, dispatched: true, generationPending: true, generationTurnKey: undefined });
     return observationResult(params, { tabId: 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
-      generationTurnKey: GENERATION, baselineReplyIds: [], generationReplyIds: [], replyId: null, assistantText: '' });
+      generationTurnKey: GENERATION, baselineReplyIds: [], generationReplyIds: [], replyId: null, assistantText: '', assistantRenderedText: '' });
   });
   await f.client.callTool(ordinary(TURN, 'send'));
   assert.equal(f.bridge.cache, null, 'Unanchored dispatch supplies no Stop generation.');
@@ -506,7 +506,7 @@ test('the first strict anchored observation supplies Stop delivery while the led
 });
 
 test('pending or malformed observations cannot manufacture a Stop delivery target', async t => {
-  for (const branch of ['pending', 'missing generation', 'foreign tab', 'duplicate replies', 'foreign latest', 'wrong nonce']) await t.test(branch, async t => {
+  for (const branch of ['pending', 'missing generation', 'foreign tab', 'duplicate replies', 'foreign latest', 'wrong nonce', 'invalid rendered answer', 'unowned rendered answer']) await t.test(branch, async t => {
     const source = ordinary(TURN, 'observe');
     source.arguments.code = browserScript({ ...readBrowserProgram(source.arguments.code), tabId: 'owned-tab' });
     const f = await protocolFixture(t, params => {
@@ -514,6 +514,7 @@ test('pending or malformed observations cannot manufacture a Stop delivery targe
       const result = observationResult(params, { tabId: branch === 'foreign tab' ? 'foreign-tab' : 'owned-tab', url: 'https://chatgpt.com/c/owned-chat',
         generationTurnKey: branch === 'missing generation' ? undefined : GENERATION, baselineReplyIds: [],
         generationReplyIds: branch === 'duplicate replies' ? [GENERATION, GENERATION] : [], replyId: null, assistantText: '',
+        ...(branch === 'invalid rendered answer' ? { assistantRenderedText: {} } : branch === 'unowned rendered answer' ? { assistantRenderedText: 'Unowned rich answer' } : {}),
         ...(branch === 'foreign latest' ? { replyUnavailableReason: 'generation-turn-not-latest' } : {}) });
       if (branch === 'wrong nonce') result.content[0].text = result.content[0].text.replaceAll('a'.repeat(48), 'b'.repeat(48));
       return result;

@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { nativeToolWireNames } from "./namespace-relay.mjs";
 import { webMcpDiscoveryDefaultLimit, webMcpDiscoveryMaxLimit, webMcpQueryLimit } from "./web-mcp-contract.mjs";
-import { webToolIdentity, webToolKinds } from "./web-tool-contract.mjs";
+import { terminalWebToolSearchOutput, validWebToolSearchArguments, webToolIdentity, webToolKinds, webToolSearchParameters } from "./web-tool-contract.mjs";
 
 const hostedTools = new Set(["web_search", "web_search_preview", "image_generation"]);
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,7 +36,8 @@ function declarations(tools) {
     const entry = { name, kind: tool.type, ...(namespace === undefined ? {} : { namespace }),
       description: tool.description ?? "",
       ...(tool.type === "custom" ? { format: structuredClone(tool.format) }
-        : { parameters: structuredClone(tool.parameters ?? tool.inputSchema ?? { type: "object", properties: {} }) }) };
+        : { parameters: structuredClone(tool.type === "tool_search" ? webToolSearchParameters
+          : tool.parameters ?? tool.inputSchema ?? { type: "object", properties: {} }) }) };
     if (typeof entry.description !== "string" || (entry.parameters !== undefined && !record(entry.parameters))) {
       throw failure(`Invalid declaration for Web tool ${name}.`);
     }
@@ -130,7 +131,12 @@ function nativeCall(tool, payload) {
   catch { throw failure("Web tool arguments are not JSON serializable."); }
   const serialized = JSON.parse(text);
   if (!record(serialized)) throw failure("Web tool arguments must serialize to an object.");
-  if (tool.kind === "tool_search") return { ...base, execution: "client", arguments: serialized };
+  if (tool.kind === "tool_search") {
+    if (!validWebToolSearchArguments(args) || !validWebToolSearchArguments(serialized)) {
+      throw failure("Native Web tool search requires a nonempty query and an optional positive safe-integer limit, with no other arguments.");
+    }
+    return { ...base, execution: "client", arguments: serialized };
+  }
   return { ...base, name: tool.name, ...(tool.namespace === undefined ? {} : { namespace: tool.namespace }), arguments: text };
 }
 
@@ -330,7 +336,6 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
   };
   const update = (token, { tools, toolChoice = "auto" }) => {
     const turn = active(token);
-    if (turn.calls.size) throw failure("Cannot replace Web tool declarations with unresolved calls.", "web_tools_pending", 409);
     // Compare with our accepted snapshot, never the caller's mutable array.
     // Unchanged schemas keep their exact registry and reserved wire identities.
     const unchanged = isDeepStrictEqual(tools, turn.declarations);
@@ -349,7 +354,20 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
     turn.tools = next;
     turn.declarations = accepted;
     turn.policy = policy;
-    change(turn, changedCatalog);
+    // Emitted calls retain their original native identity until their real
+    // result arrives. Queued work must still be authorized by the newest request.
+    let revoked = false;
+    for (const [callId, pending] of turn.calls) {
+      if (pending.delivered) continue;
+      const current = next.get(pending.tool.wireName);
+      if (current && policy.allowed.has(current.wireName) && isDeepStrictEqual(current, pending.tool)) continue;
+      turn.calls.delete(callId);
+      turn.callsMade -= 1;
+      pending.cleanup();
+      pending.reject(failure("Queued Web tool call is no longer declared and allowed by the current native request.", "web_tool_policy_changed", 409));
+      revoked = true;
+    }
+    if (changedCatalog || revoked) change(turn);
   };
   return {
     register({ threadId, turnId, tools = [], toolChoice = "auto" }) {
@@ -369,6 +387,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
       return { token };
     },
     list, update, takeCalls, beginActivity, revision, waitForChange,
+    hasPendingCalls: token => active(token).calls.size > 0,
     isActive: token => turns.has(token),
     hasClientActivity: token => observed(token).hasClientActivity,
     async invoke(token, payload, { signal } = {}) {
@@ -388,7 +407,7 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
           const abort = () => terminate(token, "cancelled", signal.reason instanceof Error ? signal.reason : new DOMException("Web tool invocation cancelled.", "AbortError"));
           const timer = setTimeout(() => terminate(token, "cancelled", failure("Native Codex tool did not return before the MCP deadline; execution or approval may already have occurred. Do not retry this turn.", "web_tool_timeout", 504)), invocationTimeoutMs);
           const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
-          turn.calls.set(item.call_id, { item, kind: tool.kind, delivered: false, resolve, reject, cleanup });
+          turn.calls.set(item.call_id, { item, tool, kind: tool.kind, delivered: false, resolve, reject, cleanup });
           turn.callsMade += 1;
           change(turn);
           signal?.addEventListener("abort", abort, { once: true });
@@ -410,6 +429,9 @@ export function createWebToolBroker({ invocationTimeoutMs = 90_000 } = {}) {
         seen.add(output.call_id);
         const pending = turn.calls.get(output.call_id);
         if (!pending?.delivered || output.type !== webToolKinds[pending.kind].outputType) throw failure("Native Web tool result does not match a delivered call.");
+        if (pending.kind === "tool_search" && !terminalWebToolSearchOutput(output, pending.item.call_id)) {
+          throw failure("Native Web tool search result is incomplete or malformed.");
+        }
         if (pending.kind !== "tool_search" && !Object.hasOwn(output, "output")) throw failure("Native Web tool result is missing its output.");
         return { pending, output, result: mcpResult(output) };
       });
