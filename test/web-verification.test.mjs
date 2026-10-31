@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { browserScript } from '../src/web-browser.mjs';
-import { validWebConversation } from '../src/web-runtime.mjs';
+import { validWebConversation, WEB_RECOVERY_INPUT_POLICY } from '../src/web-runtime.mjs';
 import { evaluateWebPhase, parseWebJsonLines, prepareWebVerification, waitWebVerification, watchWebEvidence, webVerificationPrompt } from '../maintenance/web-verification.mjs';
 
 const threadId = '01a16fe6-04f4-7882-abd1-7ef5b26c5b65';
@@ -20,7 +20,7 @@ const authority = { at, code: 'authority_cached', generation, threadId, turnId, 
 const row = (type, payload) => ({ type, timestamp: at, payload });
 const jsonLines = rows => rows.map(value => JSON.stringify(value)).join('\n') + '\n';
 const writeJson = (file, value) => writeFileSync(file, JSON.stringify(value), 'utf8');
-function continuedRecoveryLedger(ledger) {
+function continuedRecoveryLedger(ledger, version = 2) {
   const failedTurnId = '01a170a7-9be0-7200-98bd-045683e5f698', replyId = '01a170a7-9be0-7200-98bd-045683e5f697';
   const prefix = value => ({ length: value.length, sha256: createHash('sha256').update(value).digest('hex') });
   const value = { ...structuredClone(ledger), version: 2, browserOwnerTurnIds: [ledger.lastTurn.turnId], checkpoint: ['c'.repeat(64)],
@@ -30,7 +30,11 @@ function continuedRecoveryLedger(ledger) {
       revokedTurnIds: [failedTurnId], inputHashes: ['d'.repeat(64)],
       proof: { chatUrl: ledger.chatUrl, tabId: String(ledger.tabId), failedTurnId, generationTurnKey: generation,
         sendBaselineReplyIds: [], generationReplyIds: [replyId], observation: { replyId, completed: true, assistantPrefix: prefix('Prior accepted answer') } } } };
-  assert.equal(validWebConversation(value, value.threadId), true, 'The fixture must satisfy the maintained complete V2 runtime schema.');
+  if (version === 3) {
+    value.version = 3; value.recovery.inputPolicy = WEB_RECOVERY_INPUT_POLICY;
+    value.recovery.opaqueItems = []; value.recovery.boundaryOwner = { threadId: value.threadId, turnId: failedTurnId };
+  }
+  assert.equal(validWebConversation(value, value.threadId), true, 'The fixture must satisfy the maintained complete recovery runtime schema.');
   return value;
 }
 
@@ -137,10 +141,13 @@ test('readiness requires accepted Send, the current generation, and canonical pa
   assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
 });
 
-test('verification evaluates continued V2 recovery ledgers while invalid journals and abandoned baselines never qualify', () => {
-  for (const phase of ['native', 'recall', 'continuation']) {
-    const input = evidence(phase); input.ledger = continuedRecoveryLedger(input.ledger);
+test('verification evaluates strict V2 and quarantine V3 recovery ledgers while invalid journals never qualify', () => {
+  for (const version of [2, 3]) for (const phase of ['native', 'recall', 'continuation']) {
+    const input = evidence(phase); input.ledger = continuedRecoveryLedger(input.ledger, version);
     assert.equal(evaluateWebPhase(input).receipt.status, 'passed', phase);
+    input.ledger.version = 1;
+    assert.equal(evaluateWebPhase(input).receipt.code, 'unsupported_ledger', 'Relabeling a recovery journal cannot bypass its format guard.');
+    input.ledger.version = version;
     delete input.ledger.recovery.confirmationSha256;
     assert.equal(evaluateWebPhase(input).receipt.code, 'unsupported_ledger');
   }
@@ -540,20 +547,28 @@ test('prepare binds exact thread and snapshots rollback inputs without changing 
   const selectedRun = JSON.parse(readFileSync(selected.runPath, 'utf8'));
   assert.deepEqual([selectedRun.model, selectedRun.effort, selectedRun.selection], ['chatgpt-web/gpt-6-pro', 'max', { family: 'GPT-6', power: 4 }]);
   assert.equal(readFileSync(ledgerFile, 'utf8'), before);
-  const recovered = continuedRecoveryLedger(input.ledger);
+  const recovered = continuedRecoveryLedger(input.ledger, 3);
   writeJson(ledgerFile, recovered);
   const recoveredBefore = readFileSync(ledgerFile, 'utf8');
   const protectedFile = path.join(directory, 'protected-v2-ledger.json');
-  writeJson(protectedFile, { ...recovered, threadId: generation });
+  writeJson(protectedFile, { ...recovered, threadId: generation,
+    recovery: { ...recovered.recovery, boundaryOwner: { ...recovered.recovery.boundaryOwner, threadId: generation } } });
   const protectedBefore = readFileSync(protectedFile, 'utf8');
   const recoveredRun = prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'recovered'), rollout, protectLedger: protectedFile }, dependencies);
   assert.equal(recoveredRun.prepared, true);
   assert.equal(readFileSync(ledgerFile, 'utf8'), recoveredBefore); assert.equal(readFileSync(protectedFile, 'utf8'), protectedBefore);
-  assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, 'generated', 'recovered', 'baseline-ledger.json'), 'utf8')).version, 2);
+  assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, 'generated', 'recovered', 'baseline-ledger.json'), 'utf8')).version, 3);
+  const spoofedProtected = JSON.parse(protectedBefore); spoofedProtected.version = 1;
+  writeJson(protectedFile, spoofedProtected);
+  assert.throws(() => prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'spoofed-protected'), rollout,
+    protectLedger: protectedFile }, dependencies), /protected_ledger_invalid/u);
+  writeFileSync(protectedFile, protectedBefore, 'utf8');
   for (const [kind, change, reason] of [
+    ['spoofed-v1', value => { value.version = 1; }, 'unsupported_ledger'],
     ['malformed', value => { delete value.recovery.confirmationSha256; }, 'unsupported_ledger'],
     ['uncertain', value => { value.uncertainSend = true; value.lastTurn.completed = false; value.lastTurn.sendState = 'uncertain'; }, 'unsafe_ledger'],
-    ['armed', value => { value.recovery.stage = 'armed'; value.uncertainSend = true; value.lastTurn = { turnId: value.recovery.proof.failedTurnId, sendState: 'uncertain', completed: false }; }, 'unsafe_ledger'],
+    ['armed', value => { value.recovery.stage = 'armed'; delete value.recovery.opaqueItems; delete value.recovery.boundaryOwner;
+      value.uncertainSend = true; value.lastTurn = { turnId: value.recovery.proof.failedTurnId, sendState: 'uncertain', completed: false }; }, 'unsafe_ledger'],
     ['unresolved', value => { value.lastTurn.completed = false; value.unresolvedCoding = [{ callId: 'current-native-action', outputType: 'function_call_output' }]; }, 'unsafe_ledger'],
     ['bounded-notice', value => { value.recovery.stage = 'bounded'; value.lastTurn.sendState = 'abandoned'; }, 'baseline_not_completed'],
   ]) {

@@ -90,7 +90,8 @@ function findRollout(threadId, codexHome, explicit, now) {
 }
 
 function validLedger(ledger, threadId, { requireIdle = false } = {}) {
-  requireValue((ledger?.version === 1 || ledger?.version === 2 && validWebConversationRisk(ledger, threadId))
+  requireValue((ledger?.version === 1 && ledger.recovery === undefined
+    || [2, 3].includes(ledger?.version) && validWebConversationRisk(ledger, threadId))
     && ledger.threadId === threadId && isSavedChatUrl(ledger.chatUrl)
     && typeof ledger.bindingId === 'string' && ledger.bindingId.length > 0
     && ['string', 'number'].includes(typeof ledger.tabId) && String(ledger.tabId).length > 0
@@ -129,7 +130,8 @@ export function prepareWebVerification(options, dependencies = {}) {
   const protectedLedger = protectLedger ? { path: path.resolve(protectLedger), sha256: hash(bytes(path.resolve(protectLedger))) } : null;
   if (protectedLedger) {
     const protectedValue = json(bytes(protectedLedger.path).toString('utf8'));
-    requireValue((protectedValue.version === 1 || protectedValue.version === 2 && validWebConversationRisk(protectedValue, protectedValue.threadId))
+    requireValue((protectedValue.version === 1 && protectedValue.recovery === undefined
+      || [2, 3].includes(protectedValue.version) && validWebConversationRisk(protectedValue, protectedValue.threadId))
       && UUID.test(protectedValue.threadId ?? '') && protectedValue.threadId !== threadId, 'protected_ledger_invalid');
   }
   const writeFile = dependencies.writeFile ?? writePrivateFile, writeJson = dependencies.writeJson ?? writePrivateJson;

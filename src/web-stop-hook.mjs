@@ -61,14 +61,17 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       // unchanged and continues to block ordinary replay and continuation.
       const deliveredUncertain = deliveryMatches && value?.uncertainSend === true && last?.sendState === "uncertain";
       const recovery = value?.recovery;
-      const currentRecovery = value?.version === 2 && record(recovery) && ["bounded", "continued"].includes(recovery.stage)
+      const recoveryVersion = value?.version === 2 && recovery?.inputPolicy === undefined
+          && recovery?.opaqueItems === undefined && recovery?.boundaryOwner === undefined && recovery?.compactionLineage === undefined
+        || value?.version === 3 && recovery?.inputPolicy === "quarantine-all-native-input-through-first-recovery-request-v1";
+      const currentRecovery = recoveryVersion && record(recovery) && ["bounded", "continued"].includes(recovery.stage)
         && /^[a-f0-9]{64}$/u.test(recovery.confirmationSha256 ?? "") && record(recovery.proof)
         && uuid(recovery.proof.failedTurnId) && Array.isArray(recovery.revokedTurnIds)
         && recovery.revokedTurnIds.every(uuid) && recovery.revokedTurnIds.includes(recovery.proof.failedTurnId)
         && !recovery.revokedTurnIds.includes(nativeTurn);
       // Only the fields which authorize Stop are needed. History, compaction,
       // and reply-recovery schemas remain owned by the ordinary Web runtime.
-      if (!record(value) || value.version !== 1 && !currentRecovery || value.threadId !== nativeThread
+      if (!record(value) || !(value.version === 1 && recovery === undefined || currentRecovery) || value.threadId !== nativeThread
           || typeof value.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
           || !Array.isArray(value.browserOwnerTurnIds) || !value.browserOwnerTurnIds.every(uuid)
           || new Set(value.browserOwnerTurnIds).size !== value.browserOwnerTurnIds.length
@@ -85,7 +88,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     const tuple = value => JSON.stringify([value.version, value.threadId, value.bindingId,
       value.browserOwnerTurnIds, value.tabId, value.chatUrl, value.generationTurnKey, value.uncertainSend,
       value.lastTurn.turnId, value.lastTurn.sendState, value.lastTurn.completed,
-      value.version === 2 ? [value.recovery.stage, value.recovery.confirmationSha256, value.recovery.revokedTurnIds] : null]);
+      value.version !== 1 ? [value.recovery.stage, value.recovery.confirmationSha256, value.recovery.revokedTurnIds, value.recovery.inputPolicy] : null]);
     const ledgerTuple = tuple(ledger);
     key = "routerWeb_" + ledger.bindingId;
     const actualMetadata = () => {

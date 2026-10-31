@@ -5,7 +5,7 @@ import { readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { browserScript, parseBrowserOutput } from "../src/web-browser.mjs";
-import { validWebConversation } from "../src/web-runtime.mjs";
+import { validWebConversation, WEB_RECOVERY_INPUT_POLICY } from "../src/web-runtime.mjs";
 import { privateFileIsProtected, writePrivateFile } from "../src/file-security.mjs";
 import { readWebBridgeSettings } from "../src/chatgpt-web.mjs";
 import { STATE_DIR, PORTS, loopback } from "../src/paths.mjs";
@@ -20,6 +20,10 @@ import { conclusivelyRefused } from "../src/transport-error-graph.mjs";
 const hash = bytes => createHash("sha256").update(typeof bytes === "string" || Buffer.isBuffer(bytes) ? bytes : JSON.stringify(bytes)).digest("hex");
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const failure = message => Object.assign(new Error(message), { code: "web_recovery_refused" });
+const recoveryInputPolicy = Object.freeze({ mode: WEB_RECOVERY_INPUT_POLICY,
+  disposition: "ALL canonical native input through the first recovery-only request is abandoned and unconfirmed",
+  opaqueCompaction: "exact whole-item fingerprints only; never decoded, rendered or sent",
+  nativeHistory: "retained at its original native owners", acceptedWebCheckpoint: "unchanged" });
 const json = bytes => { try { return JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); } catch { throw failure("Recovery input is not valid JSON."); } };
 function readProtected(file, isPrivate = privateFileIsProtected) {
   const before = lstatSync(file);
@@ -75,7 +79,8 @@ export function prepareControlledWebRecovery(request, receipt, options = {}) {
       || observed.snapshot.originalTabId !== current.value.tabId || observed.snapshot.chatUrl !== current.value.chatUrl
       || typeof observed.tabId !== "string" || !observed.tabId
       || hash(observed.snapshot) !== observed.snapshotSha256) throw failure("Recovery requires the exact read-only idle browser receipt.");
-  const plan = { version: 1, disposition: "abandon-unconfirmed-attempt", request,
+  const plan = { version: 1, journalVersion: 3, disposition: "abandon-unconfirmed-attempt", request,
+    inputPolicy: { ...recoveryInputPolicy },
     snapshotSha256: observed.snapshotSha256, snapshot: observed.snapshot, inspectionTabId: observed.tabId, inspectionEffects: observed.effects,
     nextRequest: "recovery-only-no-send" };
   return { plan, confirmationSha256: hash(plan) };
@@ -105,7 +110,8 @@ const locked = (operation, stateDir) => withServiceOperationLock(() => withDirec
 }), { stateDir });
 
 export async function confirmControlledWebRecovery(plan, confirmationSha256, options = {}) {
-  if (plan?.version !== 1 || plan.disposition !== "abandon-unconfirmed-attempt" || plan.nextRequest !== "recovery-only-no-send"
+  if (plan?.version !== 1 || plan.journalVersion !== 3 || plan.disposition !== "abandon-unconfirmed-attempt" || plan.nextRequest !== "recovery-only-no-send"
+      || !plan.inputPolicy || hash(plan.inputPolicy) !== hash(recoveryInputPolicy)
       || hash(plan) !== confirmationSha256 || hash(plan.snapshot) !== plan.snapshotSha256
       || plan.snapshot.idle !== true || plan.snapshot.emptyComposer !== true) throw failure("Explicit confirmation must match this complete recovery plan's SHA-256.");
   const stateDir = options.stateDir ?? STATE_DIR, write = options.write ?? writePrivateFile;
@@ -121,7 +127,8 @@ export async function confirmControlledWebRecovery(plan, confirmationSha256, opt
     if (hash(readProtected(archive, options.isPrivate)) !== plan.request.ledgerSha256) throw failure("The original ledger archive could not be verified.");
     await (options.assertOffline ?? assertControlledRecoveryOffline)();
     if (hash(readProtected(current.file, options.isPrivate)) !== plan.request.ledgerSha256) throw failure("The ledger changed before recovery publication.");
-    const next = { ...current.value, version: 2, recovery: { stage: "armed", ledgerSha256: plan.request.ledgerSha256, confirmationSha256,
+    const next = { ...current.value, version: plan.journalVersion, recovery: { stage: "armed", ledgerSha256: plan.request.ledgerSha256, confirmationSha256,
+      inputPolicy: WEB_RECOVERY_INPUT_POLICY,
       revokedTurnIds: [...new Set([...(current.value.recovery?.revokedTurnIds ?? []), plan.request.failedTurnId])],
       snapshotSha256: plan.snapshotSha256, inspectionTabId: plan.inspectionTabId, inspectionEffects: plan.inspectionEffects, proof: plan.request.proof } };
     if (!validWebConversation(next, next.threadId)) throw failure("The armed recovery record is invalid.");
@@ -144,7 +151,7 @@ export async function restoreControlledWebRecoveryGuard(plan, confirmationSha256
     const file = path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`), bytes = readProtected(file, options.isPrivate), value = json(bytes);
     const archive = `${file}.abandoned-${plan.request.failedTurnId}-${plan.request.ledgerSha256}.original`;
     const original = readProtected(archive, options.isPrivate), prior = json(original);
-    if (!validWebConversation(value, threadId) || value.version !== 2 || value.recovery.confirmationSha256 !== confirmationSha256
+    if (!validWebConversation(value, threadId) || value.version !== (plan.journalVersion ?? 2) || value.recovery.confirmationSha256 !== confirmationSha256
         || hash(original) !== plan.request.ledgerSha256 || !validWebConversation(prior, threadId) || prior.uncertainSend !== true
         || hash(value.checkpoint) !== hash(prior.checkpoint) || value.generationTurnKey !== prior.generationTurnKey
         || value.unresolvedCoding.length || value.lastTurn.sendState !== "abandoned" && value.lastTurn.turnId !== plan.request.failedTurnId) throw failure("Recovery advanced or changed; restoring an old guard would lose current evidence.");
@@ -174,7 +181,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       writePrivateFile(third, `${JSON.stringify(result.plan, null, 2)}\n`);
       console.log(JSON.stringify({ confirmationSha256: result.confirmationSha256, threadId: request.threadId, failedTurnId: request.failedTurnId,
         ledgerSha256: request.ledgerSha256, snapshotSha256: result.plan.snapshotSha256,
-        disposition: result.plan.disposition, nextRequest: result.plan.nextRequest, plan: third }));
+        journalVersion: result.plan.journalVersion, disposition: result.plan.disposition, inputPolicy: result.plan.inputPolicy, nextRequest: result.plan.nextRequest, plan: third }));
     } else if (command === "confirm") {
       console.log(JSON.stringify(await confirmControlledWebRecovery(json(readProtected(first)), second)));
     } else if (command === "restore-guard") {

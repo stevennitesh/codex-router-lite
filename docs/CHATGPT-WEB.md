@@ -145,6 +145,12 @@ draft, unacknowledged assistant output or unresolved native actions blocks recov
 The first request after confirmation records a local recovery boundary and sends
 nothing; send a fresh instruction afterward. The abandoned prompt is never resent.
 This also supports older records that lack attempted-input hashes.
+The approval covers all native input through that first recovery-only request,
+including any opaque native compaction. It is quarantined without interpretation
+or delivery; exact fingerprints prevent later replay. Unresolved visible native
+actions still block recovery. The plan explicitly binds ledger version 3, which
+older runtimes refuse even after readable compaction. Plans without
+`journalVersion: 3` must be regenerated and reviewed before approval.
 
 ## Immediate Stop
 

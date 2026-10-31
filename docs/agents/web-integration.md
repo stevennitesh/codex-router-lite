@@ -257,7 +257,14 @@ node maintenance/web-recovery.mjs prepare 'C:\private\recovery-request.json' 'C:
 ```
 
 Review the exact thread, failed turn, ledger SHA, browser snapshot SHA and
-`abandon-unconfirmed-attempt` disposition. Obtain the user's explicit approval
+`abandon-unconfirmed-attempt` disposition, including the explicit input policy:
+**all canonical native input through the first recovery-only request is
+quarantined as abandoned/unconfirmed**. This can include native-model opaque
+compaction created while using the inspector. Native originals remain at their
+native owners; nothing in that prefix is decoded into Web context or claimed
+accepted. Plans prepared before this policy must be regenerated with the same
+saved request and successful inspection receipt into a new private plan file;
+keep the old plan. Obtain the user's explicit approval
 of this plan's `confirmationSha256` before confirming; general approval to add
 recovery support does not authorize abandoning an actual attempt. Then fully
 quit Codex normally and stop Router through its maintained service command.
@@ -272,10 +279,10 @@ node maintenance/web-recovery.mjs confirm 'C:\private\recovery-plan.json' '<expl
 ```
 
 Confirmation rereads the exact ledger, saves and verifies a protected byte-original
-`.abandoned-<failed-turn>-<ledger-sha>.original` sidecar, and publishes a V2 ledger
+`.abandoned-<failed-turn>-<ledger-sha>.original` sidecar, and publishes a V3 ledger
 with an armed recovery journal. Its uncertainty flag remains set. The first new
 canonical Web request after Router and Codex start is recovery-only: it repeats
-the exact browser snapshot proof, records that request's transcript hashes as a
+the exact browser snapshot proof, records that request's canonical input hashes as a
 separate abandoned-input replay boundary and returns a local notice without
 Send or coding-tool work. The next fresh user instruction sends only new material;
 the failed prompt, recovery-only request and local notice are not replayed.
@@ -283,6 +290,20 @@ Legacy records need no invented attempted-delivery evidence. New uncertain
 records additionally retain `attemptedDelivery` hashes before dispatch; these
 are never accepted-context proof. Accepted checkpoints and instruction digests
 are unchanged by abandonment. Previously abandoned native turn IDs remain revoked.
+The confirmed whole-input policy requires a current nonempty native user request
+and actual paired results for every visible native function, custom or search
+call. Ambiguous/duplicate pairs and unresolved calls block quarantine. Orphan
+historical outputs remain unconfirmed data; opaque contents establish no action
+outcome. Existing Router-owned unresolved-action guards remain mandatory.
+
+Opaque compaction is represented only by exact whole-item SHA-256 fingerprints
+and canonical positions in that abandoned prefix. The journal also records its
+canonical native thread/turn owner. Subsequent requests recognize only those
+exact items while the entire recorded prefix still matches. Changed, moved,
+repeated or new opaque items fail closed; neither ciphertext nor internal
+fingerprint markers can enter a prompt or local summary. Ordinary requests and
+older strict-policy journals still reject unknown opaque compaction. This is
+explicit abandonment, not native-summary translation or input acceptance.
 Interrupted recovery handoffs retain every possible browser owner and can repeat
 only the action-free proof, preserving the same no-Send boundary.
 After a later Router/REPL restart, the bounded journal first repeats controlled
@@ -292,9 +313,26 @@ before that first acceptance can be separately abandoned with the prior revoked
 marker list; neither failed prompt is replayed.
 Native compaction is blocked until one fresh Web turn has been accepted after
 recovery, so an old compaction alias cannot replay abandoned input.
+Recording the whole-input boundary retires earlier execution aliases; the original
+archive preserves them as evidence. After fresh acceptance, local Web compaction
+summarizes only later readable history. Recovery retains one exact accepted local
+checkpoint identity across restarts, alongside current pending/active aliases.
+Every later summary and capacity successor reconstructs context from that trusted
+checkpoint and its following history, excluding counted exact native V2 source
+copies before it. Unknown, edited or excess prefix copies refuse continuation.
+Retained-tail integrity checks still govern native actions. Capacity successors
+explicitly label the earlier context quarantined and unconfirmed at its original
+owners, including the retained original Web chat; their readable transcript does
+not claim to reconstruct it.
 
-V1 runtimes reject V2 ledgers, preventing a rollback writer from dropping the
-replay fence. Current maintenance snapshots understand V2 risk and preserve the
+The plan binds `journalVersion: 3` as part of its explicit SHA-256 approval.
+Regenerate any older plan from the unchanged private inspection request/receipt
+into a new private plan file; preserve the earlier plan. Current runtimes still
+read V1 records and strict legacy V2 recovery records without a quarantine policy.
+Whole-input quarantine requires V3; policy-bearing V2 records are refused.
+Older V1/V2 runtimes reject V3 before browser work, even after opaque context has
+become a readable local checkpoint. V3 is retained across completion, compaction,
+rollover and restart. Current maintenance snapshots understand these risks and preserve the
 raw archive sidecar; current Stop code permits new bounded-journal turns and
 refuses revoked turns. Refresh the adapter with the reviewed candidate before
 using recovered Web turns. To explicitly restore the original uncertainty guard
@@ -302,8 +340,10 @@ before any later accepted generation, use the same approved plan with
 `restore-guard` in place of `confirm`. This uses the same offline locks/proofs,
 archives the recovery journal and restores the exact original bytes. It restores
 no broker token and authorizes no replay. Once real context or native actions
-advance, restoring that old guard is refused; retain V2 evidence and use a compatible
+advance, restoring that old guard is refused; retain V3 evidence and use a compatible
 runtime. No failure path automatically restores an older record.
+The byte-original archive and native rollout history remain available; no old
+tool token or uncertain action is revived by restoring its original guard.
 Controlled refusal diagnostics distinguish `composer-draft-present`,
 `generation-active`, `idle-control-missing`, `snapshot-changed` and
 `ownership-changed` without returning site text or private identities.
