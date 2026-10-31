@@ -532,6 +532,7 @@ test("pending native browser openings remain durable action risk until exact sav
   assert.equal(validWebConversationRisk(value, threadId), true);
   const snapshot = snapshotWebConversationLedgers(directory, { isPrivate: () => true });
   assert.equal(snapshot[0].unresolvedActions, 1); assert.equal(snapshot[0].uncertainSend, false);
+  assert.equal(snapshot[0].pendingBrowserOpens, 1);
   for (const mutate of [next => { next.version = 1; }, next => { next.priorVersion = 4; }, next => { delete next.pendingBrowserOpen; },
     next => { next.pendingBrowserOpen.callId = "not-an-internal-native-call"; }, next => { next.pendingBrowserOpen.chatUrl = "https://example.test/foreign"; },
     next => { next.lastTurn.completed = true; }, next => { next.uncertainSend = true; next.lastTurn.sendState = "uncertain"; }]) {

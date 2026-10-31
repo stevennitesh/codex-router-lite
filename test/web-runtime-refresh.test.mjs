@@ -495,6 +495,30 @@ function uncertainLedger(f) {
 const settledForce = () => ({ status: "forced", state: "closed", activeRequests: 0,
   webRuntime: { known: true, activeTurns: 0, uncertainSends: 1, unresolvedActions: 0 } });
 
+test("offline forced refresh preserves pending browser openings but refuses native actions and uncovered serving work", async t => {
+  for (const branch of ["pending", "pending-and-native", "uncovered", "early-reopen"]) await t.test(branch, async t => {
+    const f = fixture(t), file = uncertainLedger(f), value = JSON.parse(readFileSync(file));
+    value.version = 4; value.priorVersion = 1; value.uncertainSend = false;
+    value.lastTurn.sendState = "unsent";
+    value.pendingBrowserOpen = { turnId: value.lastTurn.turnId, callId: "call_router_web_0123456789abcdef0123456789abcdef",
+      chatUrl: "https://chatgpt.com/c/01234567-89ab-4cde-8fab-0123456789ab" };
+    if (branch === "pending-and-native") value.unresolvedCoding = [{ callId: "native-work", outputType: "function_call_output" }];
+    f.write(file, json(value)); const original = readFileSync(file), before = f.snapshot();
+    const drain = settledForce(); drain.webRuntime.uncertainSends = 0;
+    drain.webRuntime.unresolvedActions = branch === "uncovered" ? 2 : 1;
+    f.dependencies.drain = async () => drain;
+    if (branch === "early-reopen") f.dependencies.assertProcessesAbsent = () => { throw new Error("app reopened"); };
+    if (branch === "pending") {
+      const result = await refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true });
+      assert.equal(result.applied, true);
+    } else {
+      await assert.rejects(refreshWebRuntime({ ...f.options, apply: true, forceServiceReplacement: true }));
+      assert.deepEqual(f.snapshot(), before); assert.equal(f.effects.includes("restart"), false);
+    }
+    assert.deepEqual(readFileSync(file), original, "Keep the pending-open guard and checkpoint exact.");
+  });
+});
+
 test("forced maintenance preserves durable uncertain Send bytes and forwards force to the closed-admission restart", async t => {
   const f = fixture(t), ledgerPath = uncertainLedger(f), bytes = readFileSync(ledgerPath), before = f.snapshot();
   const sidecar = path.join(path.dirname(ledgerPath), "retained-recovery-copy.json"), sidecarBytes = Buffer.from('{"unresolvedCoding":"opaque historical copy"}');

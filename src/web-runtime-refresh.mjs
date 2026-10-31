@@ -137,7 +137,7 @@ function settledForcedDrain(drain) {
   return drain?.status === "forced" && drain.state === "closed" && drain.activeRequests === 0
     && object(state) && state.known === true
     && [state.activeTurns, state.uncertainSends, state.unresolvedActions].every(count => Number.isSafeInteger(count) && count >= 0)
-    && state.activeTurns === 0 && state.unresolvedActions === 0;
+    && state.activeTurns === 0;
 }
 
 function prepare(ctx, options) {
@@ -199,15 +199,20 @@ export async function refreshWebRuntime(options = {}) {
       // request can cancel work admitted after independent exit preparation.
       if (options.forceServiceReplacement === true) ctx.absent(prepared.adapter, "before-drain");
       drain = await ctx.drain({ force: options.forceServiceReplacement === true });
-      const forcedUncertainty = options.forceServiceReplacement === true && settledForcedDrain(drain) && drain.webRuntime.uncertainSends > 0;
-      if (!confirmedIdleDrain(drain) && !forcedUncertainty) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
+      const forcedRecovery = options.forceServiceReplacement === true && settledForcedDrain(drain)
+        && (drain.webRuntime.uncertainSends > 0 || drain.webRuntime.unresolvedActions > 0);
+      if (!confirmedIdleDrain(drain) && !forcedRecovery) throw new Error("Router did not confirm a known idle Web runtime; update and reload Router before applying runtime refresh. No runtime selection was changed.");
       let ledgers;
       if (options.forceServiceReplacement === true) {
         if (drain.status === "forced") await ctx.closed(drain);
         ctx.absent(prepared.adapter, "after-drain");
         ledgers = ctx.ledgers(ctx.stateDir, { isPrivate: ctx.private });
-        if (ledgers.some(row => row.kind !== "sidecar" && row.unresolvedActions !== 0)
-            || forcedUncertainty && ledgers.filter(row => row.uncertainSend).length < drain.webRuntime.uncertainSends) throw new Error("Router did not confirm a known idle Web runtime with protected durable uncertain Send evidence and no unresolved native action; no runtime selection was changed.");
+        // An exact pending app opening is a UI handoff, not a native coding
+        // action. With the app absent and admission closed, retain that guard
+        // byte-for-byte while refreshing the runtime that must finish its proof.
+        if (ledgers.some(row => row.kind !== "sidecar" && row.unresolvedActions !== (row.pendingBrowserOpens ?? 0))
+            || forcedRecovery && (ledgers.filter(row => row.uncertainSend).length < drain.webRuntime.uncertainSends
+              || ledgers.reduce((count, row) => count + (row.pendingBrowserOpens ?? 0), 0) < drain.webRuntime.unresolvedActions)) throw new Error("Router did not confirm a known idle Web runtime with protected durable recovery evidence and no unresolved native action; no runtime selection was changed.");
       }
       const assertMaintenanceCurrent = () => {
         if (ledgers) {
