@@ -1,13 +1,14 @@
 import { safeLocalHttpError } from "./http-utils.mjs";
 
 const marker = "ROUTER_WEB_RECOVERY_DIAGNOSTIC";
-const stages = new Set(["bootstrap", "open", "send", "observe", "retain", "continue", "rollover"]);
+const stages = new Set(["bootstrap", "open", "send", "observe", "retain", "continue", "rollover", "recover"]);
 const reasons = new Set([
   "saved-url-changed", "temporary-mode-active", "invalid-reply-identities", "generation-turn-not-unique",
   "generation-turn-not-latest", "generation-turn-incomplete", "fresh-reply-not-latest", "expected-reply-mismatch",
   "missing-fresh-reply", "reply-text-unavailable", "reply-prefix-too-short", "reply-prefix-mismatch",
   "recorded-reply-missing", "composer-ambiguous", "composer-unavailable", "composer-shape-invalid", "composer-draft-present",
   "prior-recovery-unverified", "foreign-recovery-owner",
+  "generation-active", "idle-control-missing", "snapshot-changed", "ownership-changed",
 ]);
 const booleans = ["urlMatches", "temporaryInactive", "replyIdentitiesValid", "generationIsLatest", "freshReplyIsLatest",
   "expectedReplyMatches", "replyTextAvailable", "recordedReplyPresent", "prefixLongEnough", "prefixMatches",

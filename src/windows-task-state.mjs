@@ -38,6 +38,7 @@ export async function windowsScheduledTaskState({
   timeoutMs = 10_000,
   powershellExecutable = "powershell.exe",
   signal,
+  includeEnabled = false,
 } = {}) {
   // Task Scheduler queries must not block the event loop that owns the
   // concurrent router-health probe.
@@ -60,7 +61,7 @@ export async function windowsScheduledTaskState({
     "      Where-Object { $_.ProcessId -ne $PID -and $_.Name -ieq 'wscript.exe' -and $_.CommandLine -and $_.CommandLine.IndexOf($launcherPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |",
     "      Select-Object -First 1",
     "  }",
-    "  [Console]::Out.Write($instances.Count.ToString() + '|' + $info.LastTaskResult + '|' + $(if ($launcher) { '1' } else { '0' }))",
+    "  [Console]::Out.Write($instances.Count.ToString() + '|' + $info.LastTaskResult + '|' + $(if ($launcher) { '1' } else { '0' }) + '|' + $(if ($task.Enabled) { '1' } else { '0' }))",
     "} catch { exit 1 }",
   ].join("\n");
 
@@ -98,7 +99,8 @@ export async function windowsScheduledTaskState({
     const launcherAlive = fields.length > 2 ? fields[2] === "1" : undefined;
     if (!Number.isSafeInteger(instanceCount) || instanceCount < 0) return undefined;
     if (!Number.isSafeInteger(lastTaskResult) || lastTaskResult < 0) return undefined;
-    return { instanceCount, lastTaskResult, launcherAlive };
+    return { instanceCount, lastTaskResult, launcherAlive,
+      ...(includeEnabled ? { enabled: fields.length > 3 && ["0", "1"].includes(fields[3]) ? fields[3] === "1" : undefined } : {}) };
   } catch {
     return undefined;
   } finally {

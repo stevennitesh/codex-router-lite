@@ -11,17 +11,31 @@ if ($Mode -eq "adapter-binding") {
   $expectedRollbackCommit = "b" * 40
   $runningRouterRoot = $rollbackRouterRoot = Join-Path $FixtureRoot "previous"
   $existing = @("routes.toml")
-  $metadataPath = Join-Path $FixtureRoot "snapshot.json"
+  $rollbackRoot = Join-Path $FixtureRoot ("home\switchyard\.rollback-" + ("d" * 32))
+  New-Item -ItemType Directory -Force -Path $rollbackRoot, $rollbackRouterRoot | Out-Null
+  [IO.File]::WriteAllText((Join-Path $rollbackRoot "routes.toml"), "fixture routes")
+  $metadataPath = Join-Path $rollbackRoot "rollback.json"
+  $locked = $null
   try {
+    $writer = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Write-PrivateRollbackMetadata" }, $true)
+    Invoke-Expression $writer.Extent.Text
+    if ($Case -eq "publication-failure") {
+      [IO.File]::WriteAllText($metadataPath, "retained recovery metadata")
+      $locked = [IO.File]::Open($metadataPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    }
     foreach ($variable in @('$rollbackAdapter', '$rollbackMetadata')) {
       $assignment = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq $variable }, $true)
       if (-not $assignment) { throw "Production snapshot assignment is missing: $variable" }
       Invoke-Expression $assignment.Extent.Text
     }
-    Write-DeploymentJson $metadataPath $rollbackMetadata
-    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $true; metadata = $rollbackMetadata }
+    $publication = $ast.Find({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq "Write-PrivateRollbackMetadata" }, $true)
+    if (-not $publication) { throw "Production private snapshot publication is missing." }
+    Invoke-Expression $publication.Extent.Text
+    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $true; metadata = $rollbackMetadata; metadataPath = $metadataPath }
   } catch {
-    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $false; error = $_.Exception.Message; snapshotWritten = (Test-Path -LiteralPath $metadataPath) }
+    Write-DeploymentJson (Join-Path $FixtureRoot "outcome.json") @{ succeeded = $false; error = $_.Exception.Message; snapshotWritten = (Test-Path -LiteralPath $metadataPath); metadataPath = $metadataPath }
+  } finally {
+    if ($locked) { $locked.Dispose() }
   }
   return
 }

@@ -372,10 +372,15 @@ test("session capacity logs only a bounded error and releases an idle slot witho
   for (const privateValue of [turn.token, service.url, ...sessions.map(({ transport }) => transport.sessionId), "private-"]) {
     assert.equal(logged.join("\n").includes(privateValue), false);
   }
-  // Security checks still precede capacity admission and do not produce receipts.
+  // Security checks still precede capacity admission, with their own safe receipts.
   assert.equal((await fetch(service.url, { method: "POST", headers: { ...headers, origin: "https://untrusted.example" }, body: "{}" })).status, 403);
   assert.equal((await fetch(new URL("/wrong/mcp", service.url), { method: "POST", headers, body: "{}" })).status, 404);
-  assert.equal(logged.length, 1);
+  assert.deepEqual(withoutDiagnosticTime(logged.slice(1).map(line => JSON.parse(line.slice(prefix.length)))), [
+    { operation: "http", stage: "protocol-rejected", phase: "listener", code: "origin-rejected", httpStatus: 403,
+      httpMethod: "POST", sessionPresent: false, sessionRecognized: false, isError: true },
+    { operation: "http", stage: "protocol-rejected", phase: "listener", code: "path-rejected", httpStatus: 404,
+      httpMethod: "POST", sessionPresent: false, sessionRecognized: false, isError: true },
+  ]);
   assert.deepEqual(service.status(), { listening: true, sessions: 32, pending: 1 });
   assert.equal(broker.revision(turn.token), revision);
   assert.deepEqual(broker.takeCalls(turn.token), [native]);
@@ -394,7 +399,7 @@ test("session capacity logs only a bounded error and releases an idle slot witho
   assert.ok(changed.revision > revision && changed.revision <= broker.revision(turn.token));
   assert.equal(service.status().pending, 0);
   assert.equal(finish(broker, turn.token), true);
-  assert.equal(logged.length, 1);
+  assert.equal(logged.length, 3);
 });
 
 test("64 completed SDK connections reclaim quiescent sessions within the unchanged capacity", { timeout: 15_000 }, async t => {
@@ -412,7 +417,8 @@ test("64 completed SDK connections reclaim quiescent sessions within the unchang
 
 test("admission expires quiescent sessions immediately and cached clients reinitialize without replaying actions", { timeout: 10_000 }, async t => {
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
-  const { broker, service, connect } = await fixture(t);
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
   const turn = register(broker, "expired-client");
   const { client: cached, transport } = await connect(postOnly);
   const originalSession = transport.sessionId;
@@ -431,6 +437,10 @@ test("admission expires quiescent sessions immediately and cached clients reinit
   await connect(postOnly);
   assert.equal(service.status().sessions, 1, "Admission reclaimed expiry without waiting for the periodic reaper.");
   await assert.rejects(call(cached, turn, "read"), error => error.code === 404);
+  assert.deepEqual(withoutDiagnosticTime(receipts.filter(receipt => receipt.stage === "protocol-rejected")).at(-1), {
+    operation: "http", stage: "protocol-rejected", phase: "listener", code: "session-unrecognized", httpStatus: 404,
+    httpMethod: "POST", sessionPresent: true, sessionRecognized: false, isError: true,
+  });
   assert.equal(transport.sessionId, originalSession, "A 404 does not silently create a new session.");
   assert.equal(invocations, 1);
   await cached.close();
@@ -439,7 +449,113 @@ test("admission expires quiescent sessions immediately and cached clients reinit
   assert.notEqual(replacement.sessionId, originalSession);
   assert.equal((await cached.listTools()).tools.length, 2);
   assert.equal(invocations, 1, "Explicit initialization must not repeat the previous action.");
+  assert.equal(JSON.stringify(receipts).includes(originalSession), false);
 });
+
+test("default diagnostics expose a cached SDK session rejected after listener restart without replay or automatic reinitialization", { timeout: 10_000 }, async t => {
+  const previousTrace = process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+  delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+  t.after(() => {
+    if (previousTrace === undefined) delete process.env.CODEX_ROUTER_WEB_MCP_TRACE;
+    else process.env.CODEX_ROUTER_WEB_MCP_TRACE = previousTrace;
+  });
+  const logged = [];
+  t.mock.method(console, "warn", line => logged.push(line));
+  const broker = createWebToolBroker();
+  let invocations = 0;
+  broker.invoke = () => { invocations += 1; throw new Error("private-native-invocation"); };
+  let service = await startWebMcp({ broker });
+  const client = new Client({ name: "private-cached-client", version: "1.0.0" });
+  t.after(async () => { await client.close(); await service.close(); });
+  const originalUrl = new URL(service.url);
+  // Keep the SDK's cached MCP session across restart, independently of a pooled
+  // TCP connection that the old listener closes during its shutdown.
+  const closedConnections = { fetch: (url, init) => {
+    if (init?.method === "GET") return Promise.resolve(new Response(null, { status: 405 }));
+    const headers = new Headers(init?.headers);
+    headers.set("connection", "close");
+    return fetch(url, { ...init, headers });
+  } };
+  const transport = new StreamableHTTPClientTransport(originalUrl, closedConnections);
+  await client.connect(transport);
+  assert.equal((await client.listTools()).tools.length, 2);
+  const sessionId = transport.sessionId;
+  await service.close();
+  service = await startWebMcp({ broker, port: Number(originalUrl.port), capability: originalUrl.pathname.split("/")[1] });
+  assert.equal(service.url, originalUrl.href);
+  await assert.rejects(client.listTools(), error => error.code === 404);
+  assert.equal(transport.sessionId, sessionId);
+  assert.equal(service.status().sessions, 0);
+  const prefix = "[codex-router] web-mcp ";
+  assert.deepEqual(withoutDiagnosticTime(logged.map(line => JSON.parse(line.slice(prefix.length)))), [
+    { operation: "http", stage: "protocol-rejected", phase: "listener", code: "session-unrecognized", httpStatus: 404,
+      httpMethod: "POST", sessionPresent: true, sessionRecognized: false, isError: true },
+  ]);
+  await client.close();
+  const replacement = new StreamableHTTPClientTransport(new URL(service.url), closedConnections);
+  await client.connect(replacement);
+  assert.notEqual(replacement.sessionId, sessionId);
+  assert.equal((await client.listTools()).tools.length, 2);
+  assert.equal(invocations, 0);
+  assert.equal(logged.length, 1, "Successful initialization and discovery remain quiet without full trace.");
+  for (const privateValue of [sessionId, replacement.sessionId, service.url, originalUrl.pathname, "private-"]) {
+    assert.equal(logged.join("\n").includes(privateValue), false);
+  }
+});
+
+test("listener guards and SDK HTTP rejections retain only fixed protocol categories", { timeout: 10_000 }, async t => {
+  const receipts = [];
+  const { broker, service, connect } = await fixture(t, { onDiagnostic: receipt => receipts.push(receipt) });
+  const turn = register(broker, "protocol-rejections");
+  const { client, transport } = await connect(postOnly);
+  const headers = { accept: "application/json, text/event-stream", "content-type": "application/json",
+    "mcp-session-id": transport.sessionId, "mcp-protocol-version": transport.protocolVersion };
+  const body = JSON.stringify({ jsonrpc: "2.0", id: "private-request-id", method: "private-method", params: { secret: "private-body" } });
+  const cases = [
+    [new URL("/private-path?private-query", service.url), { method: "POST", headers, body }, "listener", "path-rejected", 404, "POST", true],
+    [service.url, { method: "POST", headers: { ...headers, origin: "https://private-origin.example" }, body }, "listener", "origin-rejected", 403, "POST", true],
+    [service.url, { method: "PROPFIND", headers }, "listener", "method-rejected", 405, "OTHER", true],
+    [service.url, { method: "GET" }, "listener", "session-required", 400, "GET", false],
+    [service.url, { method: "POST", headers, body: "private-invalid-json" }, "transport", "sdk-http-rejected", 400, "POST", true],
+    [service.url, { method: "POST", headers: { ...headers, "content-type": "text/plain" }, body }, "transport", "sdk-http-rejected", 415, "POST", true],
+    [service.url, { method: "POST", headers: { ...headers, "mcp-protocol-version": "private-version" }, body }, "transport", "sdk-http-rejected", 400, "POST", true],
+  ];
+  for (const [url, init, phase, code, httpStatus, httpMethod, sessionPresent] of cases) {
+    const response = await fetch(url, init);
+    assert.equal(response.status, httpStatus);
+    await response.text();
+    for (const privateValue of ["private-", transport.sessionId, service.url, turn.token]) {
+      assert.equal(JSON.stringify(receipts).includes(privateValue), false);
+    }
+    assert.deepEqual(withoutDiagnosticTime(receipts.splice(0)), [
+      { operation: "http", stage: "protocol-rejected", phase, code, httpStatus, httpMethod,
+        sessionPresent, sessionRecognized: sessionPresent, isError: true },
+    ]);
+  }
+  assert.equal((await client.listTools()).tools.length, 2);
+  assert.equal(service.status().pending, 0);
+  assert.deepEqual(broker.takeCalls(turn.token), []);
+  assert.equal(finish(broker, turn.token), true);
+});
+
+for (const asynchronous of [false, true]) {
+  test(`protocol rejection survives a ${asynchronous ? "rejected" : "throwing"} diagnostic callback`, { timeout: 10_000 }, async t => {
+    let diagnostics = 0;
+    const { service, connect } = await fixture(t, { onDiagnostic: () => {
+      diagnostics += 1;
+      if (asynchronous) return Promise.reject(new Error("private-diagnostic-error"));
+      throw new Error("private-diagnostic-error");
+    } });
+    assert.equal((await fetch(service.url)).status, 400);
+    const { client, transport } = await connect(postOnly);
+    const response = await fetch(service.url, { method: "POST", headers: { accept: "application/json, text/event-stream",
+      "content-type": "application/json", "mcp-session-id": transport.sessionId }, body: "private-invalid-json" });
+    assert.equal(response.status, 400);
+    await response.text();
+    assert.equal((await client.listTools()).tools.length, 2);
+    assert.equal(diagnostics, 2);
+  });
+}
 
 test("pressure preserves a live broker turn between MCP calls and evicts the oldest inactive session", { timeout: 10_000 }, async t => {
   const { broker, service, connect } = await fixture(t);
@@ -720,6 +836,8 @@ test("capability, method, origin, schema, and stale token failures cannot enqueu
   const origin = await fetch(service.url, { headers: { origin: "https://untrusted.example" } });
   assert.equal(origin.status, 403);
   assert.equal(origin.headers.get("access-control-allow-origin"), null);
+  assert.equal(receipts.length, 3);
+  receipts.length = 0;
   const { client } = await connect();
   for (const args of [
     { turn_token: turn.token, wire_name: "read", arguments: {}, input: "conflicting" },

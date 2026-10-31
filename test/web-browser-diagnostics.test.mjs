@@ -35,6 +35,15 @@ test("wrapped native recovery errors expose only fixed categories and bounded di
   assert.equal(payload.error.message.includes("private-path"), false);
 });
 
+test("controlled recovery exposes only fixed refusal reasons through the current native browser boundary", () => {
+  for (const reason of ["composer-draft-present", "generation-active", "idle-control-missing", "snapshot-changed", "ownership-changed"]) {
+    const error = capture(wrapped(marker + JSON.stringify({ reason, phase: "initial-proof", prompt: "PRIVATE_DRAFT", token: "PRIVATE_TOKEN" })), "recover");
+    assert.equal(error.code, "web_saved_chat_recovery_failed");
+    assert.equal(error.diagnostic.reason, reason); assert.equal(error.diagnostic.stage, "recover");
+    assert.doesNotMatch(JSON.stringify(safeLocalHttpErrorPayload(error)), /PRIVATE_DRAFT|PRIVATE_TOKEN/u);
+  }
+});
+
 test("recovery ownership guards have fixed reasons and phases without owner identities", () => {
   for (const reason of ["prior-recovery-unverified", "foreign-recovery-owner"]) {
     const error = capture(wrapped(marker + JSON.stringify({ reason, phase: "ownership-guard", ownerId: "PRIVATE_OWNER_CANARY" })));

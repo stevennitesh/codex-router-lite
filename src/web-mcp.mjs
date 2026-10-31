@@ -305,22 +305,41 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
   };
 
   const listener = createServer(async (request, response) => {
-    if (closing) return reject(response, 503);
-    if (request.headers.origin !== undefined) return reject(response, 403);
-    if (request.url.startsWith(observationPath)) return observe(request, response);
-    if (request.url !== path) return reject(response, 404);
-    if (!["POST", "GET", "DELETE"].includes(request.method)) return reject(response, 405);
     const sessionId = request.headers["mcp-session-id"];
+    const sessionPresent = sessionId !== undefined;
+    const sessionRecognized = typeof sessionId === "string" && sessions.has(sessionId);
+    const httpMethod = ["POST", "GET", "DELETE", "PUT", "PATCH", "HEAD", "OPTIONS"].includes(request.method) ? request.method : "OTHER";
+    let rejectionReported = false, transportHandling = false;
+    const reportRejection = (phase, code, httpStatus) => {
+      if (rejectionReported) return;
+      rejectionReported = true;
+      try {
+        // Protocol rejection can precede every tool handler. Retain no request
+        // identifiers, headers, URLs, bodies or SDK error prose, even in trace.
+        void Promise.resolve(reportDiagnostic({ at: new Date().toISOString(), operation: "http", stage: "protocol-rejected",
+          phase, code, httpStatus, httpMethod, sessionPresent, sessionRecognized, isError: true,
+        })).catch(() => {});
+      } catch { /* Diagnostics cannot change HTTP rejection. */ }
+    };
+    const rejectRequest = (status, code) => {
+      reportRejection("listener", code, status);
+      return reject(response, status);
+    };
+    if (closing) return rejectRequest(503, "closing");
+    if (request.headers.origin !== undefined) return rejectRequest(403, "origin-rejected");
+    if (request.url.startsWith(observationPath)) return observe(request, response);
+    if (request.url !== path) return rejectRequest(404, "path-rejected");
+    if (!["POST", "GET", "DELETE"].includes(request.method)) return rejectRequest(405, "method-rejected");
     let entry, releaseRequest;
     try {
       if (sessionId !== undefined) {
-        if (typeof sessionId !== "string" || !sessions.has(sessionId)) return reject(response, 404);
+        if (typeof sessionId !== "string" || !sessions.has(sessionId)) return rejectRequest(404, "session-unrecognized");
         entry = sessions.get(sessionId);
-        if (entry.retiring) return reject(response, 404);
+        if (entry.retiring) return rejectRequest(404, "session-retiring");
       } else {
-        if (request.method !== "POST") return reject(response, 400);
+        if (request.method !== "POST") return rejectRequest(400, "session-required");
         entry = await admitSession();
-        if (!entry) return closing ? reject(response, 503) : rejectCapacity(response, "session-capacity");
+        if (!entry) return closing ? rejectRequest(503, "closing") : rejectCapacity(response, "session-capacity");
       }
       // Admission can await another session's SDK cleanup. A disconnected
       // initializer must not create a session after its response already closed.
@@ -328,9 +347,16 @@ export async function startWebMcp({ broker, port = 0, capability = randomBytes(3
       entry.lastUsed = Date.now();
       releaseRequest = leaseRequest(entry, response);
       response.setHeader("cache-control", "no-store");
+      transportHandling = true;
+      response.once("finish", () => {
+        if (response.statusCode >= 400) reportRejection("transport", "sdk-http-rejected", response.statusCode);
+      });
       await entry.transport.handleRequest(request, response);
     } catch {
-      if (!response.headersSent) reject(response, 500);
+      if (!response.headersSent) {
+        reportRejection(transportHandling ? "transport" : "listener", "request-failed", 500);
+        reject(response, 500);
+      }
       else response.end();
     } finally {
       releaseRequest?.();

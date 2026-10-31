@@ -283,9 +283,10 @@ export function readBrowserReplies(elements, options) {
     const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.projection === "identities" || options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
-      if (options.projection === "anchor") return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
+      if (["anchor", "recovery-anchor"].includes(options.projection)) return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
         && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)),
-        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)) };
+        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)),
+        ...(options.projection === "recovery-anchor" ? { textContent: turn.textContent ?? "" } : {}) };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
@@ -352,7 +353,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendi
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => {
-    let selection = tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
+    let selection = tab.playwright.locator(["anchor", "recovery-anchor"].includes(projection) ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
     if (!projection) selection = selection.or(role(ui.regenerateButtonExactName, "button", tab));
     return selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}),
@@ -1521,6 +1522,7 @@ export const browserMutationVersion = createHash("sha256")
     .join("\n").replace(/\r\n?/gu, "\n"), "utf8").digest("hex");
 
 export function browserScript(options) {
+  if (options?.operation === "recover") return recoveryBrowserScript(options);
   if (!record(options) || !["bootstrap", "open", "send", "observe", "retain", "continue", "rollover"].includes(options.operation)) throw failure("Unsupported browser operation.");
   if (typeof options.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/.test(options.bindingId)) throw failure("A safe unique browser binding ID is required.");
   if (![options.sessionId, options.turnId].every(value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value))) throw failure("Browser operations require exact native session and turn identities.");
@@ -1622,6 +1624,142 @@ export function browserScript(options) {
   // Bootstrap reuses the installed context instead of repeating its source.
   if (fullInstall) return `${initialize}\n${resident}\nawait (async (state, options) => {\nconst helper = state.residentBrowser; let cache = state.residentMutation;\n${installMutation}\nawait (${runner.toString()})(state, options, nodeRepl, helper.replyReader, helper.viewFactory, (...args) => cache.createContext(...args, cache));\n})(${binding}, ${JSON.stringify(config)});`;
   return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, homeReadiness: ${waitForHomeBrowserReadiness.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
+}
+
+// Explicit maintenance recovery uses its own read-only projection. It neither
+// replays Send nor accepts the abandoned attempt as delivered context.
+async function runControlledRecovery(previous, options, nodeRepl, readReplies, createView, createContext, lifecycle) {
+  const { createHash } = await import("node:crypto");
+  const refusal = reason => new Error(`Controlled same-chat recovery refused. ROUTER_WEB_RECOVERY_DIAGNOSTIC ${JSON.stringify({ reason, phase: "initial-proof" })}`);
+  const refuse = reason => { throw refusal(reason); };
+  const hash = value => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
+  const proof = options.recoveryProof;
+  const agent = await (await import(options.runtimeModule)).setupBrowserRuntime();
+  const browsers = (await agent.browsers.list()).filter(browser => browser.type === "iab" && browser.metadata?.codexSessionId === options.sessionId);
+  if (browsers.length !== 1) refuse("ownership-changed");
+  const browser = await agent.browsers.get(browsers[0].id);
+  await browser.documentation();
+  const owner = globalThis.routerWebActiveTurns?.get(options.sessionId);
+  if (owner && (owner.state !== previous || !options.expectedOwnerTurnIds.includes(owner.turnId))) refuse("ownership-changed");
+  const tabs = (await browser.tabs.list()).filter(tab => tab.url === proof.chatUrl);
+  if (tabs.length > 1) refuse("ownership-changed");
+  const effects = { tabReopened: tabs.length === 0, tabNavigated: false, handoffMarked: false };
+  let contentPending = false;
+  const allowance = lifecycle.createAllowance(Date.now() + 10000, () => refusal(contentPending ? "reply-prefix-too-short" : "ownership-changed"));
+  const tab = tabs.length ? await browser.tabs.get(tabs[0].id) : await browser.tabs.new(), currentTabId = tab.id;
+  if (!currentTabId || tabs.length && currentTabId !== tabs[0].id) refuse("ownership-changed");
+  const assertOwner = () => {
+    if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner || browser.browserId !== browsers[0].id
+        || tab.id !== currentTabId) refuse("ownership-changed");
+  };
+  if (effects.tabReopened) { effects.tabNavigated = true; await tab.goto(proof.chatUrl); }
+  try { await tab.playwright.waitForURL(proof.chatUrl, { timeoutMs: allowance(1000) }); }
+  catch { refuse("ownership-changed"); }
+  const recoveryState = lifecycle.recoveryState(tab, { ui: options.ui, proof: { generationTurnKey: proof.generationTurnKey,
+    replyId: proof.observation.replyId, completed: true, controlledAbandonment: true } });
+  const mounted = await lifecycle.browserReadiness(recoveryState.ready, { nextTimeout: () => { assertOwner(); return allowance(1000); },
+    inspect: async () => tab.id === currentTabId && await tab.url() === proof.chatUrl && await recoveryState.ready.count() === 1,
+    ready: value => value === true });
+  if (!mounted) refuse("ownership-changed");
+  const state = { agent, browser, tab, tabId: tab.id, sessionId: options.sessionId, runtimeModule: options.runtimeModule,
+    savedUrl: proof.chatUrl, hasSentMessage: true };
+  const viewFactory = (state, options, reader) => createView(state, options, reader, lifecycle.savedUrl, lifecycle.homeUrl,
+    lifecycle.pendingUrl, lifecycle.observationState, lifecycle.sendState, lifecycle.navigationObserver);
+  const context = createContext(state, options, nodeRepl, readReplies, viewFactory, lifecycle);
+  const inspect = async () => {
+    allowance(); assertOwner();
+    const currentBrowsers = (await agent.browsers.list()).filter(value => value.type === "iab" && value.metadata?.codexSessionId === options.sessionId);
+    if (currentBrowsers.length !== 1 || currentBrowsers[0].id !== browser.browserId) refuse("ownership-changed");
+    if (tab.id !== currentTabId || await tab.url() !== proof.chatUrl) refuse("ownership-changed");
+    const snapshot = await context.mutationSnapshot({ includeReplies: true, projection: "recovery" });
+    const mutation = snapshot.mutation, replies = snapshot.replies, turns = snapshot.turns;
+    if (await context.role(options.ui.stopButtonExactName).filter({ visible: true }).count() !== 0) refuse("generation-active");
+    if (!mutation.emptyComposer) refuse("composer-draft-present");
+    if (!mutation.normal || mutation.url !== proof.chatUrl) refuse("ownership-changed");
+    if (!mutation.idle || await context.role(options.recoveryIdleButtonExactName).filter({ visible: true }).count() !== 1) refuse("idle-control-missing");
+    if (!context.validReplies(replies) || turns.some(turn => typeof turn.turnKey !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(turn.turnKey))
+        || new Set(turns.map(turn => turn.turnKey)).size !== turns.length) refuse("ownership-changed");
+    const accepted = turns.filter(turn => turn.turnKey === proof.generationTurnKey);
+    const reply = replies.find(reply => reply.messageId === proof.observation.replyId);
+    if (accepted.length !== 1 || accepted[0].complete !== true || !reply || reply.turnKey !== proof.generationTurnKey) refuse("ownership-changed");
+    const allowed = new Set([...proof.sendBaselineReplyIds, ...proof.generationReplyIds]);
+    if (replies.some(reply => !allowed.has(reply.messageId)) || replies.at(-1)?.messageId !== proof.observation.replyId) refuse("ownership-changed");
+    const anchors = await context.snapshot(tab, `Router generation: ${proof.failedTurnId}`, undefined, "recovery-anchor", []);
+    if (anchors.turns.length !== turns.length || anchors.turns.some((turn, index) => turn.turnKey !== turns[index].turnKey || turn.nestedInTurn)) refuse("snapshot-changed");
+    const acceptedIndex = turns.findIndex(turn => turn.turnKey === proof.generationTurnKey);
+    const abandoned = [...(proof.priorRevokedTurnIds ?? []), proof.failedTurnId], used = new Set();
+    let previousMarkerIndex = -1;
+    for (const turn of anchors.turns.slice(acceptedIndex + 1)) {
+      const markers = abandoned.flatMap((turnId, index) => turn.textContent.includes(`Router generation: ${turnId}`) ? [index] : []);
+      if (markers.length !== 1 || used.has(markers[0]) || markers[0] <= previousMarkerIndex
+          || markers[0] === abandoned.length - 1 && turn !== anchors.turns.at(-1)) refuse("ownership-changed");
+      used.add(markers[0]); previousMarkerIndex = markers[0];
+    }
+    assertOwner(); allowance();
+    if (reply.text.length < proof.observation.assistantPrefix.length) {
+      if (reply.answer !== true || typeof reply.recoveryTextContent !== "string") refuse("ownership-changed");
+      return { pendingText: reply.recoveryTextContent };
+    }
+    if (hash(reply.text.slice(0, proof.observation.assistantPrefix.length)) !== proof.observation.assistantPrefix.sha256) refuse("ownership-changed");
+    return { originalTabId: proof.tabId, chatUrl: proof.chatUrl, turns: anchors.turns.map(turn => ({ turnKey: turn.turnKey, failed: turn.matchesGenerationMarker, sha256: hash(turn.textContent) })),
+      replies: replies.map(reply => ({ messageId: reply.messageId, turnKey: reply.turnKey, sha256: hash(reply.text) })), idle: true, emptyComposer: true };
+  };
+  const completeInspect = async () => {
+    let result = await inspect();
+    while (Object.hasOwn(result, "pendingText")) {
+      contentPending = true;
+      let changed = false;
+      const observed = await lifecycle.browserReadiness(recoveryState.contentChangedSince(result.pendingText), {
+        nextTimeout: () => { assertOwner(); return allowance(1000); },
+        afterWait: ({ error, timedOut }) => { assertOwner(); changed = !error; if (error && !timedOut) refuse("ownership-changed"); },
+        inspect: async () => ({ result: await inspect(), changed }),
+        ready: value => value.changed || !Object.hasOwn(value.result, "pendingText"),
+      });
+      if (!observed.changed && Object.hasOwn(observed.result, "pendingText")) refuse("reply-prefix-too-short");
+      result = observed.result;
+    }
+    contentPending = false;
+    return result;
+  };
+  const first = await completeInspect(), snapshot = await completeInspect(), snapshotSha256 = hash(snapshot);
+  if (hash(first) !== snapshotSha256 || options.snapshotSha256 !== undefined && snapshotSha256 !== options.snapshotSha256) refuse("snapshot-changed");
+  if (effects.tabReopened) {
+    await tab.markHandoff(); effects.handoffMarked = true;
+    if (hash(await completeInspect()) !== snapshotSha256) refuse("snapshot-changed");
+  }
+  if (!options.inspectionOnly) {
+    if (globalThis.routerWebActiveTurns?.get(options.sessionId) !== owner) refuse("ownership-changed");
+    // Old browser flags and tool directives never become the new turn's state.
+    Object.assign(state, { completed: true, retained: true, sendAttempted: false, sendClicked: false, sendConfirmed: false,
+      baselineReplyIds: snapshot.replies.map(reply => reply.messageId), baselineTurnKeys: snapshot.turns.map(turn => turn.turnKey) });
+    globalThis[`routerWeb_${options.bindingId}`] = state;
+    (globalThis.routerWebActiveTurns ??= new Map()).set(options.sessionId, { turnId: options.turnId, state, stopButtonName: options.ui.stopButtonExactName });
+  }
+  nodeRepl.write(options.frameBegin + JSON.stringify({ routerBrowser: { operation: "recover", snapshotSha256, snapshot, tabId: currentTabId, effects,
+    inspectionOnly: options.inspectionOnly === true } }) + options.frameEnd);
+}
+
+function recoveryBrowserScript(options) {
+  const proof = options.recoveryProof;
+  if (!record(proof) || !isSavedChatUrl(proof.chatUrl) || typeof proof.tabId !== "string" || !proof.tabId
+      || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(options.bindingId ?? "")
+      || ![options.sessionId, options.turnId, proof.failedTurnId, proof.generationTurnKey, proof.observation?.replyId].every(value => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(value))
+      || proof.observation?.completed !== true || proof.observation.assistantPrefix?.length < 1
+      || !Array.isArray(proof.sendBaselineReplyIds) || !Array.isArray(proof.generationReplyIds)
+      || proof.priorRevokedTurnIds !== undefined && (!Array.isArray(proof.priorRevokedTurnIds)
+        || !proof.priorRevokedTurnIds.every(value => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(value))
+        || new Set(proof.priorRevokedTurnIds).size !== proof.priorRevokedTurnIds.length || proof.priorRevokedTurnIds.includes(proof.failedTurnId))
+      || !Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.includes(proof.failedTurnId)
+      || typeof options.runtimeModule !== "string" || !options.runtimeModule
+      || options.inspectionOnly !== true && !/^[a-f0-9]{64}$/u.test(options.snapshotSha256 ?? "")) throw failure("Controlled recovery requires an exact completed prior checkpoint and reviewed snapshot.");
+  const [frameBegin, frameEnd] = frameParts(options.frameToken);
+  const config = { ...options, ui: { ...browserDom, ...options.ui }, recoveryIdleButtonExactName: browserIdleButtonExactName, frameBegin, frameEnd };
+  if (options.pluginAppId) {
+    const css = value => '"' + String(value).replace(/[^A-Za-z0-9 _:/.-]/gu, char => `\\${char.codePointAt(0).toString(16)} `) + '"';
+    config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
+  }
+  const binding = `globalThis.routerWeb_${options.bindingId}`;
+  return `await (async (previous, options) => { await (${runControlledRecovery.toString()})(previous, options, nodeRepl, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${createBrowserOperationContext.toString()}, { savedUrl: ${isSavedChatUrl.toString()}, homeUrl: ${isNormalChatHomeUrl.toString()}, pendingUrl: ${isPendingChatUrl.toString()}, observationState: ${createObservationBrowserState.toString()}, sendState: ${createSendBrowserState.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }); })(typeof ${binding} === "undefined" ? undefined : ${binding}, ${JSON.stringify(config)});`;
 }
 
 export function isBrowserContinuationCacheMiss(value) {
