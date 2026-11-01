@@ -13,6 +13,7 @@ import { reconcileControlledRecoverySnapshot, parseBrowserOutput, readBrowserRep
 import { domElement, domText } from "./web-dom-fixture.mjs";
 import { validWebConversation } from "../src/web-runtime.mjs";
 import { nativeCompactionWitnessReference, readNativeCompactionWitness } from "../src/web-native-compaction.mjs";
+import { snapshotWebConversationLedgers } from "../src/web-maintenance-proof.mjs";
 
 const refused = () => Promise.reject(Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" }));
 const offline = () => ({ inspect: () => ({ adapter: {} }), absent: () => {},
@@ -394,6 +395,9 @@ test("native restoration retains and verifies long source snapshots and rollback
   assert.deepEqual(readFileSync(prepared.plan.rolloutSnapshotPath), source);
   const result = await applyNativeCompactionRestoration(prepared.plan,prepared.confirmationSha256,f.options);
   assert.deepEqual(readFileSync(result.rolloutArchive), source);
+  const snapshot = snapshotWebConversationLedgers(f.root, {isPrivate:f.options.isPrivate});
+  const retained = snapshot.find(item => item.name === path.basename(result.rolloutArchive));
+  assert.equal(retained.kind, 'sidecar'); assert.equal(retained.sha256, hash(source));
   assert(JSON.stringify(prepared.plan.request.witness).length < 16 * 1024 * 1024);
   await rollbackNativeCompactionRestoration(prepared.plan,prepared.confirmationSha256,f.options);
   assert.deepEqual(readFileSync(f.ledgerPath), ledgerBefore);

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isProcessStartIdentity } from "./process-identity.mjs";
 import { privateFileIsProtected } from "./file-security.mjs";
 import { validWebConversationRisk } from "./web-runtime.mjs";
+import { MAX_CANONICAL_NATIVE_SOURCE_BYTES } from "./web-native-compaction.mjs";
 
 const helper = fileURLToPath(new URL("./web-maintenance-processes.ps1", import.meta.url));
 const normalize = value => path.resolve(value).toLowerCase();
@@ -215,7 +216,8 @@ export function snapshotWebConversationLedgers(stateDir, { isPrivate = privateFi
       if (lstatSync(cursor).isSymbolicLink()) throw new Error("Saved Web conversation ledger links are refused.");
       if (path.dirname(cursor) === cursor) break;
     }
-    if (!before.isFile() || before.size > 16 * 1024 * 1024 || !isPrivate(file)) throw new Error("Saved Web conversation ledger is not a protected bounded regular file.");
+    const maxBytes = mapping ? 16 * 1024 * 1024 : MAX_CANONICAL_NATIVE_SOURCE_BYTES;
+    if (!before.isFile() || before.size > maxBytes || !isPrivate(file)) throw new Error("Saved Web conversation ledger is not a protected bounded regular file.");
     const bytes = readFileSync(file), after = lstatSync(file);
     if (before.ino !== after.ino || before.dev !== after.dev || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("Saved Web conversation ledger changed during inspection.");
     // The runtime admits only exact UUID.json mappings. Recovery copies and
