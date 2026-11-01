@@ -17,7 +17,7 @@ import { browserHelperVersion, browserMutationVersion, browserScript, parseBrows
 import { createWebToolBroker } from '../src/web-tools.mjs';
 import { startWebMcp } from '../src/web-mcp.mjs';
 import { AdapterBridge, INTERRUPT_TOOL, ADAPTER_INFO, cleanupDecision, qualifyBrowserCall, readConfig, readIdentity, readStopResult, retainedMetadata, stopCode } from '../src/web-stop-adapter.mjs';
-import { createAdapterHook, STOP_BUDGET } from '../src/web-stop-contract.mjs';
+import { createAdapterHook, STOP_BUDGET, STOP_CONFIRMATION_BUDGET } from '../src/web-stop-contract.mjs';
 
 const APPROVED_THREAD = '01a14b65-a7a8-7b41-bd33-7c19d3c6df82';
 const TURN = '01a14b65-a7a8-7b41-bd33-7c19d3c6df83';
@@ -105,6 +105,117 @@ const success = (overrides = {}) => ({ content: [{ type: 'text', text: JSON.stri
   stopClicked: true, stopHidden: true, generationInactive: true, inactivityEvidence: 'turn_complete',
   retained: true, elapsedMs: 25, ...overrides }) }) }] });
 const ordinaryResult = { content: [{ type: 'text', text: '{}' }] };
+const acknowledgedPendingStop = () => success({outcome:'blocked',stage:'stop_readback_visibility',code:'stop_confirmation_failed',
+  stopHidden:false,generationInactive:false,inactivityEvidence:'none',readbackState:'unconfirmed_readback',
+  readbackControlsRecognized:true,readbackStopVisible:true,readbackStopCount:1,readbackIdleVisibleCount:0,readbackComplete:false});
+
+test('provider readback may finish after the host callback without another Stop or an early success', async t => {
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:1000});
+  const gate=Promise.withResolvers();t.after(gate.resolve);
+  const f=await protocolFixture(t,async params=>{
+    if(params.arguments?.code?.includes('"confirmationOnly":true')){await gate.promise;return success({confirmationOnly:true,elapsedMs:4000,inactivityEvidence:'composer_restored'});}
+    return params.arguments?.code?.includes('stopOwnedWebTurn')?acknowledgedPendingStop():ordinaryResult;
+  },{graceMs:400,cleanupMs:250});
+  await f.client.callTool(ordinary());const owned=f.client.callTool(hook());
+  await f.waitForReceipt('stop_confirmation_dispatched');t.mock.timers.tick(400);
+  const response=await owned;assert.equal(response.isError,undefined);
+  assert.match(JSON.stringify(response),/confirmation_pending/);
+  assert.equal(f.receipts.some(e=>e.code==='stop_confirmed'),false);
+  gate.resolve();const confirmed=await f.waitForReceipt('stop_confirmed');
+  assert.equal(confirmed.afterCallback,true);assert.equal(confirmed.initialChildTerminalObserved,true);assert.equal(confirmed.childTerminalObserved,true);
+  assert.equal(confirmed.confirmationMode,'read-only-followup');
+  assert.equal(f.receipts.filter(e=>e.code==='stop_native_dispatched').length,1);
+  assert.equal(f.receipts.filter(e=>e.code==='stop_confirmation_dispatched').length,1);
+  assert.equal(f.calls.length,3);assert.deepEqual(f.calls[2]._meta,retainedMetadata(ordinary()._meta));
+  assert.equal(f.calls[2].arguments.timeout_ms,STOP_CONFIRMATION_BUDGET.nativeMs);
+  assert.equal(f.bridge.confirmation,null);
+});
+
+test('new native ownership cancels pending confirmation and can never confirm the retired generation', async t=>{
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:1000});const gate=Promise.withResolvers();t.after(gate.resolve);
+  const f=await protocolFixture(t,async params=>{
+    if(params.arguments?.code?.includes('"confirmationOnly":true')){await gate.promise;return success({confirmationOnly:true});}
+    return params.arguments?.code?.includes('stopOwnedWebTurn')?acknowledgedPendingStop():ordinaryResult;
+  },{graceMs:400,cleanupMs:250});
+  await f.client.callTool(ordinary());const owned=f.client.callTool(hook());await f.waitForReceipt('stop_confirmation_dispatched');
+  t.mock.timers.tick(400);await owned;await f.client.callTool(ordinary(TURN2,'continue'));
+  const result=await f.waitForReceipt('stop_unconfirmed');assert.equal(result.resultCode,'confirmation_scope_changed');
+  assert.equal(f.receipts.some(e=>e.code==='stop_confirmed'),false);assert.equal(f.bridge.currentTurn,TURN2);
+  assert.equal(f.cancellations.filter(p=>p.arguments?.code?.includes('"confirmationOnly":true')).length,1);
+});
+
+test('a permanently active provider has one bounded read-only confirmation and remains unconfirmed', async t=>{
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:1000});const gate=Promise.withResolvers();t.after(gate.resolve);
+  const f=await protocolFixture(t,async params=>{
+    if(params.arguments?.code?.includes('"confirmationOnly":true')){await gate.promise;return success({confirmationOnly:true});}
+    return params.arguments?.code?.includes('stopOwnedWebTurn')?acknowledgedPendingStop():ordinaryResult;
+  },{graceMs:400,cleanupMs:250});
+  await f.client.callTool(ordinary());const owned=f.client.callTool(hook());await f.waitForReceipt('stop_confirmation_dispatched');
+  t.mock.timers.tick(400);await owned;t.mock.timers.tick(STOP_CONFIRMATION_BUDGET.receiptMs);
+  const result=await f.waitForReceipt('stop_unconfirmed');assert.equal(result.resultCode,'acknowledgement_timeout');
+  assert.equal(result.childTerminalObserved,false);assert.equal(f.receipts.some(e=>e.code==='stop_confirmed'),false);
+  assert.equal(f.receipts.filter(e=>e.code==='stop_native_dispatched').length,1);
+});
+
+test('a late bundled callback invalidates confirmation before the host callback returns', async t => {
+  const gate = Promise.withResolvers(); t.after(gate.resolve);
+  const f = await protocolFixture(t, async params => {
+    if (params.arguments?.code?.includes('"confirmationOnly":true')) { await gate.promise; return success({ confirmationOnly: true }); }
+    return params.arguments?.code?.includes('stopOwnedWebTurn') ? acknowledgedPendingStop() : ordinaryResult;
+  });
+  await f.client.callTool(ordinary());
+  const owned = f.client.callTool(hook()); await f.waitForReceipt('stop_confirmation_dispatched');
+  await f.waitForCall(params => params.arguments?.code?.includes('"confirmationOnly":true'));
+  const bundled = f.client.callTool(builtin());
+  const result = await f.waitForReceipt('stop_unconfirmed');
+  assert.equal(result.resultCode, 'confirmation_scope_changed');
+  await f.waitForCancellation(params => params.arguments?.code?.includes('"confirmationOnly":true'));
+  await owned; await bundled; gate.resolve();
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);
+  assert.equal(f.cancellations.filter(params => params.arguments?.code?.includes('"confirmationOnly":true')).length, 1);
+});
+
+test('queued bundled callbacks reach actual terminals before read-only confirmation starts', async t => {
+  const stopped = Promise.withResolvers(), bundled = Promise.withResolvers();
+  t.after(() => { stopped.resolve(); bundled.resolve(); });
+  let bundledEnded = false;
+  const f = await protocolFixture(t, async params => {
+    if (params.name === 'turn_ended') { await bundled.promise; bundledEnded = true; return ordinaryResult; }
+    if (params.arguments?.code?.includes('"confirmationOnly":true')) {
+      assert.equal(bundledEnded, true); return success({ confirmationOnly: true });
+    }
+    if (params.arguments?.code?.includes('stopOwnedWebTurn')) { await stopped.promise; return acknowledgedPendingStop(); }
+    return ordinaryResult;
+  });
+  await f.client.callTool(ordinary());
+  const owned = f.client.callTool(hook()); await f.waitForReceipt('stop_native_dispatched');
+  const stock = f.client.callTool(builtin()); await f.waitForReceipt('builtin_interrupt_queued');
+  stopped.resolve(); await f.waitForCall(params => params.name === 'turn_ended');
+  assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmation_dispatched'), false);
+  bundled.resolve(); await owned; await stock;
+  const result = await f.waitForReceipt('stop_confirmed');
+  assert.equal(result.confirmationMode, 'read-only-followup');
+  assert.equal(result.initialChildTerminalObserved, true);
+});
+
+test('uncertain clicks and incomplete readback cannot admit a confirmation request', async t => {
+  for (const change of [{ clickError: true }, { stopClicked: false }, { freshController: true },
+    { readbackControlsRecognized: false }, { readbackStopCount: 2 }, { retained: false }]) {
+    const f = await protocolFixture(t, params => params.arguments?.code?.includes('stopOwnedWebTurn')
+      ? acknowledgedPendingStopWith(change) : ordinaryResult);
+    await f.client.callTool(ordinary()); await f.client.callTool(hook());
+    assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmation_dispatched'), false);
+  }
+});
+
+function acknowledgedPendingStopWith(change) {
+  const result = acknowledgedPendingStop();
+  const message = JSON.parse(result.content[0].text);
+  const proof = JSON.parse(message.systemMessage.slice('ROUTER_WEB_STOP '.length));
+  message.systemMessage = 'ROUTER_WEB_STOP ' + JSON.stringify({ ...proof, ...change });
+  result.content[0].text = JSON.stringify(message);
+  return result;
+}
 
 test('only actual generated observation code gains cancellation grace', () => {
   const call = ordinary();
@@ -2131,7 +2242,10 @@ test('blocked Stop receipts retain safe readback observations and exclude unreco
       ...(branch === 'malicious' ? { readbackStopCount: { url: privateText }, privatePayload: privateText } : {}) };
     const result = success({ outcome: 'blocked', stage: 'stop_readback_visibility', stopHidden: false,
       generationInactive: false, inactivityEvidence: 'none', code: 'stop_confirmation_failed', ...diagnostic });
-    const f = await protocolFixture(subtest, params => params.arguments?.code?.includes('stopOwnedWebTurn') ? result : ordinaryResult);
+    const f = await protocolFixture(subtest, params => params.arguments?.code?.includes('"confirmationOnly":true')
+      ? success({ outcome: 'blocked', stage: 'stop_readback_visibility', stopHidden: false,
+        generationInactive: false, inactivityEvidence: 'none', code: 'stop_confirmation_failed', ...diagnostic, confirmationOnly: true })
+      : params.arguments?.code?.includes('stopOwnedWebTurn') ? result : ordinaryResult);
     await f.client.callTool(ordinary()); assert.equal((await f.client.callTool(hook())).isError, true);
     const receipt = f.receipts.find(entry => entry.code === 'stop_unconfirmed');
     assert.ok(receipt); assert.equal(f.receipts.some(entry => entry.code === 'stop_confirmed'), false);

@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createWebStopCode } from "../src/web-stop-hook.mjs";
 import { waitForBrowserReadiness } from "../src/web-browser-state.mjs";
 import { readStopResult, stopCode } from "../src/web-stop-adapter.mjs";
-import { STOP_BUDGET } from "../src/web-stop-contract.mjs";
+import { STOP_BUDGET, STOP_CONFIRMATION_BUDGET } from "../src/web-stop-contract.mjs";
 
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const stateDir = path.resolve("generated/web-stop-rollout-20261018/hook/test-state");
@@ -78,7 +78,7 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
         return new PolicyLocator(() => this.resolve().length ? controls().filter(element => element.name === options.name) : []);
       }
       async click(options) {
-        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= STOP_BUDGET.scriptMs);
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= (model.confirmationOnly ? STOP_CONFIRMATION_BUDGET.scriptMs : STOP_BUDGET.scriptMs));
         touch('click_request', thread);
         const selected = this.resolve();
         if (selected.length !== 1 || selected[0].kind !== 'stop' || !selected[0].visible) throw new Error('No unique guarded Stop matched');
@@ -95,7 +95,7 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
       }
       async waitFor(options) {
         assert.equal(options.state, 'visible');
-        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= STOP_BUDGET.scriptMs);
+        assert(Number.isInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= (model.confirmationOnly ? STOP_CONFIRMATION_BUDGET.scriptMs : STOP_BUDGET.scriptMs));
         touch('readiness_wait', thread);
         if (surface.readinessError) throw surface.readinessError;
         if (surface.pauseReadiness) await surface.pauseReadiness;
@@ -186,9 +186,10 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
   };
   // Boundary cases default to the production script allowance; deadline tests
   // can inject a smaller budget or name the shared contract explicitly.
-  const run = async ({ thread = model.owner, turn = model.turn, budgetMs = 2400, delivery } = {}) => {
+  const run = async ({ thread = model.owner, turn = model.turn, budgetMs = 2400, delivery, confirmationOnly = false } = {}) => {
     const identity = { threadId: thread, turnId: turn, sessionId: id(99) };
-    const source = stopCode(stopConfig, identity, budgetMs, delivery)
+    model.confirmationOnly = confirmationOnly;
+    const source = (confirmationOnly ? createWebStopCode(stopConfig, identity, { budgetMs, delivery, confirmationOnly }) : stopCode(stopConfig, identity, budgetMs, delivery))
       .replaceAll("import(", "__publicImport(");
     const count = outputs.length;
     await new vm.Script(`(async () => { ${source} })()`).runInContext(context, { timeout: 1000 });
@@ -206,6 +207,64 @@ function fixture(stopConfig = { stateDir, runtimeModule }) {
 
 const mutations = f => f.calls.filter(call => ["click", "handoff"].includes(call.name));
 const clicked = f => f.calls.filter(call => call.name === "click");
+
+test('late provider inactivity is confirmed from the acknowledged binding without another page action', async () => {
+  const f = fixture();
+  f.first.state.retained = true;
+  f.first.state.reconciliationStop = { generationTurnKey: f.first.generationTurnKey, acknowledged: true, idleAbsent: true };
+  f.first.keepGenerating = true; f.first.readinessDelayMs = 4000;
+  f.first.onReadinessSettled = () => { f.first.visible = false; f.first.idleVisible = true; };
+  const result = await f.run({ confirmationOnly: true, budgetMs: STOP_CONFIRMATION_BUDGET.scriptMs });
+  assert.equal(result.outcome, 'cancelled'); assert.equal(result.confirmationOnly, true);
+  assert.equal(result.inactivityEvidence, 'composer_restored'); assert(result.elapsedMs > STOP_BUDGET.scriptMs);
+  assert.deepEqual(mutations(f), []);
+  assert.equal(readStopResult({content:[{type:'text',text:JSON.stringify({systemMessage:marker+JSON.stringify(result)})}]}).ok, false);
+  assert.equal(readStopResult({content:[{type:'text',text:JSON.stringify({systemMessage:marker+JSON.stringify(result)})}]}, {confirmationOnly:true}).ok, true);
+});
+
+test('the failed initial readback supplies the actual receipt used by delayed confirmation', async () => {
+  const f = fixture();
+  f.first.keepVisible = true; f.first.keepGenerating = true; f.first.readinessDelayMs = 4000;
+  const initial = await f.run();
+  assert.equal(initial.code, 'stop_confirmation_failed');
+  assert.equal(initial.stopClicked, true); assert.equal(initial.retained, true);
+  assert.equal(f.first.state.reconciliationStop.acknowledged, true);
+  f.first.onReadinessSettled = () => { f.first.visible = false; f.first.idleVisible = true; };
+  const result = await f.run({ confirmationOnly: true, budgetMs: STOP_CONFIRMATION_BUDGET.scriptMs });
+  stopped(result); assert.equal(result.inactivityEvidence, 'composer_restored');
+  assert.equal(clicked(f).length, 1);
+  assert.equal(f.calls.filter(call => call.name === 'handoff').length, 1);
+});
+
+test('read-only confirmation cannot acquire a missing, uncertain, foreign or unretained click receipt', async () => {
+  for (const branch of ['missing', 'unacknowledged', 'idle-present', 'foreign', 'unretained', 'fresh']) {
+    const f = fixture(); f.first.state.retained = true;
+    f.first.state.reconciliationStop = { generationTurnKey: f.first.generationTurnKey, acknowledged: true, idleAbsent: true };
+    if(branch==='missing') delete f.first.state.reconciliationStop;
+    if(branch==='unacknowledged') f.first.state.reconciliationStop.acknowledged=false;
+    if(branch==='idle-present') f.first.state.reconciliationStop.idleAbsent=false;
+    if(branch==='foreign') f.first.state.reconciliationStop.generationTurnKey=id(999);
+    if(branch==='unretained') f.first.state.retained=false;
+    if(branch==='fresh') f.fresh(f.first);
+    const result=await f.run({confirmationOnly:true,budgetMs:STOP_CONFIRMATION_BUDGET.scriptMs});
+    assert.equal(result.outcome,'blocked',branch); assert.deepEqual(mutations(f),[],branch);
+  }
+});
+
+test('read-only confirmation refuses ownership replacement and a still-active provider', async () => {
+  for(const branch of ['receipt','acknowledgement','retention','owner','active']){
+    const f=fixture();f.first.state.retained=true;
+    f.first.state.reconciliationStop={generationTurnKey:f.first.generationTurnKey,acknowledged:true,idleAbsent:true};
+    if(branch==='active')f.first.readinessDelayMs=20000;
+    else f.first.onReadinessSettled=()=>{f.first.visible=false;f.first.idleVisible=true;
+      if(branch==='receipt')f.first.state.reconciliationStop={...f.first.state.reconciliationStop};
+      else if(branch==='acknowledgement')f.first.state.reconciliationStop.acknowledged=false;
+      else if(branch==='retention')f.first.state.retained=false;
+      else f.context.routerWebActiveTurns.set(f.model.owner,{...f.first.active});};
+    const result=await f.run({confirmationOnly:true,budgetMs:STOP_CONFIRMATION_BUDGET.scriptMs});
+    assert.equal(result.outcome,'blocked',branch);assert.deepEqual(mutations(f),[],branch);
+  }
+});
 const readback = result => ({ state: result.readbackState, stopCount: result.readbackStopCount,
   stopVisible: result.readbackStopVisible, idleCount: result.readbackIdleCount,
   idleVisibleCount: result.readbackIdleVisibleCount, controlsRecognized: result.readbackControlsRecognized,

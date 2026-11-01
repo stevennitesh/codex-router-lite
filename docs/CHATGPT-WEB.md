@@ -164,9 +164,12 @@ After installing the adapter, review and trust **Stopping ChatGPT Web generation
 through Router adapter** in Codex Settings → Hooks, then fully quit and reopen Codex.
 Use the normal Codex app; no external Web launcher or special startup script is
 needed. Configuration alone does not establish live Stop readiness.
-Codex caps Interrupt hooks at three seconds. Cleanup and its terminal receipt
-must fit that deadline; an observed idle transition returns immediately. A slow
-or cancelled readback remains unconfirmed. Updating the previously owned
+Codex caps Interrupt hooks at three seconds. Stop action admission fits that
+deadline; an observed idle transition returns immediately. After an acknowledged
+click, the adapter can admit one read-only confirmation with a ten-second native
+allowance. The hook reports pending while that check runs. It cannot click again,
+and only an actual inactivity observation confirms Stop. Cancelled or unverifiable
+readback remains unconfirmed. Updating the previously owned
 ten-second hook changes its definition, so review and trust the changed hook
 again before the normal restart.
 

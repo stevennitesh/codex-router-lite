@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { readBrowserProgram, parseBrowserOutput, isSavedChatUrl } from './web-browser.mjs';
 import { browserObservationBudget, browserObservationIdleComplete, browserObservationOwnershipLost, isBrowserOwnershipPending } from './web-browser-state.mjs';
 import { createWebStopCode } from './web-stop-hook.mjs';
-import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_BUDGET, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
+import { INTERRUPT_TOOL, validAdapterThreadIds, validateAdapterConfig, STOP_BUDGET, STOP_CONFIRMATION_BUDGET, STOP_STAGES, STOP_CODES } from './web-stop-contract.mjs';
 import { WebProcessSnapshot } from './web-process-snapshot.mjs';
 
 export { INTERRUPT_TOOL } from './web-stop-contract.mjs';
@@ -145,7 +145,7 @@ const STOP_READBACK_FIELDS = ['readbackState', ...STOP_READBACK_COUNTS, ...STOP_
 
 // Parse the actual native text envelope, including {systemMessage: ...}. No raw
 // output/error ever reaches receipts. Success must contain explicit readback.
-export function readStopResult(result) {
+export function readStopResult(result, { confirmationOnly = false } = {}) {
   const fail = code => ({ ok: false, code });
   if (!record(result) || result.isError === true || !Array.isArray(result.content) || result.content.length > 16) return fail('native_error');
   let proof;
@@ -170,11 +170,12 @@ export function readStopResult(result) {
   if (!visit(result)) return fail('malformed_result');
   if (!record(proof)) return fail('no_stop_proof');
   const flags = ['freshController', 'clickAttempted', 'clickError', 'stopClicked', 'stopHidden', 'generationInactive', 'retained'];
-  const allowed = ['outcome', 'stage', ...flags, 'inactivityEvidence', 'code', 'elapsedMs', ...STOP_READBACK_FIELDS];
+  const allowed = ['outcome', 'stage', ...flags, 'inactivityEvidence', 'code', 'elapsedMs', ...STOP_READBACK_FIELDS, ...(confirmationOnly ? ['confirmationOnly'] : [])];
   if (Object.keys(proof).some(key => !allowed.includes(key)) || !['cancelled', 'already_idle', 'blocked'].includes(proof.outcome)
+      || confirmationOnly && proof.confirmationOnly !== true
       || !STOP_STAGES.includes(proof.stage) || flags.some(key => typeof proof[key] !== 'boolean')
       || !['none', 'turn_complete', 'composer_restored'].includes(proof.inactivityEvidence)
-      || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > STOP_BUDGET.proofElapsedMs
+      || !Number.isInteger(proof.elapsedMs) || proof.elapsedMs < 0 || proof.elapsedMs > (confirmationOnly ? STOP_CONFIRMATION_BUDGET.proofElapsedMs : STOP_BUDGET.proofElapsedMs)
       || proof.code !== undefined && !STOP_CODES.includes(proof.code)
       || own(proof, 'readbackState') && ![null, 'invalid_controls', 'unconfirmed_readback', 'inactive_readback'].includes(proof.readbackState)
       || STOP_READBACK_COUNTS.some(key => own(proof, key) && proof[key] !== null
@@ -240,7 +241,7 @@ function nativeStopFailure(response) {
   };
 }
 
-const stopProof = response => response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result);
+const stopProof = (response, confirmationOnly = false) => response?.error ? { ok: false, code: 'native_error' } : readStopResult(response?.result, { confirmationOnly });
 function stopReceipt(proof, response) {
   return { ...(proof.ok ? {} : { resultCode: proof.code }),
     ...(proof.code === 'native_error' ? { nativeFailure: nativeStopFailure(response) } : {}),
@@ -269,7 +270,7 @@ export class AdapterBridge {
     this.cache = null; this.epoch = 0; this.pending = new Map(); this.injected = new Map(); this.hooks = new Map();
     this.initializeIds = new Set(); this.closed = false; this.authorityDisabled = false; this.graceDeadline = undefined;
     this.currentThread = undefined; this.currentTurn = undefined; this.retiredTurns = new Set(); this.currentAuthority = undefined;
-    this.cleanupGroup = null; this.builtinWait = null;
+    this.cleanupGroup = null; this.builtinWait = null; this.confirmation = null;
     this.builtinTerminals = new Map();
     this.observationChildren = new Map();
     this.processDiagnostics = new WebProcessSnapshot({ childImage: stopConfig.server });
@@ -659,7 +660,7 @@ export class AdapterBridge {
     try { return await Promise.race([promise, new Promise(resolvePromise => { timer = setTimeout(() => resolvePromise(false), ms); })]); }
     finally { clearTimeout(timer); }
   }
-  async inject(params, deadline, callbackStartedAt, scriptBudgetMs) {
+  async inject(params, deadline, callbackStartedAt, scriptBudgetMs, confirmationOnly = false, originRequestDigest) {
     const id = `router_stop_${randomUUID()}`;
     const startedAt = this.now(), requestDigest = digest(id);
     let finish, timer, complete = false;
@@ -681,15 +682,16 @@ export class AdapterBridge {
         finish(null, internal.retirementReason);
       }
       if (internal.retired) {
-        const proof = stopProof(response);
-        this.event('stop_terminal_after_retirement', { requestDigest, retirementReason: internal.retirementReason,
+        const proof = stopProof(response, confirmationOnly);
+        this.event(confirmationOnly ? 'stop_confirmation_terminal_after_retirement' : 'stop_terminal_after_retirement', { requestDigest, retirementReason: internal.retirementReason,
           childTerminalObserved: true, proofOk: proof.ok, ...stopReceipt(proof, response),
           nativeElapsedMs: Math.max(0, this.now() - startedAt), callbackElapsedMs: Math.max(0, this.now() - callbackStartedAt) });
       } else finish(response);
     } };
     this.injected.set(id, internal);
     timer = setTimeout(() => internal.cancel('acknowledgement_timeout'), Math.max(0, deadline - this.now()));
-    this.event('stop_native_dispatched', { requestDigest, executionTimeoutMs: params.arguments.timeout_ms, scriptBudgetMs,
+    this.event(confirmationOnly ? 'stop_confirmation_dispatched' : 'stop_native_dispatched', { requestDigest, executionTimeoutMs: params.arguments.timeout_ms, scriptBudgetMs,
+      ...(confirmationOnly ? { originRequestDigest } : {}),
       receiptTimeoutMs: Math.max(0, deadline - this.now()) });
     // Local timeout or cancellation is not a child terminal. Keep passive
     // ownership until its real result/error or child closure, blocking another
@@ -700,6 +702,10 @@ export class AdapterBridge {
   async handleHook(message) {
     const params = message.params, hookMeta = record(params?._meta) ? params._meta : {};
     const owned = params?.name === INTERRUPT_TOOL;
+    // A late lifecycle callback cannot race the admitted read-only request.
+    // Invalidate its result before forwarding the callback unchanged.
+    if ((this.confirmation || this.cleanupGroup?.confirmationStarted) && !owned && params?._meta?.threadId === this.currentThread
+        && params?.arguments?.turn_id === this.currentTurn) this.invalidate('confirmation_lifecycle_changed');
     // An ordinary model tool call cannot acquire lifecycle authority, including
     // an ordinary call using the adapter's private callback name.
     if (own(hookMeta, 'callId')) {
@@ -791,7 +797,7 @@ export class AdapterBridge {
   }
   async replyOwned(message, proof) {
     return this.sendOuter({ jsonrpc: '2.0', id: message.id, result: {
-      ...(proof.ok ? {} : { isError: true }),
+      ...(proof.ok || proof.code === 'confirmation_pending' ? {} : { isError: true }),
       content: [{ type: 'text', text: JSON.stringify({ systemMessage: 'ROUTER_WEB_STOP_ADAPTER ' + JSON.stringify(proof) }) }],
     } });
   }
@@ -856,6 +862,56 @@ export class AdapterBridge {
         title: 'Stop owned ChatGPT Web generation and retain its tab' }, _meta: group.meta }, deadline, group.startedAt, budgetMs);
       if (!current()) { this.event('stop_result_stale'); return; }
       proof = native.response === null ? { ok: false, code: native.reason } : stopProof(native.response);
+      // A successful click can precede the provider's idle transition. Admit
+      // one read-only request while the trusted callback is still live, after
+      // the original child terminal. Its longer observation allowance grants
+      // no retention mutation or second click, and never extends the hook.
+      if (!proof.ok && proof.code === 'stop_confirmation_failed' && proof.stage === 'stop_readback_visibility'
+          && proof.freshController === false && proof.clickAttempted === true && proof.stopClicked === true
+          && proof.clickError === false && proof.retained === true && proof.generationInactive === false && proof.stopHidden === false
+          && proof.readbackState === 'unconfirmed_readback' && proof.readbackControlsRecognized === true
+          && proof.readbackStopVisible === true && proof.readbackStopCount === 1 && proof.readbackIdleVisibleCount === 0
+          && proof.readbackComplete === false && current() && deadline - this.now() >= 100) {
+        // Native bundled callbacks can cancel JavaScript in this same child.
+        // Drain their actual terminals before admitting the read-only request.
+        for (const entry of group.entries) if (entry.message.params.name === 'turn_ended' && !entry.forwarded) await this.forwardBuiltin(entry);
+        const terminals = [...this.builtinTerminals.values()].filter(value => value.authority === group.authority);
+        if (terminals.length && !await this.waitFor(Promise.race([
+          Promise.all(terminals.map(value => value.settled)).then(values => values.every(Boolean)), group.abortedWait,
+        ]), Math.max(0, deadline - this.now())) || !current() || deadline - this.now() < 100) {
+          this.event('stop_unconfirmed', { requestDigest: native.requestDigest, ...stopReceipt(proof, native.response),
+            childTerminalObserved: true, nativeElapsedMs: native.nativeElapsedMs, callbackElapsedMs: Math.max(0, this.now() - group.startedAt) });
+          return;
+        }
+        this.event('stop_confirmation_admitted', { requestDigest: native.requestDigest, ...stopReceipt(proof, native.response), childTerminalObserved: true });
+        group.confirmationStarted = true;
+        const completion = this.inject({ name: 'js', arguments: {
+          code: createWebStopCode(this.stopConfig, cached.identity, { confirmationOnly: true,
+            budgetMs: STOP_CONFIRMATION_BUDGET.scriptMs, ...(cached.delivery ? { delivery: cached.delivery } : {}) }),
+          timeout_ms: STOP_CONFIRMATION_BUDGET.nativeMs, title: 'Confirm the stopped Web generation without further browser actions',
+        }, _meta: group.meta }, this.now() + STOP_CONFIRMATION_BUDGET.receiptMs, group.startedAt, STOP_CONFIRMATION_BUDGET.scriptMs, true, native.requestDigest);
+        const observed = await this.waitFor(Promise.race([completion, group.abortedWait]), Math.max(0, deadline - this.now()));
+        if (!current()) {
+          this.event('stop_unconfirmed', { requestDigest: native.requestDigest, confirmationMode: 'read-only-followup',
+            resultCode: 'confirmation_scope_changed', initialChildTerminalObserved: true });
+          return;
+        }
+        if (observed) {
+          const confirmed = observed.response === null ? { ok: false, code: observed.reason } : stopProof(observed.response, true);
+          this.event(confirmed.ok ? 'stop_confirmed' : 'stop_unconfirmed', { requestDigest: native.requestDigest,
+            confirmationRequestDigest: observed.requestDigest, confirmationMode: 'read-only-followup',
+            initialChildTerminalObserved: true, ...stopReceipt(confirmed, observed.response),
+            childTerminalObserved: observed.response !== null, nativeElapsedMs: observed.nativeElapsedMs,
+            callbackElapsedMs: Math.max(0, this.now() - group.startedAt) });
+          proof = confirmed; return;
+        }
+        const owner = { group, epoch: this.epoch, completion, initial: native };
+        this.confirmation = owner; group.confirmationPending = true;
+        proof = { ok: false, code: 'confirmation_pending' };
+        this.event('stop_confirmation_pending', { requestDigest: native.requestDigest, initialChildTerminalObserved: true });
+        void this.finishConfirmation(owner).catch(() => this.fail());
+        return;
+      }
       this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', { requestDigest: native.requestDigest, ...stopReceipt(proof, native.response),
         childTerminalObserved: native.response !== null, nativeElapsedMs: native.nativeElapsedMs,
         callbackElapsedMs: Math.max(0, this.now() - group.startedAt) });
@@ -875,10 +931,11 @@ export class AdapterBridge {
           entry.forwarded = true; this.hooks.delete(entry.message.id);
         }
       }
-      this.invalidate('hook_completed');
+      if (group.confirmationPending) this.event('hook_completed', { confirmationPending: true });
+      else this.invalidate('hook_completed');
       try {
         for (const entry of group.entries) {
-          if (entry.message.params.name === 'turn_ended') await this.forwardBuiltin(entry);
+          if (entry.message.params.name === 'turn_ended') { if (!entry.forwarded) await this.forwardBuiltin(entry); }
           else {
             entry.forwarded = true;
             await this.replyOwned(entry.message, proof);
@@ -889,6 +946,21 @@ export class AdapterBridge {
         group.waiting?.finish(); group.finish();
       }
     }
+  }
+  async finishConfirmation(owner) {
+    const native = await owner.completion;
+    await owner.group.done;
+    const { group, initial } = owner;
+    const current = this.confirmation === owner && !this.closed && !group.aborted && this.epoch === owner.epoch
+      && this.currentThread === group.authority.identity.threadId && this.currentTurn === group.authority.identity.turnId;
+    const proof = !current ? { ok: false, code: 'confirmation_scope_changed' }
+      : native.response === null ? { ok: false, code: native.reason } : stopProof(native.response, true);
+    this.event(proof.ok ? 'stop_confirmed' : 'stop_unconfirmed', { requestDigest: initial.requestDigest,
+      confirmationRequestDigest: native.requestDigest, confirmationMode: 'read-only-followup', afterCallback: true,
+      initialChildTerminalObserved: true, ...stopReceipt(proof, native.response), childTerminalObserved: native.response !== null,
+      nativeElapsedMs: native.nativeElapsedMs, callbackElapsedMs: Math.max(0, this.now() - group.startedAt) });
+    if (this.confirmation === owner) this.confirmation = null;
+    if (current) this.invalidate('stop_confirmation_finished');
   }
   async fail() { this.event('bridge_failed'); await this.close(); }
   async close() {

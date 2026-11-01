@@ -12,6 +12,7 @@ import { isSavedChatUrl, parseBrowserOutput, readBrowserProgram, isBrowserContin
 import { WEB_MODEL_REGISTRY, webModelSelection } from '../src/web-models.mjs';
 import { validWebConversationRisk } from '../src/web-runtime.mjs';
 import { completedWebToolSearchOutput, validWebToolSearchCall, webToolIdentity, webToolKinds } from '../src/web-tool-contract.mjs';
+import { STOP_CONFIRMATION_BUDGET } from '../src/web-stop-contract.mjs';
 
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u;
 const HASH = /^[a-f0-9]{64}$/u;
@@ -485,6 +486,35 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       if (results.length) {
         const result = results[0];
         requireValue(dispatches.length === 1 && HASH.test(dispatches[0].requestDigest ?? '') && result.requestDigest === dispatches[0].requestDigest && result.at >= dispatches[0].at, 'stop_request_mismatch');
+        const confirmation = scoped.filter(row => ['stop_confirmation_admitted', 'stop_confirmation_dispatched',
+          'stop_confirmation_pending', 'stop_confirmation_terminal_after_retirement'].includes(row.code));
+        if (result.confirmationMode !== undefined || confirmation.length) {
+          const admitted = confirmation.filter(row => row.code === 'stop_confirmation_admitted');
+          const dispatched = confirmation.filter(row => row.code === 'stop_confirmation_dispatched');
+          const waiting = confirmation.filter(row => row.code === 'stop_confirmation_pending');
+          requireValue(result.confirmationMode === 'read-only-followup' && result.initialChildTerminalObserved === true
+            && admitted.length === 1 && dispatched.length === 1 && waiting.length === (result.afterCallback === true ? 1 : 0)
+            && confirmation.length === 2 + waiting.length, 'stop_confirmation_chain_invalid');
+          const first = admitted[0], followup = dispatched[0];
+          requireValue(first.requestDigest === result.requestDigest && first.childTerminalObserved === true
+            && first.resultCode === 'stop_confirmation_failed' && first.outcome === 'blocked' && first.stage === 'stop_readback_visibility'
+            && first.freshController === false && first.clickAttempted === true && first.clickError === false && first.stopClicked === true
+            && first.retained === true && first.generationInactive === false && first.stopHidden === false
+            && first.readbackState === 'unconfirmed_readback' && first.readbackControlsRecognized === true
+            && first.readbackStopVisible === true && first.readbackStopCount === 1 && first.readbackIdleVisibleCount === 0
+            && first.readbackComplete === false, 'stop_confirmation_origin_invalid');
+          requireValue(HASH.test(followup.requestDigest ?? '') && followup.requestDigest !== result.requestDigest
+            && followup.originRequestDigest === result.requestDigest && result.confirmationRequestDigest === followup.requestDigest
+            && followup.executionTimeoutMs === STOP_CONFIRMATION_BUDGET.nativeMs && followup.scriptBudgetMs === STOP_CONFIRMATION_BUDGET.scriptMs
+            && Number.isInteger(followup.receiptTimeoutMs) && followup.receiptTimeoutMs > 0
+            && followup.receiptTimeoutMs <= STOP_CONFIRMATION_BUDGET.receiptMs
+            && scoped.indexOf(dispatches[0]) < scoped.indexOf(first) && scoped.indexOf(first) < scoped.indexOf(followup)
+            && scoped.indexOf(followup) < scoped.indexOf(result)
+            && first.at >= dispatches[0].at && followup.at >= first.at && result.at >= followup.at
+            && waiting.every(row => row.requestDigest === result.requestDigest && row.initialChildTerminalObserved === true
+              && scoped.indexOf(row) > scoped.indexOf(followup) && scoped.indexOf(row) < scoped.indexOf(result)
+              && row.at >= followup.at && row.at <= result.at), 'stop_confirmation_request_mismatch');
+        }
         receipt.childTerminalObserved = typeof result.childTerminalObserved === 'boolean' ? result.childTerminalObserved : null;
         receipt.adapterStopConfirmed = result.code === 'stop_confirmed' && result.outcome === 'cancelled' && result.stage === 'complete'
           && result.clickAttempted === true && result.clickError === false && result.stopClicked === true && result.stopHidden === true

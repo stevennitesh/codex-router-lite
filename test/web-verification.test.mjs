@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { browserScript } from '../src/web-browser.mjs';
 import { validWebConversation, guardedWebConversation, WEB_RECOVERY_INPUT_POLICY } from '../src/web-runtime.mjs';
+import { STOP_CONFIRMATION_BUDGET } from '../src/web-stop-contract.mjs';
 import { evaluateWebPhase, parseWebJsonLines, prepareWebVerification, waitWebVerification, watchWebEvidence, webVerificationPrompt } from '../maintenance/web-verification.mjs';
 
 const threadId = '01a16fe6-04f4-7882-abd1-7ef5b26c5b65';
@@ -423,6 +424,42 @@ test('Stop rejects receipt mismatch, already-idle cleanup, and a result without 
   const replaced = evidence('stop');
   replaced.eventRows.push({ ...authority, turnId: generation });
   assert.equal(evaluateWebPhase(replaced).receipt.code, 'stop_authority_replaced');
+});
+
+test('delayed Stop confirmation requires the complete ordered acknowledged-click chain', () => {
+  const delayed = () => {
+    const input = evidence('stop'), result = input.eventRows.pop();
+    Object.assign(result, { confirmationMode: 'read-only-followup', confirmationRequestDigest: 'e'.repeat(64),
+      initialChildTerminalObserved: true, afterCallback: true });
+    input.eventRows.push({ at, generation, code: 'stop_confirmation_admitted', requestDigest: result.requestDigest,
+      outcome: 'blocked', stage: 'stop_readback_visibility', resultCode: 'stop_confirmation_failed', freshController: false,
+      clickAttempted: true, clickError: false, stopClicked: true, retained: true, generationInactive: false, stopHidden: false,
+      childTerminalObserved: true, readbackState: 'unconfirmed_readback', readbackControlsRecognized: true,
+      readbackStopVisible: true, readbackStopCount: 1, readbackIdleVisibleCount: 0, readbackComplete: false },
+    { at, generation, code: 'stop_confirmation_dispatched', requestDigest: result.confirmationRequestDigest,
+      originRequestDigest: result.requestDigest, executionTimeoutMs: STOP_CONFIRMATION_BUDGET.nativeMs,
+      scriptBudgetMs: STOP_CONFIRMATION_BUDGET.scriptMs, receiptTimeoutMs: STOP_CONFIRMATION_BUDGET.receiptMs },
+    { at, generation, code: 'stop_confirmation_pending', requestDigest: result.requestDigest, initialChildTerminalObserved: true }, result);
+    return input;
+  };
+  assert.equal(evaluateWebPhase(delayed()).receipt.status, 'passed');
+  const fast = delayed(); fast.eventRows.splice(4, 1); delete fast.eventRows.at(-1).afterCallback;
+  assert.equal(evaluateWebPhase(fast).receipt.status, 'passed');
+  for (const mutate of [
+    input => input.eventRows.splice(2, 1),
+    input => { input.eventRows[2].clickError = true; },
+    input => { input.eventRows[2].childTerminalObserved = false; },
+    input => { input.eventRows[3].originRequestDigest = 'f'.repeat(64); },
+    input => { input.eventRows[3].executionTimeoutMs += 1000; },
+    input => { input.eventRows[3].receiptTimeoutMs += 1000; },
+    input => { input.eventRows.at(-1).confirmationRequestDigest = 'f'.repeat(64); },
+    input => { [input.eventRows[2], input.eventRows[3]] = [input.eventRows[3], input.eventRows[2]]; },
+    input => input.eventRows.splice(4, 1),
+    input => input.eventRows.splice(3, 0, { ...input.eventRows[3] }),
+  ]) {
+    const input = delayed(); mutate(input);
+    assert.equal(evaluateWebPhase(input).receipt.status, 'failed');
+  }
 });
 
 test('continuation needs completed retention and cannot claim unproved recovery or a changed tab', () => {

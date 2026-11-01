@@ -818,9 +818,19 @@ three-second timeout. The shared contract reserves transport and terminal-receip
 headroom within that deadline and waits on the same inactivity predicate after
 one Stop click. After generation proof, click admission reserves the same minimum
 read and transport headroom as readiness. The click preserves a read allowance,
-and its confirmation must arrive within the original deadline.
-Fast transitions return immediately; a slow provider or browser
-readback remains unconfirmed. A larger configured timeout cannot extend the
+and its initial confirmation uses the original deadline.
+Fast transitions return immediately. If the actual child terminal proves an
+acknowledged click, retained binding and recognized still-active controls, the
+callback may admit exactly one read-only follow-up before its deadline. Bundled
+native callbacks already queued must reach their actual terminals first. This
+request has a ten-second native allowance and a 9.5-second browser read budget;
+it cannot click Stop, mark handoff, or create a fresh controller. It requires the
+same live binding, ledger tuple, generation and acknowledged in-binding receipt.
+The hook returns an explicit pending result if this read has not finished by its
+original deadline. Only its actual terminal inactivity proof can later produce
+the single confirmed event. New ownership, native work or a late lifecycle callback
+invalidates the pending confirmation. Failed or uncertain clicks cannot admit it.
+A larger configured hook timeout cannot extend the
 [host limit](https://learn.chatgpt.com/docs/hooks#config-shape).
 Elapsed time never supplies confirmation.
 Only that matching trusted callback authorizes Stop. Bundled one-second callbacks
@@ -828,7 +838,7 @@ keep their original messages and cancellation scope; their arrival or forwarding
 does not expire the originating authority before the trusted callback arrives.
 Cleanup waits for actual terminal responses from any already forwarded bundled
 callbacks and active browser call before admitting another native operation.
-All of this work shares the trusted callback's existing deadline. A timeout,
+All mutation admission shares the trusted callback's existing deadline. A timeout,
 cancellation of cleanup itself, or changed authority prevents admitting further
 cleanup actions. Sending cancellation does not prove an in-flight operation ended.
 

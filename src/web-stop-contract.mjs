@@ -12,6 +12,10 @@ const scriptReturnMarginMs = 100;
 export const STOP_BUDGET = Object.freeze({ hookTimeoutMs, graceMs, cleanupMs, scriptReturnMarginMs,
   scriptMs: cleanupMs - scriptReturnMarginMs, proofElapsedMs: hookTimeoutMs });
 
+// An acknowledged click may settle after the host callback has returned. This
+// separate request has read-only authority, never another cancellation action.
+export const STOP_CONFIRMATION_BUDGET = Object.freeze({ nativeMs: 10_000, scriptMs: 9_500, receiptMs: 10_350, proofElapsedMs: 10_000 });
+
 export function createAdapterHook() {
   return { type: 'mcp_tool', server: 'node_repl', tool: INTERRUPT_TOOL, input: {
     hook_event_name: '${hook_event_name}', session_id: '${session_id}', turn_id: '${turn_id}' },

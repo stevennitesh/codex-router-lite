@@ -2,7 +2,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { isSavedChatUrl } from "./web-browser.mjs";
 import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
-import { STOP_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
+import { STOP_BUDGET, STOP_CONFIRMATION_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
 import { validWebConversationGuard, validNativeCompactionProjection, validNativeCompactionReference } from "./web-conversation-guard.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
@@ -18,7 +18,7 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
   const deny = code => { throw Object.assign(new Error(), { stopCode: code }); };
   const budget = (reserve = 0) => { if (deadline - Date.now() < reserve) deny("budget_exhausted"); };
   let inScope = false, stage = "scope", outcome = "blocked", code;
-  let guards, guard, key, registry, active, state;
+  let guards, guard, key, registry, active, state, confirmationReceipt;
   const diagnostic = { freshController: false, clickAttempted: false, clickError: false,
     stopClicked: false, stopHidden: false, generationInactive: false, inactivityEvidence: "none", retained: false,
     readbackState: null, readbackStopCount: null, readbackStopVisible: null,
@@ -153,6 +153,9 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         if (registry.get(nativeThread) !== active || globalThis[key] !== state
             || state.agent !== agent || state.browser !== browser || state.tab !== tab) deny("owner_changed");
         assertBinding("owner_changed");
+        if (confirmationReceipt !== undefined && (state.reconciliationStop !== confirmationReceipt
+            || confirmationReceipt.generationTurnKey !== generationTurnKey || confirmationReceipt.acknowledged !== true
+            || confirmationReceipt.idleAbsent !== true || state.retained !== true)) deny("owner_changed");
       }
       if (browser !== undefined && browser?.browserId !== browserId || tab !== undefined && tab?.id !== tabId) deny("owner_changed");
       if (tuple(readLedger()) !== ledgerTuple) deny("ledger_changed");
@@ -207,7 +210,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     const readReserveMs = readAllowanceMs + 100;
     let receipt = !absent && state.reconciliationStop?.generationTurnKey === generationTurnKey ? state.reconciliationStop : null;
     // Prior receipts prevent repeated input and survive for continuation.
-    // This hook's public result claims only its own witnessed transition.
+    // Ordinary cleanup claims its own transition. Confirmation-only readback
+    // explicitly carries the same binding's acknowledged transaction evidence.
     let allowComposerRestored = false;
     const inspectGeneration = async (reserve = 0) => {
       clearReadback();
@@ -255,6 +259,19 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         ready: readyObservation,
       });
     };
+    if (config.confirmationOnly) {
+      // Only the original binding's acknowledged dispatch receipt authorizes
+      // this observation. No fresh controller, retention mutation or click.
+      if (absent || !receipt?.acknowledged || receipt.idleAbsent !== true || state.retained !== true) deny("state_unavailable");
+      confirmationReceipt = receipt;
+      diagnostic.clickAttempted = true; diagnostic.stopClicked = true; diagnostic.retained = true;
+      allowComposerRestored = true;
+      stage = "stop_readback_visibility";
+      const observation = await waitForReadiness(ready(true), view => view.inactive);
+      if (!observation.inactive) deny("stop_confirmation_failed");
+      outcome = "cancelled"; stage = "complete";
+      return;
+    }
     stage = "generation_proof";
     await inspectGeneration(readAllowanceMs);
     stage = "handoff";
@@ -315,14 +332,16 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     // Release only our entry; a foreign or replacement registry stays intact.
     if (guard !== undefined && globalThis.routerWebStopHooks === guards && guards.get(nativeThread) === guard) guards.delete(nativeThread);
     const output = inScope ? { systemMessage: "ROUTER_WEB_STOP " + JSON.stringify({ outcome, stage, ...diagnostic,
+      ...(config.confirmationOnly ? { confirmationOnly: true } : {}),
       ...(code ? { code } : {}), elapsedMs: Math.max(0, Date.now() - started) }) } : {};
     nodeRepl.write(JSON.stringify(output));
   }
 }
 
 /** Pure generator. The adapter owns validation of the originating native identity. */
-export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = STOP_BUDGET.scriptMs, delivery } = {}) {
-  if (!Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > STOP_BUDGET.scriptMs) throw new Error(`Web Stop budget must be within 1..${STOP_BUDGET.scriptMs} ms.`);
+export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnId, sessionId }, { budgetMs = STOP_BUDGET.scriptMs, delivery, confirmationOnly = false } = {}) {
+  const maximum = confirmationOnly === true ? STOP_CONFIRMATION_BUDGET.scriptMs : STOP_BUDGET.scriptMs;
+  if (typeof confirmationOnly !== "boolean" || !Number.isInteger(budgetMs) || budgetMs < 1 || budgetMs > maximum) throw new Error(`Web Stop budget must be within 1..${maximum} ms.`);
   for (const [name, value] of Object.entries({ stateDir, runtimeModule })) {
     if (typeof value !== "string" || !path.isAbsolute(value) || value.includes("\0")) {
       throw new Error(`Web Stop ${name} must be a validated absolute path.`);
@@ -339,6 +358,7 @@ export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnI
   const config = { ledgerDirectory: path.join(stateDir, "web-in-app", "conversations") + path.sep,
     runtimeModule, runtimeUrl: pathToFileURL(runtimeModule).href, stopButtonExactName: browserDom.stopButtonExactName,
     idleButtonExactName: browserIdleButtonExactName,
+    ...(confirmationOnly ? { confirmationOnly: true } : {}),
     ...(delivery === undefined ? {} : { delivery }),
     ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
       .map(name => [name, browserDom[name]])) };
