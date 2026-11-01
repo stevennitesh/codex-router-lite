@@ -48,7 +48,7 @@ test("controlled recovery retains fixed read-only boundary phases and bounded br
   const phases = ["browser-discovery", "browser-acquisition", "active-owner", "saved-tab-discovery", "saved-tab-acquisition",
     "saved-url-readiness", "checkpoint-readiness", "browser-recheck", "saved-url-recheck", "dom-snapshot", "generation-state",
     "composer-state", "normal-chat-state", "idle-control-state", "message-identities", "accepted-checkpoint", "reply-history",
-    "anchor-snapshot", "revoked-turn-order", "reply-prefix", "reply-content-readiness", "snapshot-stability", "handoff", "ownership-transfer"];
+    "anchor-snapshot", "revoked-turn-order", "reply-prefix", "reply-content-readiness", "semantic-projection", "semantic-snapshot", "snapshot-stability", "handoff", "ownership-transfer"];
   for (const phase of phases) {
     const error = capture(wrapped(marker + JSON.stringify({ reason: "ownership-changed", phase, browserCount: 2,
       tabMatchCount: 10000, browserId: "PRIVATE_BROWSER", tabId: "PRIVATE_TAB", owner: "PRIVATE_OWNER" })), "recover");

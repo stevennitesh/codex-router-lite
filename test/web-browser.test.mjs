@@ -346,7 +346,8 @@ test("observer and mutation generations invalidate only their exact dependency s
 
 test("default compact programs omit UI data and decode to the complete resident control contract", () => {
   const operationKeys = ["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
-    "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute", "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute"];
+    "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute", "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
+    "pastedTextLabel", "removePastedTextName", "closeTextViewerName", "pastedTextPreviewSelector"];
   const expectedUi = { ...browserDom };
   for (const key of operationKeys) delete expectedUi[key];
   for (const operation of ["observe", "retain"]) {
@@ -450,7 +451,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       for (let index = 0; index < all.length; index += 1) if (user.baselineIds.includes(all[index].getAttribute('data-chatgpt-selection-message-id'))) boundary = index;
       boundary = Math.max(boundary, all.indexOf(precedingUser));
       precedingUser = domElement("div", { 'data-turn-key': user.messageId },
-        domElement("h4", {}, domText("You said:")), domElement("div", {}, domText(user.text)));
+        domElement("h4", {}, domText("You said:")), domElement("div", { class: "rich-text-user-turn MarkdownRoot-fixture" },
+          domElement("p", { class: "Paragraph-fixture" }, domElement("span", {}, domText(user.text)))));
       all.splice(boundary + 1, 0, precedingUser);
     }
     const turns = [];
@@ -538,9 +540,45 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       return callback([...new Set(elements)], argument);
     },
   });
+  const attachmentForm = composers => {
+    const cards = (ui.pastedAttachments ?? []).map((value, index) => {
+      const open = domElement("button", { "aria-label": value.openerName ?? value.text?.slice(0, 80) ?? `Pasted text preview ${index}` });
+      const remove = domElement("button", { "aria-label": value.kind === "unknown" ? "Remove other attachment" : browserDom.removePastedTextName });
+      value.card = domElement("span", { class: "composer-attachment-surface group/resource-card" }, open,
+        domElement("span", {}, domText(value.caption ?? (value.kind === "unknown" ? "Other attachment" : "Pasted text"))), remove);
+      return value.card;
+    });
+    const wrapper = domElement("div", { class: "flex flex-wrap items-end gap-2 p-1" }, ...cards, ...(ui.unknownAttachmentChildren ?? []));
+    const tray = domElement("div", { class: "ComposerLayoutAttachments-bG080e" }, wrapper);
+    const form = domElement("form", {}, ...composers, ...(ui.attachmentTrayMissing ? [] : [tray]));
+    const document = { get URL() { return ui.url ?? "https://chatgpt.com/"; },
+      defaultView: { getComputedStyle: element => ({ visibility: element.visibilityStyle ?? "visible" }) } };
+    const visit = element => {
+      element.ownerDocument = document;
+      element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+      for (const child of element.children) visit(child);
+    };
+    visit(form);
+    if (ui.attachmentWrongForm) for (const composer of composers) composer.parentElement = domElement("form");
+    return form;
+  };
   const makeLocator = (kind, name, visibleOnly = false, scopeSelector, hasText, hasIdentity, excludedKeys = [], globalGenerationGuard = false, enabledOnly = false) => ({
     kind, name, scopeSelector, visibleOnly,
     resolve() {
+      if (kind === "pasted-opener") {
+        const form = attachmentForm([]);
+        return form.querySelectorAll("button").filter(button => button.getAttribute("aria-label") === name);
+      }
+      if (name === browserDom.pastedTextPreviewSelector || kind === "pasted-preview-exact") {
+        const values = !ui.pastedViewerOpen ? [] : ui.pastedPreviewElements ?? [domElement("div", {
+          class: "text-base leading-7 wrap-anywhere whitespace-pre-wrap text-default select-text",
+        }, domText(ui.pastedViewerText ?? ""))];
+        if (!ui.pastedPreviewElements) for (const value of values) domElement("section", { class: "relative flex h-full min-h-0 flex-col bg-surface" },
+          domElement("div", { class: "h-full min-h-0 overflow-y-auto bg-surface text-start" },
+            domElement("div", { class: "mx-auto w-full max-w-(--thread-content-max-width) px-toolbar pt-20 pb-8" }, value)),
+          ...(ui.pastedCloseOutsideViewer ? [] : [domElement("button", { "aria-label": browserDom.closeTextViewerName })]));
+        return kind === "pasted-preview-exact" ? values.filter(value => value.textContent === name) : values;
+      }
       const explicit = ui.observationControls?.[name];
       const values = explicit ?? (kind === "textbox" && name === "Ask ChatGPT" ? ui.composerVisible ? ui.composerElements ?? [{}] : []
         : kind === "button" && name === "Select ChatGPT model" ? ui.modelButtonVisible ? [{}] : []
@@ -560,6 +598,17 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     getByRole(role, options) { return makeLocator(role, options.name, false, kind === "selector" ? name : scopeSelector); },
     locator(selector) { return makeLocator("selector", selector, false, kind === "selector" ? name : scopeSelector); },
     filter({ hasText: text, visible, has, hasNot }) {
+      if (kind === "selector" && name === "form" && has?.kind === "textbox" && has.name === browserDom.composerName) {
+        const form = makeLocator("composer-form", name);
+        form.getByRole = (role, options) => { assert.equal(role, "button"); return makeLocator("pasted-opener", options.name); };
+        return form;
+      }
+      if (name === browserDom.pastedTextPreviewSelector && has?.name?.startsWith("xpath=self::*[string(.) = ")) {
+        const literal = /^xpath=self::\*\[string\(\.\) = ([\s\S]+)\]$/u.exec(has.name)?.[1];
+        assert(literal);
+        const source = literal.startsWith("concat(") ? [...literal.matchAll(/'([^']*)'|"([^"]*)"/gu)].map(match => match[1] ?? match[2]).join("") : literal.slice(1, -1);
+        return makeLocator("pasted-preview-exact", source, visibleOnly);
+      }
       if (kind === "selector" && name.startsWith('[data-chatgpt-selection-message-id="')
           && has?.name?.startsWith("xpath=self::*[string(.) != ")) {
         const literal = /^xpath=self::\*\[string\(\.\) != ([\s\S]+)\]$/u.exec(has.name)?.[1];
@@ -588,7 +637,9 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async count() {
       ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "count" });
-      if (kind === "button" && ["Show in text field", "Remove pasted text attachment"].includes(name)) return ui.pastedTextControls?.[name] ?? 0;
+      if (kind === "pasted-opener" || name === browserDom.pastedTextPreviewSelector || kind === "pasted-preview-exact") return this.resolve().length;
+      if (kind === "button" && name === browserDom.removePastedTextName) return (ui.pastedAttachments ?? []).filter(value => value.kind !== "unknown").length;
+      if (kind === "button" && name === browserDom.closeTextViewerName) return Number(ui.pastedViewerOpen === true);
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
       if (kind === "button" && name === browserIdleButtonExactName) return ui.idleButtonCount;
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
@@ -602,6 +653,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       if (name === "Select model" && kind === "menuitem") return ui.menu && !ui.familyExpanded;
       if (name === "Power" && kind === "menuitem") return ui.menu && !ui.familyExpanded;
       if (name === "Ask ChatGPT" && kind === "textbox") return ui.composerVisible;
+      if (kind === "button" && [browserDom.removePastedTextName, browserDom.closeTextViewerName].includes(name)) return await this.count() > 0;
       if (name === "Stop" || name === "Stop generating") return ui.stop;
       if (name === "Regenerate response") return ui.complete;
       if (name === "Temporary chat" && kind === "button") return ui.temporaryButtonVisible && !ui.temporary;
@@ -627,15 +679,23 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         }
       }
       else if (name === plugin.pluginSelectionButtonName) { ui.actions.push("attach"); ui.chip = true; ui.attachedName = name; ui.onAttach?.(); }
-      else if (name === "Show in text field") { ui.actions.push("expand-pasted-text"); await ui.onExpandPastedText?.(); }
+      else if (kind === "pasted-opener") {
+        assert.equal(this.resolve().length, 1);
+        ui.actions.push("open-pasted-text"); ui.pastedViewerOpen = true;
+        ui.pastedViewerText = (ui.pastedAttachments ?? []).find(value => value.kind !== "unknown")?.text;
+        await ui.onPastedViewerOpen?.();
+      }
+      else if (name === browserDom.closeTextViewerName) { ui.actions.push("close-pasted-text"); ui.pastedViewerOpen = false; await ui.onPastedViewerClose?.(); }
       else if (name === "Send") {
         ui.actions.push("send");
         ui.sendClicks += 1;
         if (!ui.deferSavedUrl) ui.url = "https://chatgpt.com/c/owned-conversation";
         ui.userMessages.push({ messageId: messageId(1000 + ui.sendClicks), text: ui.composerText,
+          ...(ui.pastedAttachments?.length ? { attachments: ui.pastedAttachments.map(value => ({ kind: value.kind, text: value.text })) } : {}),
           baselineIds: ui.replyElements ? ui.replyElements.map(element => element.closest('[data-chatgpt-selection-message-id]')?.getAttribute('data-chatgpt-selection-message-id'))
             : ui.texts.map((_, index) => ui.replyIds?.[index] ?? messageId(index)) });
         ui.composerText = "";
+        ui.pastedAttachments = [];
         ui.onSend?.();
         if (ui.sendFailure) throw new Error("Send effect uncertain");
       }
@@ -685,6 +745,17 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     },
     async isEnabled() { return name === "Send" ? ui.sendEnabled : name === "Temporary chat" ? !ui.temporaryButtonDisabled : name === "Select ChatGPT model" ? !ui.modelButtonDisabled : true; },
     async waitFor({ state, timeoutMs }) {
+      if (kind === "pasted-preview-exact") {
+        assert.equal(state, "visible");
+        ui.pastedPreviewWaits = (ui.pastedPreviewWaits ?? 0) + 1;
+        if (this.resolve().length) return;
+        await ui.onPastedPreviewWait?.({ timeoutMs });
+        if (!this.resolve().length) {
+          if (fastTimers) { now += timeoutMs; ui.waitedMs += timeoutMs; }
+          throw new Error("Error: Playwright selector deadline exceeded\nlocator.waitFor(visible) timed out");
+        }
+        return;
+      }
       if (kind === "button" && name === "Send") {
         assert.equal(state, "visible");
         for (let spent = 0; !ui.sendEnabled && spent < timeoutMs && fastTimers; spent += 100) {
@@ -722,6 +793,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       } else assert.equal(await this.isVisible(), state === "visible");
     },
     async evaluateAll(callback, argument) {
+      if (name === browserDom.pastedTextPreviewSelector) return callback(this.resolve(), argument);
       if (kind === "text") {
         const candidates = [...(ui.fullBanners ?? []), ...(ui.userTexts ?? []).map(text => ({ text, scope: "user" })),
           ...ui.texts.filter(text => typeof text === "string").map(text => ({ text, scope: "assistant" })),
@@ -737,7 +809,13 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         const content = [domText(ui.composerText)];
         if (ui.chip) content.unshift(domElement("span", { "app-mention-display-name": plugin.pluginName,
           "app-mention-path": `app://${plugin.pluginAppId}`, contenteditable: "false" }, domText(plugin.pluginName)));
-        return callback(ui.composerElements ?? [ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)], argument);
+        const composers = ui.composerElements ?? [ui.composerNode ?? domElement("div", { contenteditable: "true" }, ...content)];
+        if (argument?.sendAttachments) {
+          await ui.onSendAttachmentRead?.();
+          attachmentForm(composers);
+          for (const composer of composers) Object.defineProperty(composer, "innerText", { configurable: true, get: () => ui.composerText });
+        }
+        return callback(composers, argument);
       }
       if (name === scopedReplySelector) {
         ui.viewportReads += 1;
@@ -991,7 +1069,7 @@ async function controlledInspectionFixture() {
   f.loseBinding();
   return { ...f, nativeContext, sessionId, failedTurnId, recoveryProof,
     inspect: () => f.run("recover", { ...plugin, sessionId, turnId: failedTurnId, expectedOwnerTurnIds: [failedTurnId],
-      runtimeModule: f.runtimeModule, inspectionOnly: true, recoveryProof }) };
+      runtimeModule: f.runtimeModule, inspectionOnly: true, snapshotPolicy: "semantic-v1", recoveryProof }) };
 }
 
 test("controlled read-only recovery distinguishes browser, owner, tab, readiness and DOM refusals without private content", async () => {
@@ -1828,7 +1906,7 @@ test("generated Send refuses truncated paste and unverified attachments before m
         f.ui.sendEnabled = true;
       };
     }
-    await assert.rejects(f.run('send', { ...plugin, prompt, turnToken }), /complete intended inline payload could not be verified/u, change);
+    await assert.rejects(f.run('send', { ...plugin, prompt, turnToken }), /complete intended inline payload could not be verified|draft changed/u, change);
     assert.equal(f.ui.sendClicks, 0, change);
     assert.deepEqual(f.ui.userMessages, [], "No submitted payload exists, even though Send was enabled.");
     assert.deepEqual(f.ui.typed, [` ${prompt}`], "Authority and generation marker are never appended to unverified context.");
@@ -1841,33 +1919,97 @@ test("generated Send refuses truncated paste and unverified attachments before m
   }
 });
 
-test("generated Send expands pasted text only through unique controls and proves the complete submitted payload", async () => {
-  for (const variant of ["exact", "truncated", "duplicate control", "attachment remains", "lost chip"]) {
+const convertedPaste = (f, change = () => {}) => {
+  f.ui.onType = text => {
+    f.ui.composerText = "";
+    f.ui.pastedAttachments = [{ kind: "pasted", text }];
+    f.ui.onType = undefined;
+    change();
+  };
+};
+
+test("generated Send proves the full current attachment and actual submitted body, suffix and model", async () => {
+  for (const delayed of [false, true]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const prompt = "Full model-switch instructions\n".repeat(1000);
-    const controls = { "Show in text field": variant === "duplicate control" ? 2 : 1, "Remove pasted text attachment": 1 };
-    f.ui.onType = () => {
-      f.ui.composerText = ""; f.ui.pastedTextControls = controls;
-      f.ui.onType = undefined;
+    const prompt = `Full 'quoted' \"context\"\r\n  Unicode \u03bb\t\r\n`.repeat(1800) + "trailing spaces  \n\n";
+    const turnToken = "web_turn_0123456789abcdef0123456789abcdef";
+    convertedPaste(f);
+    if (delayed) {
+      f.ui.onPastedViewerOpen = () => { f.ui.pastedViewerText = "Short not-ready preview"; };
+      f.ui.onPastedPreviewWait = () => { f.ui.pastedViewerText = f.ui.pastedAttachments[0].text; };
+    }
+    const result = await f.run("send", { ...plugin, prompt, turnToken, power: 4 });
+    const submitted = f.ui.userMessages[0], source = ` ${prompt}`.replace(/\r\n?/gu, "\n");
+    assert.deepEqual(submitted.attachments, [{ kind: "pasted", text: source }]);
+    assert.equal(submitted.text, f.ui.typed[1], "Only the fresh marker/directive remain inline.");
+    assert.equal(f.ui.typed.length, 2); assert.equal(f.ui.typed[0], source);
+    assert.ok(submitted.text.includes(`Router generation: ${base.turnId}`));
+    assert.ok(submitted.text.includes(`Use turn_token ${turnToken} unchanged`));
+    assert.equal(f.ui.power, 4); assert.equal(f.ui.sendClicks, 1); assert.equal(result.sent, true);
+    assert.equal(f.ui.pastedPreviewWaits, 3, "Full contents are reread after selection and after handoff.");
+    assert.equal(f.ui.actions.filter(value => value === "close-pasted-text").length, 3);
+    assert.equal(f.ui.waitedMs, 0, "Readiness comes from the exact mounted payload, never elapsed time.");
+    assert.equal(JSON.stringify(result).includes(turnToken), false); assert.equal(JSON.stringify(result).includes(source), false);
+  }
+});
+
+test("generated Send refuses unproved or ambiguous attachment payloads and retains the actual draft", async () => {
+  for (const variant of ["truncated", "different", "duplicate preview", "unrelated preview", "foreign close control", "opener failure", "missing caption", "wrong caption", "multiple cards", "unknown card", "unknown tray child", "wrong form", "ownership", "lost chip", "deadline"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const prompt = "Complete source context\n".repeat(1600);
+    convertedPaste(f, () => {
+      if (variant === "missing caption") f.ui.pastedAttachments[0].caption = "";
+      if (variant === "wrong caption") f.ui.pastedAttachments[0].caption = "Different attachment kind";
+      if (variant === "multiple cards") f.ui.pastedAttachments.push({ kind: "pasted", text: "Extra" });
+      if (variant === "unknown card") f.ui.pastedAttachments.push({ kind: "unknown", text: "Foreign attachment" });
+      if (variant === "unknown tray child") f.ui.unknownAttachmentChildren = [domElement("div", {}, domText("Unclassified attachment"))];
+      if (variant === "wrong form") f.ui.attachmentWrongForm = true;
+    });
+    f.ui.onPastedViewerOpen = () => {
+      if (["truncated", "different"].includes(variant)) f.ui.pastedViewerText = variant === "truncated" ? f.ui.pastedViewerText.slice(0, 30) : "Different complete source";
+      if (variant === "duplicate preview") f.ui.pastedPreviewElements = [domElement("div", {}, domText(` ${prompt}`)), domElement("div", {}, domText(` ${prompt}`))];
+      if (variant === "unrelated preview") f.ui.pastedPreviewElements = [domElement("div", {}, domText(` ${prompt}`))];
+      if (variant === "foreign close control") f.ui.pastedCloseOutsideViewer = true;
+      if (variant === "opener failure") throw new Error(`SDK selector failed with private excerpt: ${prompt}`);
+      if (variant === "ownership") f.ui.tabId = "foreign-tab";
+      if (variant === "lost chip") f.ui.chip = false;
+      if (variant === "deadline") f.advance(10001);
     };
-    f.ui.onExpandPastedText = () => {
-      f.ui.composerText = variant === "truncated" ? "Incomplete prompt" : ` ${prompt}`;
-      if (variant !== "attachment remains") f.ui.pastedTextControls = {};
+    await assert.rejects(f.run("send", { ...plugin, prompt }), error => {
+      assert.match(error.message, /nothing sent|different native turn/u, variant);
+      assert.equal(error.message.includes(prompt), false, "SDK failure text cannot expose the attachment source.");
+      return true;
+    });
+    assert.equal(f.ui.sendClicks, 0, variant); assert.deepEqual(f.ui.userMessages, [], variant);
+    assert.equal(f.ui.typed.length, 1, "No authority is added until complete input and current composer are proved.");
+    assert.equal(f.ui.draftCleared, false); assert.equal(f.getState().sendClicked, false);
+    assert.ok(f.ui.pastedAttachments.length > 0, "Failed verification preserves the actual attachment draft.");
+  }
+});
+
+test("generated Send rechecks current attachment content and suffix after model selection", async () => {
+  for (const variant of ["replaced payload", "extra card", "missing suffix", "lost chip"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    convertedPaste(f);
+    f.ui.onModel = () => {
+      if (variant === "replaced payload") f.ui.pastedAttachments = [{ kind: "pasted", text: "Replacement attachment content" }];
+      if (variant === "extra card") f.ui.pastedAttachments.push({ kind: "unknown", text: "New foreign file" });
+      if (variant === "missing suffix") f.ui.composerText = "";
       if (variant === "lost chip") f.ui.chip = false;
     };
-    if (variant === "exact") {
-      await f.run("send", { ...plugin, prompt });
-      assert.equal(f.ui.sendClicks, 1);
-      assert.equal(f.ui.userMessages[0].text, f.ui.typed.join(""));
-      assert.ok(f.ui.userMessages[0].text.startsWith(` ${prompt}`));
-      assert.equal(f.ui.actions.filter(action => action === "expand-pasted-text").length, 1);
-    } else {
-      await assert.rejects(f.run("send", { ...plugin, prompt }), /nothing sent/u);
-      assert.equal(f.ui.sendClicks, 0);
-      assert.equal(f.ui.typed.length, 1, "No generation authority is added to an unproved restored payload.");
-      assert.equal(f.ui.draftCleared, false);
-      if (variant === "duplicate control") assert.equal(f.ui.actions.includes("expand-pasted-text"), false);
-    }
+    await assert.rejects(f.run("send", { ...plugin, prompt: "Original source\n".repeat(2000) }), /nothing sent/u, variant);
+    assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.draftCleared, false); assert.equal(f.ui.typed.length, 2);
+  }
+});
+
+test("generated Send detects attachment drafts outside an empty contenteditable before touching it", async () => {
+  for (const variant of ["pasted", "unknown", "unknown tray child"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    if (variant === "unknown tray child") f.ui.unknownAttachmentChildren = [domElement("div", {}, domText("Foreign upload"))];
+    else f.ui.pastedAttachments = [{ kind: variant, text: "Existing private draft" }];
+    await assert.rejects(f.run("send", { ...plugin, prompt: "New prompt" }), /attachment.*nothing sent/u, variant);
+    assert.deepEqual(f.ui.typed, []); assert.deepEqual(f.ui.actions, []); assert.equal(f.ui.sendClicks, 0);
+    assert.notEqual(f.getState().sendAttempted, true);
   }
 });
 

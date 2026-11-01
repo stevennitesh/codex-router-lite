@@ -6,7 +6,11 @@ import path from "node:path";
 import { assertControlledRecoveryOffline, canonicalNativeCompactionSource, inspectNativeCompactionRestoration,
   prepareNativeCompactionRestoration, inspectNativeCompactionRestorationPlan, applyNativeCompactionRestoration,
   rollbackNativeCompactionRestoration, readCanonicalNativeSource, inspectControlledWebRecovery, prepareControlledWebRecovery,
-  confirmControlledWebRecovery, restoreControlledWebRecoveryGuard } from "../maintenance/web-recovery.mjs";
+  confirmControlledWebRecovery, restoreControlledWebRecoveryGuard, inspectControlledWebRecoverySnapshotRevision,
+  prepareControlledWebRecoverySnapshotRevision, confirmControlledWebRecoverySnapshotRevision,
+  rollbackControlledWebRecoverySnapshotRevision } from "../maintenance/web-recovery.mjs";
+import { reconcileControlledRecoverySnapshot, parseBrowserOutput, readBrowserReplies, browserDom } from "../src/web-browser.mjs";
+import { domElement, domText } from "./web-dom-fixture.mjs";
 import { validWebConversation } from "../src/web-runtime.mjs";
 import { nativeCompactionWitnessReference, readNativeCompactionWitness } from "../src/web-native-compaction.mjs";
 
@@ -83,7 +87,10 @@ function restorationFixture(t, { sourceChange } = {}) {
     lock: operation => operation(), assertOffline: async () => {}, write: (file, bytes) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, bytes); } };
   const inspect = () => inspectNativeCompactionRestoration(restorationThread, rolloutPath, options);
   const receipt = request => {
-    const snapshot = { originalTabId: ledger.tabId, chatUrl: ledger.chatUrl, turns: [{ turnKey: acceptedTurn, sha256: hash("accepted") }],
+    const snapshot = { ...(request.snapshotPolicy ? { version: 2 } : {}), originalTabId: ledger.tabId, chatUrl: ledger.chatUrl,
+      turns: [request.snapshotPolicy ? { turnKey: acceptedTurn, complete: true, revokedTurnId: null,
+        messages: [{ role: "user", length: 8, sha256: hash("accepted") }, { role: "assistant", length: acceptedText.length, sha256: hash(acceptedText), replyIds: [replyId] }] }
+        : { turnKey: acceptedTurn, sha256: hash("accepted") }],
       replies: [{ messageId: replyId, turnKey: acceptedTurn, sha256: hash(acceptedText) }], idle: true, emptyComposer: true };
     return `ROUTER_WEB_BROWSER_${request.frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: { operation: "recover", inspectionOnly: true,
       snapshot, snapshotSha256: hash(snapshot), tabId: ledger.tabId, effects: { tabReopened: false, tabNavigated: false, handoffMarked: false } } })}\nROUTER_WEB_BROWSER_${request.frameToken}_END`;
@@ -136,6 +143,224 @@ test("controlled abandonment preserves a restored native-compaction guard and ro
   assert.deepEqual(armed.checkpoint, value.checkpoint); assert.equal(armed.uncertainSend, true);
   await restoreControlledWebRecoveryGuard(recovery.plan, recovery.confirmationSha256, f.options);
   assert.deepEqual(readFileSync(f.ledgerPath), original);
+});
+
+const olderTurn = "44112233-4455-6677-8899-aabbccddeeff", olderReply = "55112233-4455-6677-8899-aabbccddeeff";
+const semanticMessage = (role, text, replyIds = []) => ({ role, length: text.length, sha256: hash(text), ...(role === "assistant" ? { replyIds } : {}) });
+
+test("recovery projects the observed rich-text user and scoped assistant markdown profile without author-role attributes", () => {
+  const user = domElement("div", { class: "rich-text-user-turn MarkdownRoot-fixture" },
+    domElement("p", { class: "Paragraph-fixture" }, domElement("span", {}, domText("Exact native prompt\nRouter generation: native-owner"))));
+  const answer = domElement("div", { "data-markdown-text-style": "assistant-message" }, domElement("p", {}, domText("Exact accepted reply")));
+  const wrapper = domElement("div", { "data-chatgpt-selection-message-id": replyId, class: "group flex min-w-0 flex-col" }, answer);
+  const turn = domElement("section", { "data-turn-key": acceptedTurn },
+    domElement("div", { "data-talvt-turn-state": "complete" }, user, wrapper));
+  const inspect = () => readBrowserReplies([turn, answer], { ui: browserDom, assistantSelector: browserDom.assistantFinalReplySelector,
+    projection: "recovery", recoveryGenerationTurnKey: acceptedTurn });
+  const projected = inspect();
+  assert.equal(projected.turns[0].recoveryProjectionComplete, true);
+  assert.deepEqual(projected.turns[0].recoveryMessages, [{ role: "user", text: "Exact native prompt\nRouter generation: native-owner", replyIds: [] },
+    { role: "assistant", text: "Exact accepted reply", replyIds: [replyId] }]);
+  assert.equal(turn.querySelectorAll("[data-message-author-role]").length, 0);
+  user.setAttribute("class", "MarkdownRoot-without-user-profile");
+  assert.equal(inspect().turns[0].recoveryMessages.some(message => message.role === "user"), false);
+  user.setAttribute("class", "rich-text-user-turn");
+  const unknownStatus = domElement("div", { "data-streaming-response-status": "active" }, domText("Unattributed output"));
+  turn.children.push(unknownStatus); turn.childNodes.push(unknownStatus); unknownStatus.parentElement = turn;
+  assert.equal(inspect().turns[0].recoveryProjectionComplete, false);
+});
+
+function semanticRevisionReceipt(f, request, { scoped = true } = {}) {
+  const observed = parseBrowserOutput(f.receipt(request), request.frameToken, "recover");
+  observed.snapshot.turns.unshift({ turnKey: olderTurn, complete: true, revokedTurnId: null,
+    messages: [semanticMessage("user", "Known older user payload"), semanticMessage("assistant", "Known older baseline reply", [olderReply])] });
+  observed.snapshot.replies.unshift({ messageId: olderReply, turnKey: olderTurn, sha256: hash("Known older baseline reply") });
+  if (scoped) observed.snapshot = reconcileControlledRecoverySnapshot(observed.snapshot, request.proof, hash);
+  observed.snapshotSha256 = hash(observed.snapshot);
+  return { observed, frame: () => `ROUTER_WEB_BROWSER_${request.frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: observed })}\nROUTER_WEB_BROWSER_${request.frameToken}_END` };
+}
+
+test("semantic recovery scopes exact content to acceptance and admits only identity-proven older baseline turns", t => {
+  const f = restorationFixture(t), proof = { ...f.ledger, observation: f.ledger.observation,
+    sendBaselineReplyIds: [olderReply, "88112233-4455-6677-8899-aabbccddeeff"], failedTurnId: failedTurn };
+  const request = { proof, snapshotPolicy: "semantic-v1", frameToken: "a".repeat(48) };
+  const { observed } = semanticRevisionReceipt(f, request, { scoped: false }), current = observed.snapshot;
+  proof.tabId = f.ledger.tabId; proof.chatUrl = f.ledger.chatUrl;
+  const expected = reconcileControlledRecoverySnapshot(current, proof, hash);
+  assert.equal(expected.turns[0].turnKey, acceptedTurn); assert.equal(expected.turns.length, 1);
+  const virtualized = structuredClone(current); virtualized.turns.shift(); virtualized.replies.shift();
+  assert.deepEqual(reconcileControlledRecoverySnapshot(virtualized, proof, hash, expected), expected);
+  const remounted = structuredClone(current), knownReply = proof.sendBaselineReplyIds[1];
+  remounted.turns.unshift({ turnKey: "99112233-4455-6677-8899-aabbccddeeff", complete: true, revokedTurnId: null,
+    messages: [semanticMessage("user", "Previously uninspected historical body"), semanticMessage("assistant", "Older mounted output", [knownReply])] });
+  remounted.replies.unshift({ messageId: knownReply, turnKey: remounted.turns[0].turnKey, sha256: hash("Older mounted output") });
+  assert.deepEqual(reconcileControlledRecoverySnapshot(remounted, proof, hash, expected), expected);
+  remounted.turns[1].messages[0] = semanticMessage("user", "Historical text carries no new input authority");
+  assert.deepEqual(reconcileControlledRecoverySnapshot(remounted, proof, hash, expected), expected);
+  for (const [name, change] of [
+    ["unknown user-only prefix", value => { value.turns.unshift({ turnKey: "66112233-4455-6677-8899-aabbccddeeff", complete: true,
+      revokedTurnId: null, messages: [semanticMessage("user", "Unknown earlier user-only payload")] }); }],
+    ["unknown baseline reply", value => { value.replies[0].messageId = "66112233-4455-6677-8899-aabbccddeeff"; }],
+    ["changed accepted reply", value => { value.replies.at(-1).sha256 = hash("Changed accepted text"); }],
+    ["changed accepted user", value => { value.turns.at(-1).messages[0] = semanticMessage("user", "Changed prompt"); }],
+    ["unknown assistant body", value => { value.turns[0].messages.push(semanticMessage("assistant", "Unattributed output")); }],
+    ["duplicate reply identity", value => { value.replies[0].messageId = replyId; value.turns[0].messages[1].replyIds = [replyId]; }],
+    ["baseline moved after acceptance", value => { value.turns.push(value.turns.shift()); value.replies.push(value.replies.shift()); }],
+    ["postaccepted output", value => { value.turns.at(-1).messages.push(semanticMessage("assistant", "Surprise output")); }],
+    ["unknown later user", value => { value.turns.push({ ...structuredClone(value.turns[0]), turnKey: "66112233-4455-6677-8899-aabbccddeeff" }); }],
+    ["partial accepted body", value => { value.turns.at(-1).messages.shift(); }],
+    ["missing accepted turn", value => { value.turns.pop(); value.replies.pop(); }],
+    ["malformed message", value => { value.turns.at(-1).messages[0] = null; }],
+  ]) {
+    const changed = structuredClone(current); change(changed);
+    assert.equal(reconcileControlledRecoverySnapshot(changed, proof, hash, expected), undefined, name);
+  }
+});
+
+async function armedRawSnapshotFixture(t, { journalVersion = 3, stage = "armed", defaultedVersion = false } = {}) {
+  const f = restorationFixture(t), restoration = f.prepare();
+  await applyNativeCompactionRestoration(restoration.plan, restoration.confirmationSha256, f.options);
+  const value = JSON.parse(readFileSync(f.ledgerPath));
+  value.uncertainSend = true; value.lastTurn.sendState = "uncertain"; value.sendBaseline = 1; value.sendBaselineReplyIds = [olderReply];
+  writeFileSync(f.ledgerPath, JSON.stringify(value));
+  const { request } = inspectControlledWebRecovery(restorationThread, f.options);
+  const semantic = prepareControlledWebRecovery(request, f.receipt(request), f.options);
+  await confirmControlledWebRecovery(semantic.plan, semantic.confirmationSha256, f.options);
+  // Model an already persisted historical raw plan/journal. The current
+  // preparation and confirmation APIs deliberately cannot create one.
+  const rawRequest = { ...request }; delete rawRequest.snapshotPolicy;
+  const historical = parseBrowserOutput(f.receipt(rawRequest), rawRequest.frameToken, "recover");
+  const plan = { ...semantic.plan, request: rawRequest, snapshot: historical.snapshot, snapshotSha256: historical.snapshotSha256 };
+  delete plan.snapshotPolicy;
+  if (journalVersion === 2) { delete plan.inputPolicy; if (defaultedVersion) delete plan.journalVersion; else plan.journalVersion = 2; }
+  const raw = { plan, confirmationSha256: hash(plan) };
+  const armed = JSON.parse(readFileSync(f.ledgerPath));
+  delete armed.recovery.snapshot; delete armed.recovery.snapshotPolicy;
+  if (journalVersion === 2) { armed.priorVersion = 2; delete armed.recovery.inputPolicy; }
+  armed.recovery.confirmationSha256 = raw.confirmationSha256; armed.recovery.snapshotSha256 = raw.plan.snapshotSha256;
+  if (journalVersion === 3) armed.recovery.compactionSources = [{ carrierSha256: hash("retained readable carrier"), encryptedSha256: hash("retained opaque carrier"), inputHashes: [hash("retained source input")] }];
+  const alias = id => ({ id, encryptedSha256: hash(id), deliverySha256: hash(armed.checkpoint), retainedHashes: [hash("fresh native tail retained by alias")] });
+  armed.pendingCompaction = alias("preserved-pending-compaction"); armed.activeCompaction = alias("preserved-active-compaction");
+  if (stage === "bounded") {
+    const owner = "66112233-4455-6677-8899-aabbccddeeff";
+    armed.recovery.stage = "bounded"; armed.recovery.inputHashes = [hash("exact abandoned prefix item"), hash("exact recovery-only request")];
+    armed.recovery.boundTabId = armed.tabId; armed.recovery.boundEffects = { tabReopened: false, tabNavigated: false, handoffMarked: false };
+    if (journalVersion === 3) { armed.recovery.opaqueItems = []; armed.recovery.boundaryOwner = { threadId: restorationThread, turnId: owner }; }
+    armed.uncertainSend = false; armed.lastTurn = { turnId: owner, sendState: "abandoned", completed: true };
+    armed.browserOwnerTurnIds.push(owner);
+  }
+  assert.equal(validWebConversation(armed, restorationThread), true);
+  writeFileSync(f.ledgerPath, JSON.stringify(armed));
+  const original = readFileSync(f.ledgerPath);
+  return { ...f, raw, original };
+}
+
+test("snapshot-only migration preserves bounded V3 and strict V2 armed/bounded policies and exact rollback", async t => {
+  for (const [journalVersion, stage, defaultedVersion] of [[3, "bounded", false], [2, "armed", false], [2, "bounded", true]]) {
+    await t.test(`V${journalVersion} ${stage}, defaulted version ${defaultedVersion}`, async t => {
+      const f = await armedRawSnapshotFixture(t, { journalVersion, stage, defaultedVersion });
+      const inspection = inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options);
+      const expected = { journalVersion, stage, inputPolicy: journalVersion === 2 ? null : JSON.parse(f.original).recovery.inputPolicy };
+      assert.equal(inspection.request.disposition, "revise-recovery-snapshot"); assert.deepEqual(inspection.request.preservedRecovery, expected);
+      const receipt = semanticRevisionReceipt(f, inspection.request);
+      const revised = prepareControlledWebRecoverySnapshotRevision(inspection.request, receipt.frame(), f.options);
+      assert.equal(revised.plan.inputPolicy, undefined, "A snapshot-only plan does not newly abandon native input.");
+      assert.equal(revised.plan.nextRequest, stage === "armed" ? "recovery-only-no-send" : "continue-existing-boundary-after-saved-chat-proof");
+      const outcome = await confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+      assert.equal(outcome.state, `${stage}-semantic-snapshot`);
+      const after = JSON.parse(readFileSync(f.ledgerPath)), prior = JSON.parse(f.original);
+      assert.equal(validWebConversation(after, restorationThread), true);
+      const expectedAfter = structuredClone(prior); expectedAfter.recovery = structuredClone(after.recovery);
+      assert.deepEqual(after, expectedAfter, "Every field outside the snapshot journal remains exact.");
+      const beforeRecovery = structuredClone(prior.recovery), afterRecovery = structuredClone(after.recovery);
+      for (const key of ["confirmationSha256", "snapshotPolicy", "snapshot", "snapshotSha256", "inspectionTabId", "inspectionEffects", "snapshotRevision"]) {
+        delete beforeRecovery[key]; delete afterRecovery[key];
+      }
+      assert.deepEqual(afterRecovery, beforeRecovery, "Stage, policy, boundary, sources and ownership remain exact.");
+      assert.equal(after.recovery.inputPolicy, prior.recovery.inputPolicy);
+      await rollbackControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+      assert.deepEqual(readFileSync(f.ledgerPath), f.original);
+    });
+  }
+});
+
+test("preserving snapshot revision rejects changed stage/policy, uncertain bounded work and changed replay evidence", async t => {
+  const f = await armedRawSnapshotFixture(t, { journalVersion: 2, stage: "bounded", defaultedVersion: true });
+  const inspection = inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options), receipt = semanticRevisionReceipt(f, inspection.request);
+  for (const change of [request => { request.preservedRecovery.stage = "armed"; }, request => { request.preservedRecovery.inputPolicy = "quarantine-all-native-input-through-first-recovery-request-v1"; }]) {
+    const changed = structuredClone(inspection.request); change(changed);
+    assert.throws(() => prepareControlledWebRecoverySnapshotRevision(changed, receipt.frame(), f.options), /stage or input policy/u);
+  }
+  const revised = prepareControlledWebRecoverySnapshotRevision(inspection.request, receipt.frame(), f.options);
+  const rearmed = structuredClone(revised.plan);
+  rearmed.preservedRecovery.stage = "armed"; rearmed.request.preservedRecovery.stage = "armed"; rearmed.nextRequest = "recovery-only-no-send";
+  await assert.rejects(confirmControlledWebRecoverySnapshotRevision(rearmed, hash(rearmed), f.options), /stage or input policy/u);
+  const converted = structuredClone(revised.plan);
+  for (const preserved of [converted.preservedRecovery, converted.request.preservedRecovery]) {
+    preserved.journalVersion = 3; preserved.inputPolicy = "quarantine-all-native-input-through-first-recovery-request-v1";
+  }
+  await assert.rejects(confirmControlledWebRecoverySnapshotRevision(converted, hash(converted), f.options), /stage or input policy/u);
+  assert.deepEqual(readFileSync(f.ledgerPath), f.original);
+  const uncertain = JSON.parse(f.original); uncertain.uncertainSend = true; uncertain.lastTurn = { turnId: failedTurn, sendState: "uncertain", completed: false };
+  writeFileSync(f.ledgerPath, JSON.stringify(uncertain));
+  assert.throws(() => inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options), /intact armed or bounded/u);
+  writeFileSync(f.ledgerPath, f.original);
+  const pending = JSON.parse(f.original);
+  pending.pendingBrowserOpen = { turnId: failedTurn, callId: `call_router_web_${"a".repeat(32)}`, chatUrl: pending.chatUrl };
+  pending.lastTurn = { turnId: failedTurn, sendState: "unsent", completed: false };
+  assert.equal(validWebConversation(pending, restorationThread), true);
+  writeFileSync(f.ledgerPath, JSON.stringify(pending));
+  assert.throws(() => inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options), /intact armed or bounded/u);
+  writeFileSync(f.ledgerPath, f.original);
+  await confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+  const progressed = JSON.parse(readFileSync(f.ledgerPath)); progressed.recovery.inputHashes.push(hash("changed input boundary"));
+  writeFileSync(f.ledgerPath, JSON.stringify(progressed));
+  await assert.rejects(rollbackControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options), /discard current evidence/u);
+  assert.deepEqual(JSON.parse(readFileSync(f.ledgerPath)), progressed);
+});
+
+test("explicit armed snapshot revision approves a newly mounted known baseline and preserves projection, sources, quarantine and rollback", async t => {
+  const f = await armedRawSnapshotFixture(t);
+  assert.throws(() => prepareControlledWebRecovery(f.raw.plan.request, f.receipt(f.raw.plan.request), f.options), /current semantic inspection/u);
+  await assert.rejects(confirmControlledWebRecovery(f.raw.plan, f.raw.confirmationSha256, f.options));
+  assert.deepEqual(readFileSync(f.ledgerPath), f.original);
+  const inspection = inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options);
+  assert.equal(inspection.request.snapshotPolicy, "semantic-v1");
+  const receipt = semanticRevisionReceipt(f, inspection.request);
+  const revised = prepareControlledWebRecoverySnapshotRevision(inspection.request, receipt.frame(), f.options);
+  await assert.rejects(confirmControlledWebRecoverySnapshotRevision(revised.plan, "0".repeat(64), f.options));
+  assert.deepEqual(readFileSync(f.ledgerPath), f.original);
+  await confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+  const after = JSON.parse(readFileSync(f.ledgerPath)), prior = JSON.parse(f.original);
+  assert.equal(validWebConversation(after, restorationThread), true);
+  assert.equal(after.recovery.stage, "armed"); assert.equal(after.uncertainSend, true);
+  assert.deepEqual(after.recovery.compactionSources, prior.recovery.compactionSources);
+  assert.deepEqual(after.nativeCompactionProjection, prior.nativeCompactionProjection);
+  assert.deepEqual(after.checkpoint, prior.checkpoint);
+  assert.equal(after.recovery.inputPolicy, prior.recovery.inputPolicy);
+  assert.deepEqual(after.recovery.revokedTurnIds, prior.recovery.revokedTurnIds);
+  assert.equal(after.recovery.snapshot.turns.length, 1);
+  await rollbackControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+  assert.deepEqual(readFileSync(f.ledgerPath), f.original);
+});
+
+test("snapshot revision refuses changed accepted text, changed armed evidence and rollback after advancement", async t => {
+  const f = await armedRawSnapshotFixture(t), inspection = inspectControlledWebRecoverySnapshotRevision(f.raw.plan, f.raw.confirmationSha256, f.options);
+  const receipt = semanticRevisionReceipt(f, inspection.request), changed = structuredClone(receipt.observed);
+  changed.snapshot.replies.at(-1).sha256 = hash("Tampered accepted reply"); changed.snapshotSha256 = hash(changed.snapshot);
+  const changedFrame = `ROUTER_WEB_BROWSER_${inspection.request.frameToken}_BEGIN\n${JSON.stringify({ routerBrowser: changed })}\nROUTER_WEB_BROWSER_${inspection.request.frameToken}_END`;
+  assert.throws(() => prepareControlledWebRecoverySnapshotRevision(inspection.request, changedFrame, f.options), /reply changed/u);
+  const revised = prepareControlledWebRecoverySnapshotRevision(inspection.request, receipt.frame(), f.options);
+  const newer = JSON.parse(f.original); newer.recovery.compactionSources[0].inputHashes.push(hash("new evidence"));
+  writeFileSync(f.ledgerPath, JSON.stringify(newer));
+  await assert.rejects(confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options), /changed/u);
+  assert.deepEqual(JSON.parse(readFileSync(f.ledgerPath)), newer);
+  writeFileSync(f.ledgerPath, f.original);
+  await confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options);
+  const progressed = JSON.parse(readFileSync(f.ledgerPath)); progressed.recovery.compactionSources[0].inputHashes.push(hash("later evidence"));
+  writeFileSync(f.ledgerPath, JSON.stringify(progressed));
+  await assert.rejects(rollbackControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, f.options), /discard current evidence/u);
+  assert.deepEqual(JSON.parse(readFileSync(f.ledgerPath)), progressed);
 });
 
 test("read-only inspection append is retained at preparation; later source change blocks application", async t => {

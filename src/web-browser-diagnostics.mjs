@@ -6,7 +6,7 @@ const phases = new Set(["initial-proof", "registered-recheck", "ownership-guard"
   "active-owner", "saved-tab-discovery", "saved-tab-acquisition", "saved-url-readiness", "checkpoint-readiness",
   "browser-recheck", "saved-url-recheck", "dom-snapshot", "generation-state", "composer-state", "normal-chat-state",
   "idle-control-state", "message-identities", "accepted-checkpoint", "reply-history", "anchor-snapshot", "revoked-turn-order",
-  "reply-prefix", "reply-content-readiness", "snapshot-stability", "handoff", "ownership-transfer"]);
+  "reply-prefix", "reply-content-readiness", "semantic-projection", "semantic-snapshot", "snapshot-stability", "handoff", "ownership-transfer"]);
 const reasons = new Set([
   "saved-url-changed", "temporary-mode-active", "invalid-reply-identities", "generation-turn-not-unique",
   "generation-turn-not-latest", "generation-turn-incomplete", "fresh-reply-not-latest", "expected-reply-mismatch",

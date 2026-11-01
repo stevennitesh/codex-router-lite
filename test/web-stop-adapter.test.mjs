@@ -119,6 +119,7 @@ test('a current native recovery call crosses the real adapter without granting f
   const source = ordinary(TURN, 'retain');
   source.arguments.code = browserScript({ operation: 'recover', bindingId: 'fixtureBinding', sessionId: APPROVED_THREAD,
     turnId: TURN, frameToken: 'a'.repeat(48), runtimeModule: STOP_CONFIG.runtimeModule, expectedOwnerTurnIds: [TURN2],
+    inspectionOnly: true, snapshotPolicy: 'semantic-v1',
     snapshotSha256: 'a'.repeat(64), recoveryProof: { tabId: 'retained-tab', chatUrl: 'https://chatgpt.com/c/saved-chat',
       failedTurnId: TURN2, generationTurnKey: GENERATION, sendBaselineReplyIds: [], generationReplyIds: [SESSION],
       observation: { replyId: SESSION, completed: true, assistantPrefix: { length: 5, sha256: createHash('sha256').update('prior').digest('hex') } } } });

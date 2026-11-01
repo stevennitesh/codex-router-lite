@@ -182,6 +182,7 @@ const operationDomKeys = new Set([
   "modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
   "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
   "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
+  "pastedTextLabel", "removePastedTextName", "closeTextViewerName", "pastedTextPreviewSelector",
 ]);
 const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(browserDom).filter(([key]) => !operationDomKeys.has(key))));
 
@@ -194,6 +195,9 @@ export function readBrowserReplies(elements, options) {
   const bodies = elements.filter(element => element.tagName === "BODY"), body = bodies.length === 1 ? bodies[0] : null;
   if ((options.observation || options.indicator || options.dispatch) && (!body || body.ownerDocument?.body !== body)) return null;
   const turns = elements.filter(element => element.matches(ui.turnSelector));
+  const recoveryBoundary = options.projection === "recovery" && options.recoveryGenerationTurnKey
+    ? turns.findIndex(turn => turn.getAttribute(ui.turnKeyAttribute) === options.recoveryGenerationTurnKey) : -1;
+  const historicalRecoveryTurn = turn => recoveryBoundary >= 0 && turns.indexOf(turn) >= 0 && turns.indexOf(turn) < recoveryBoundary;
   const selectedElements = elements.filter(element => element.matches(options.assistantSelector));
   const controls = elements.filter(element => element !== body && !element.matches(ui.turnSelector)
     && !element.matches(options.assistantSelector));
@@ -271,17 +275,18 @@ export function readBrowserReplies(elements, options) {
     if (inline) return `${delimiter}${/^[` ]|[` ]$/u.test(source) ? " " : ""}${source}${/^[` ]|[` ]$/u.test(source) ? " " : ""}${delimiter}`;
     return `${delimiter}\n${source}${source.endsWith("\n") ? "" : "\n"}${delimiter}`;
   };
-  const read = (node, inLinkLabel = false) => {
+  const read = (node, inLinkLabel = false, recoveryContent = false) => {
     if (node.nodeType === 3) {
       const text = node.textContent ?? "";
       return { text, renderedText: inLinkLabel ? text.replace(/[\\[\]]/gu, "\\$&") : text };
     }
     if (node.nodeType !== 1) return literal("");
+    if (recoveryContent && node.matches(ui.buttonSelector)) return literal("");
     if (node.getAttribute(ui.markdownCopyAttribute) === ui.excludedCopyValue || /^(?:SCRIPT|STYLE)$/.test(node.tagName)) return literal("");
     if (node.tagName === "BR") return literal("\n");
     if (codeBlock(node)) { const text = readCode(node); return { text, renderedText: fence(text) }; }
     const children = Array.from(node.childNodes, child => ({ node: child,
-      value: read(child, inLinkLabel || node.tagName === "A" && node.getAttribute("href") !== null) }));
+      value: read(child, inLinkLabel || node.tagName === "A" && node.getAttribute("href") !== null, recoveryContent) }));
     let text = "", renderedText = "", previous, previousRendered;
     for (const { node: child, value } of children) {
       if (value.text !== "") {
@@ -341,7 +346,7 @@ export function readBrowserReplies(elements, options) {
     message.reply.turnKey = turn?.getAttribute(ui.turnKeyAttribute) ?? null;
     // Identity and document order remain global. Historical bodies and their
     // completion controls are irrelevant to an anchored observation.
-    if (options.projection === "identities" || options.projection === "anchor"
+    if (options.projection === "identities" || options.projection === "anchor" || historicalRecoveryTurn(turn)
         || options?.generationTurnKey && message.reply.turnKey !== options.generationTurnKey) continue;
     // Status and reasoning roots use the same markdown renderer as answers.
     // The first status boundary preserves answer chunks between later tools.
@@ -373,7 +378,7 @@ export function readBrowserReplies(elements, options) {
   const result = () => {
     for (const group of groups) {
       const turn = group.wrapper?.closest(ui.turnSelector);
-      if (options.projection === "identities" || options.projection === "anchor"
+      if (options.projection === "identities" || options.projection === "anchor" || historicalRecoveryTurn(turn)
           || options.generationTurnKey && group.reply.turnKey !== options.generationTurnKey) continue;
       group.reply.answer = group.answerRoots.length > 0;
       if (options.projection === "recovery") group.reply.recoveryTextContent = group.wrapper?.textContent ?? null;
@@ -388,13 +393,40 @@ export function readBrowserReplies(elements, options) {
     const projection = { replies, turns: turns.map(turn => {
       const turnKey = turn.getAttribute(ui.turnKeyAttribute);
       if (options.projection === "identities" || options.generationTurnKey && turnKey !== options.generationTurnKey) return { turnKey };
-      if (["anchor", "recovery-anchor"].includes(options.projection)) return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
+      if (options.projection === "anchor") return { turnKey, matchesGenerationMarker: Boolean(options.generationMarker
         && !options.baselineTurnKeys.includes(turnKey) && (turn.textContent ?? "").includes(options.generationMarker)),
-        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)),
-        ...(options.projection === "recovery-anchor" ? { textContent: turn.textContent ?? "" } : {}) };
+        nestedInTurn: Boolean(turn.parentElement?.closest(ui.turnSelector)) };
       const states = Array.from(turn.querySelectorAll(ui.turnStateSelector));
       return { turnKey,
         matchesGenerationMarker: Boolean(options.generationMarker && (turn.textContent ?? '').includes(options.generationMarker)),
+        ...(options.projection === "recovery" ? (() => {
+          const users = Array.from(turn.querySelectorAll(ui.userMessageSelector));
+          const roots = Array.from(turn.querySelectorAll(`${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector}`));
+          const wrappers = [...new Set(roots.map(root => root.closest(wrapperSelector)).filter(Boolean))];
+          const ids = wrappers.map(wrapper => wrapper.getAttribute(ui.messageIdAttribute));
+          const selected = new Set(roots), groups = new Map(), messages = [];
+          for (const element of turn.querySelectorAll(`${ui.userMessageSelector},${ui.assistantSelector},${ui.reasoningSelector},${ui.streamingStatusSelector}`)) {
+            if (element.matches(ui.userMessageSelector)) {
+              messages.push({ role: "user", text: historicalRecoveryTurn(turn) ? element.textContent ?? "" : read(element, false, true).text, replyIds: [] });
+              continue;
+            }
+            const wrapper = element.closest(wrapperSelector);
+            if (!groups.has(wrapper)) { const message = { role: "assistant", text: "", replyIds: [wrapper?.getAttribute(ui.messageIdAttribute) ?? null] }; groups.set(wrapper, message); messages.push(message); }
+            let ancestor = element.parentElement;
+            while (ancestor && ancestor !== turn && !(selected.has(ancestor) && ancestor.closest(wrapperSelector) === wrapper)) ancestor = ancestor.parentElement;
+            if (ancestor && ancestor !== turn) continue;
+            const text = historicalRecoveryTurn(turn) ? element.textContent ?? "" : read(element, false, true).text;
+            const message = groups.get(wrapper);
+            if (message.text && text) message.text += "\n\n";
+            message.text += text;
+          }
+          return { recoveryMessages: messages, recoveryProjectionComplete: users.every(user => user.closest(ui.turnSelector) === turn
+              && !user.parentElement?.closest(ui.userMessageSelector) && !user.closest(wrapperSelector))
+            && roots.every(root => root.closest(ui.turnSelector) === turn && !root.closest(ui.userMessageSelector)
+              && root.closest(wrapperSelector)?.closest(ui.turnSelector) === turn)
+            && ids.every(id => typeof id === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(id))
+            && new Set(ids).size === ids.length };
+        })() : {}),
         complete: states.length === 1 && states[0].getAttribute(ui.turnStateAttribute) === ui.completeTurnState };
     }) };
     // The SDK's guarded BODY supplies normal-mode/cardinality evidence. Keep
@@ -467,7 +499,7 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendi
   const { ui } = options;
   const role = (name, kind = "button", tab = state.tab) => tab.playwright.getByRole(kind, { name, exact: true });
   const snapshot = (tab = state.tab, generationMarker, generationTurnKey, projection, baselineTurnKeys) => {
-    let selection = tab.playwright.locator(["anchor", "recovery-anchor"].includes(projection) ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
+    let selection = tab.playwright.locator(projection === "anchor" ? ui.turnSelector : `${ui.turnSelector},${ui.assistantFinalReplySelector}`);
     if (!projection) selection = selection.or(role(ui.regenerateButtonExactName, "button", tab));
     return selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
       ...(generationMarker ? { generationMarker } : {}), ...(generationTurnKey ? { generationTurnKey } : {}),
@@ -726,7 +758,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     }, { ownedChipSelector: options.pluginChipSelector, attribute: ui.contentEditableAttribute }, { timeoutMs: 1000 });
     return values.length === 1 && values[0] === true;
   };
-  const mutationSnapshot = async ({ includeReplies = false, generationTurnKey, projection = "identities" } = {}) => {
+  const mutationSnapshot = async ({ includeReplies = false, generationTurnKey, recoveryGenerationTurnKey, projection = "identities" } = {}) => {
     const forbidden = [role(ui.stopButtonExactName), role(ui.temporaryToggleName), role(ui.temporaryHeadingName, "heading")];
     let selection = state.tab.playwright.locator("body");
     // Preserve the public SDK's semantic control cardinality. Its role queries
@@ -740,6 +772,7 @@ function createBrowserOperationContext(state, options, nodeRepl, replyReader, vi
     const result = await selection.evaluateAll(replyReader, { ui, assistantSelector: ui.assistantFinalReplySelector,
       regenerateName: ui.regenerateButtonExactName, mutation: true, projection,
       ...(generationTurnKey ? { generationTurnKey } : {}),
+      ...(recoveryGenerationTurnKey ? { recoveryGenerationTurnKey } : {}),
       ...(options.pluginAppId ? { pluginChipSelector: options.pluginChipSelector } : {}) }, { timeoutMs: 1000 });
     const current = result.mutation;
     current.normal = current.idle && (state.hasSentMessage
@@ -1449,6 +1482,63 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const chip = () => state.tab.playwright.locator(options.pluginChipSelector);
   requireBinding();
   await ensureOwned();
+  const preparationTab = state.tab, preparationTabId = state.tabId, preparationBrowser = state.browser,
+    preparationUrl = state.savedUrl, preparationOwner = activeOwner([options.turnId], true);
+  const assertPreparationOwner = () => {
+    if (activeOwner([options.turnId], true) !== preparationOwner || state.tab !== preparationTab
+        || state.tabId !== preparationTabId || preparationTab.id !== preparationTabId
+        || state.browser !== preparationBrowser || state.savedUrl !== preparationUrl || state.sendClicked) {
+      throw new Error("The owned browser changed during Send preparation; nothing sent.");
+    }
+  };
+  const composerForm = () => state.tab.playwright.locator("form").filter({ has: role(ui.composerName, "textbox") });
+  const readAttachments = async (timeoutMs = 1000) => {
+    assertPreparationOwner();
+    const result = await role(ui.composerName, "textbox").evaluateAll((elements, { ui }) => {
+      if (elements.length !== 1) return null;
+      const composer = elements[0], form = composer.closest("form"), document = composer.ownerDocument;
+      if (!form || !document || form.querySelectorAll(ui.composerSelector).length !== 1) return null;
+      const classes = element => (element.getAttribute("class") ?? "").split(/\s+/u);
+      const cards = Array.from(form.querySelectorAll("span")).filter(element => classes(element).includes("composer-attachment-surface"));
+      const trays = Array.from(form.querySelectorAll("div")).filter(element => classes(element).some(value => value.startsWith("ComposerLayoutAttachments-")));
+      const blankOutside = (node, allowed) => node === allowed || node.nodeType === 3 && !(node.textContent ?? "").trim();
+      let children = [];
+      if (trays.length > 1) return null;
+      if (trays.length === 1) {
+        const tray = trays[0], wrappers = Array.from(tray.children);
+        if (wrappers.length > 1 || Array.from(tray.childNodes).some(node => !blankOutside(node, wrappers[0]))) return null;
+        if (wrappers.length) {
+          const wrapper = wrappers[0];
+          if (wrapper.tagName !== "DIV" || !["flex", "flex-wrap", "items-end", "gap-2", "p-1"].every(value => classes(wrapper).includes(value))) return null;
+          children = Array.from(wrapper.children);
+          if (Array.from(wrapper.childNodes).some(node => !children.includes(node) && !blankOutside(node))) return null;
+        }
+      }
+      if (children.length !== cards.length || children.some(node => !cards.includes(node))) return null;
+      const visibleEnabled = element => {
+        const rect = element.getBoundingClientRect(), style = document.defaultView.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.visibility !== "collapse"
+          && element.getAttribute("disabled") === null && element.getAttribute("aria-disabled") !== "true";
+      };
+      const names = [];
+      for (const card of cards) {
+        if (!classes(card).includes("group/resource-card")) return null;
+        const buttons = Array.from(card.querySelectorAll("button")), remove = buttons.filter(button => button.getAttribute("aria-label") === ui.removePastedTextName);
+        const open = buttons.filter(button => !remove.includes(button));
+        const hasLabel = node => node.nodeType === 1 && (node.textContent === ui.pastedTextLabel || Array.from(node.children).some(hasLabel));
+        if (buttons.length !== 2 || remove.length !== 1 || open.length !== 1 || !buttons.every(visibleEnabled) || !hasLabel(card)) return null;
+        const name = open[0].getAttribute("aria-label");
+        if (typeof name !== "string" || !name.trim()) return null;
+        names.push(name);
+      }
+      return { url: document.URL, cardCount: cards.length, openerNames: names, composerText: composer.innerText };
+    }, { ui, sendAttachments: true }, { timeoutMs });
+    assertPreparationOwner();
+    if (!result || !(preparationUrl ? result.url === preparationUrl : homeUrl(result.url))) {
+      throw new Error("The composer attachment inventory or ownership is unrecognized; nothing sent.");
+    }
+    return result;
+  };
   if (state.sendAttempted) throw new Error("This message was already attempted; uncertain sends cannot be replayed.");
   if (!(await normal()) || await role(ui.stopButtonExactName).isVisible()) throw new Error("The owned saved chat is not idle.");
   if (await conversationFull()) {
@@ -1456,6 +1546,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     return;
   }
   if (!(await emptyComposer())) throw new Error("The owned composer has a draft; nothing sent.");
+  if ((await readAttachments()).cardCount !== 0) throw new Error("The owned composer has an attachment draft; nothing sent.");
   if (options.pluginAppId) {
     if (!(await chip().isVisible())) {
       await role(ui.addButtonName).click();
@@ -1468,6 +1559,7 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const beforeSend = await mutationSnapshot({ includeReplies: true }), baseline = beforeSend.replies;
   if (!beforeSend.mutation.emptyComposer) throw new Error("Attaching the plugin changed the composer draft; nothing sent.");
   if (!beforeSend.mutation.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+  if ((await readAttachments()).cardCount !== 0) throw new Error("Attaching the plugin changed the composer attachments; nothing sent.");
   if (!validReplies(baseline)) throw identityError("The assistant reply baseline has missing or ambiguous message identities; nothing sent.", baseline);
   state.baselineReplyIds = [...new Set([...(state.baselineReplyIds ?? []), ...(state.generationReplyIds ?? []), ...(state.replyId ? [state.replyId] : []), ...baseline.map(value => value.messageId)])];
   state.baselineTurnKeys = [...new Set([...(state.baselineTurnKeys ?? []), ...beforeSend.turns.map(value => value.turnKey)])];
@@ -1489,35 +1581,94 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   const send = role(ui.sendButtonExactName);
   const sendDeadline = Date.now() + 10000;
   const allowance = createAllowance(sendDeadline, () => new Error("The Send deadline expired before dispatch; nothing sent."));
+  const preview = () => state.tab.playwright.locator(ui.pastedTextPreviewSelector).filter({ visible: true });
+  const literal = value => !value.includes("'") ? `'${value}'`
+    : `concat(${value.split("'").map(part => `'${part}'`).join(',"\'",')})`;
+  const intendedPastedText = state.unsentDraft;
+  // Exact raw DOM text is the readiness condition. Text locators normalize
+  // whitespace and therefore cannot establish this payload's completeness.
+  const readPastedText = async inspectAttachment => {
+    assertPreparationOwner(); allowance(1500);
+    const attachment = await inspectAttachment();
+    const card = composerForm().getByRole("button", { name: attachment.openerNames[0], exact: true }).filter({ visible: true }), close = role(ui.closeTextViewerName);
+    try {
+      if (await card.count() !== 1 || !(await card.isEnabled()) || await close.count() !== 0 || await preview().count() !== 0) throw new Error();
+      assertPreparationOwner();
+      await card.click({ timeoutMs: allowance(1500) });
+    } catch {
+      // The opener's accessible label contains a source excerpt. SDK selector
+      // errors may echo it; retain only this fixed, content-free failure.
+      throw new Error("The pasted-text viewer or attachment is unavailable or ambiguous; nothing sent.");
+    }
+    const exactPreview = preview().filter({ has: state.tab.playwright.locator(`xpath=self::*[string(.) = ${literal(intendedPastedText)}]`) });
+    const read = async () => {
+      assertPreparationOwner(); allowance(1000);
+      await inspectAttachment();
+      const values = await preview().evaluateAll((elements, { closeName }) => Array.from(elements, element => {
+        const contains = (node, names, tag = "DIV") => node?.tagName === tag && names.every(name => node.classList.contains(name));
+        const viewer = element.closest("section");
+        const viewerPreviews = viewer ? Array.from(viewer.querySelectorAll("div")).filter(node =>
+          node.classList.contains("whitespace-pre-wrap") && node.classList.contains("select-text")) : [];
+        const viewerClose = viewer ? Array.from(viewer.querySelectorAll("button")).filter(node => node.getAttribute("aria-label") === closeName) : [];
+        return { text: element.textContent, recognized: contains(element.parentElement,
+          ["mx-auto", "w-full", "max-w-(--thread-content-max-width)", "px-toolbar", "pt-20", "pb-8"])
+          && contains(element.parentElement?.parentElement, ["h-full", "min-h-0", "overflow-y-auto", "bg-surface", "text-start"])
+          && contains(viewer, ["relative", "flex", "h-full", "min-h-0", "flex-col", "bg-surface"], "SECTION")
+          && viewerPreviews.length === 1 && viewerPreviews[0] === element && viewerClose.length === 1 };
+      }), { closeName: ui.closeTextViewerName },
+        { timeoutMs: allowance(500, 1000) });
+      assertPreparationOwner(); allowance(500);
+      if (values.length > 1) throw new Error("The pasted-text preview is ambiguous; nothing sent.");
+      if (values.length && !values[0].recognized) throw new Error("The pasted-text viewer structure is unrecognized; nothing sent.");
+      return values.length === 1 && values[0].text?.replace(/\r\n?/gu, "\n") === intendedPastedText;
+    };
+    const complete = await browserReadiness(exactPreview, { nextTimeout: () => { assertPreparationOwner(); return allowance(1500); },
+      afterWait: assertPreparationOwner, inspect: read, ready: value => value });
+    if (!complete) throw new Error("The complete intended pasted-text payload could not be verified; nothing sent.");
+    if (await close.count() !== 1 || !(await close.isVisible()) || !(await close.isEnabled())) {
+      throw new Error("The pasted-text viewer close control is unavailable or ambiguous; nothing sent.");
+    }
+    assertPreparationOwner();
+    await close.click({ timeoutMs: allowance(1000) });
+    assertPreparationOwner(); allowance(500);
+    if (await close.count() !== 0 || await preview().count() !== 0) throw new Error("The pasted-text viewer did not close; nothing sent.");
+    await inspectAttachment();
+  };
   const waitForSend = async () => {
     const ready = await browserReadiness(sendReadyLocator(state.tab, ui), { nextTimeout: () => Math.floor(sendDeadline - Date.now()),
       inspect: () => send.isEnabled(), ready: value => value });
     if (!ready) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
     allowance();
   };
-  // A pasted-text attachment has no completed payload readback. The observed
-  // Show in text field control can restore it to inspectable inline text; only
-  // an exact readback may then authorize the marker or Send.
   await waitForSend();
   allowance(1500);
   let settled = (await mutationSnapshot()).mutation;
   const payloadMatches = value => value.inlineComposer && value.composerCount === 1
     && value.composerText?.replace(/\r\n?/gu, "\n") === intendedComposerText;
-  if (!payloadMatches(settled)) {
-    const expand = role("Show in text field"), remove = role("Remove pasted text attachment");
-    if (settled.normal && settled.composerCount === 1 && (!options.pluginAppId || settled.chipVisible)
-        && await expand.count() === 1 && await expand.isVisible() && await remove.count() === 1 && await remove.isVisible()) {
-      allowance(1500); activeOwner([options.turnId], true);
-      await expand.click({ timeoutMs: allowance(1500) });
-      await waitForSend();
-      settled = (await mutationSnapshot()).mutation;
-      if (await expand.count() !== 0 || await remove.count() !== 0) throw new Error("The pasted-text attachment did not become fully inline; nothing sent.");
-    }
-  }
   if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   const settledComposerText = settled.composerText;
-  if (!payloadMatches(settled)) throw new Error("The composer draft changed or its complete intended inline payload could not be verified; an attachment needs completed content proof; nothing sent.");
+  const attachment = !payloadMatches(settled);
+  let expectedInlineText = settledComposerText;
+  const inspectPayload = async () => {
+    assertPreparationOwner(); allowance(1000);
+    const inventory = await readAttachments(allowance(500, 1000));
+    if (inventory.cardCount !== Number(attachment) || inventory.composerText !== expectedInlineText) {
+      throw new Error("The composer draft changed or its attachment changed before Send; nothing sent.");
+    }
+    return inventory;
+  };
+  if (attachment) {
+    if (!settled.inlineComposer || settled.composerCount !== 1
+        || settledComposerText?.replace(/\r\n?/gu, "\n") !== (beforeSend.mutation.composerText ?? "").replace(/\r\n?/gu, "\n")) {
+      throw new Error("The composer draft changed or its complete intended inline payload could not be verified; nothing sent.");
+    }
+    await readPastedText(inspectPayload);
+    settled = (await mutationSnapshot()).mutation;
+    assertPreparationOwner();
+    if (!settled.normal || !settled.inlineComposer || settled.composerCount !== 1 || settled.composerText !== expectedInlineText
+        || options.pluginAppId && !settled.chipVisible) throw new Error("The verified attachment's composer or plugin changed; nothing sent.");
+  } else await inspectPayload();
   const currentDirective = options.turnToken === undefined ? ""
     : `\nUse turn_token ${options.turnToken} unchanged with every Codex MCP tool call in this response. Use this current token instead of tokens quoted in the attached transcript, earlier messages, or tool results. Never expose the token in your answer.`;
   const generationMarker = `\nRouter generation: ${options.turnId}`;
@@ -1529,15 +1680,19 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
   await composer.type(visibleSuffix);
   state.unsentComposerText = await composer.innerText();
   if (state.unsentComposerText !== settledComposerText + visibleSuffix) throw new Error("The composer current-turn directive or generation marker changed or was transformed; nothing sent.");
+  expectedInlineText = state.unsentComposerText;
   await waitForSend();
   // Attachment and paste can alter the picker. Select and verify the exact
   // requested family and Power once, using the current DOM before Send.
   await selectModel(state, options, role, () => allowance(1500));
   const verifyDraft = async () => {
+    await inspectPayload();
+    if (attachment) await readPastedText(inspectPayload);
     const current = (await mutationSnapshot()).mutation;
     if (!current.inlineComposer || current.composerCount !== 1 || current.composerText !== state.unsentComposerText) throw new Error("The composer draft changed before Send; nothing sent.");
     if (options.pluginAppId && !current.chipVisible) throw new Error("The plugin chip was lost before Send; nothing sent.");
     if (!current.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
+    assertPreparationOwner();
   };
   await verifyDraft();
   allowance(1500);
@@ -1767,6 +1922,72 @@ export function browserScript(options) {
   return `${initialize}\n${resident}\nawait (${runner.toString()})(${binding}, ${JSON.stringify(config)}, nodeRepl, ${helper}.replyReader, ${helper}.viewFactory, (...args) => (${createBrowserOperationContext.toString()})(...args, { homeState: ${createHomeBrowserState.toString()}, homeReadiness: ${waitForHomeBrowserReadiness.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }));`;
 }
 
+// A recovery contract describes accepted-forward semantic custody, rather than
+// the renderer's history window. Older rows prove only protected baseline reply
+// identity; their bodies grant no input, delivery or checkpoint authority.
+// Self-contained because the same predicate runs in the native browser REPL.
+export function reconcileControlledRecoverySnapshot(value, proof, hash, expected) {
+  const object = item => item !== null && typeof item === "object" && !Array.isArray(item);
+  const uuid = item => typeof item === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(item);
+  const digest = item => typeof item === "string" && /^[a-f0-9]{64}$/u.test(item);
+  if (!object(proof) || !Array.isArray(proof.sendBaselineReplyIds) || !Array.isArray(proof.generationReplyIds)
+      || !object(proof.observation) || proof.priorRevokedTurnIds !== undefined && !Array.isArray(proof.priorRevokedTurnIds)) return undefined;
+  const valid = snapshot => {
+    if (!object(snapshot) || snapshot.version !== 2 || snapshot.originalTabId !== proof.tabId || snapshot.chatUrl !== proof.chatUrl
+        || snapshot.idle !== true || snapshot.emptyComposer !== true || !Array.isArray(snapshot.turns) || !snapshot.turns.length
+        || !Array.isArray(snapshot.replies) || !snapshot.replies.length) return false;
+    const acceptedIndex = snapshot.turns.findIndex(turn => turn?.turnKey === proof.generationTurnKey);
+    if (snapshot.turns.some((turn, index) => !object(turn) || !uuid(turn.turnKey) || typeof turn.complete !== "boolean"
+        || turn.revokedTurnId !== null && !uuid(turn.revokedTurnId) || !Array.isArray(turn.messages)
+        || turn.messages.some(message => !object(message) || !["user", "assistant"].includes(message.role)
+          || !Number.isSafeInteger(message.length) || message.length < (message.role === "user" && index >= acceptedIndex ? 1 : 0) || !digest(message.sha256))
+        || turn.messages[0]?.role !== "user" || turn.messages.filter(message => message.role === "user").length !== 1)
+        || new Set(snapshot.turns.map(turn => turn.turnKey)).size !== snapshot.turns.length) return false;
+    if (snapshot.replies.some(reply => !object(reply) || !uuid(reply.messageId) || !uuid(reply.turnKey) || !digest(reply.sha256)
+        || !snapshot.turns.some(turn => turn.turnKey === reply.turnKey))
+        || new Set(snapshot.replies.map(reply => reply.messageId)).size !== snapshot.replies.length) return false;
+    let replyOrder = -1;
+    for (const reply of snapshot.replies) {
+      const index = snapshot.turns.findIndex(turn => turn.turnKey === reply.turnKey);
+      if (index < replyOrder) return false;
+      replyOrder = index;
+    }
+    for (const turn of snapshot.turns) {
+      const assistant = turn.messages.filter(message => message.role === "assistant");
+      if (assistant.some(message => !Array.isArray(message.replyIds) || !message.replyIds.length
+          || new Set(message.replyIds).size !== message.replyIds.length
+          || message.replyIds.some(id => !uuid(id) || !snapshot.replies.some(reply => reply.messageId === id && reply.turnKey === turn.turnKey)))
+          || snapshot.replies.some(reply => reply.turnKey === turn.turnKey && !assistant.some(message => message.replyIds.includes(reply.messageId)))) return false;
+    }
+    const boundary = snapshot.turns.findIndex(turn => turn.turnKey === proof.generationTurnKey);
+    if (boundary < 0 || snapshot.turns[boundary].complete !== true || snapshot.turns[boundary].revokedTurnId !== null) return false;
+    const baseline = new Set(proof.sendBaselineReplyIds), generation = new Set(proof.generationReplyIds);
+    for (const turn of snapshot.turns.slice(0, boundary)) {
+      const replies = snapshot.replies.filter(reply => reply.turnKey === turn.turnKey);
+      if (turn.revokedTurnId !== null || !replies.length || replies.some(reply => !baseline.has(reply.messageId))) return false;
+    }
+    const accepted = snapshot.replies.filter(reply => reply.turnKey === proof.generationTurnKey);
+    if (!accepted.length || accepted.some(reply => !generation.has(reply.messageId))
+        || !proof.generationReplyIds.every(id => accepted.some(reply => reply.messageId === id))
+        || accepted.at(-1).messageId !== proof.observation.replyId || snapshot.replies.at(-1).messageId !== proof.observation.replyId) return false;
+    const revoked = [...(proof.priorRevokedTurnIds ?? []), proof.failedTurnId], used = new Set();
+    let order = -1;
+    for (const turn of snapshot.turns.slice(boundary + 1)) {
+      const index = revoked.indexOf(turn.revokedTurnId);
+      if (index < 0 || used.has(index) || index <= order || index === revoked.length - 1 && turn !== snapshot.turns.at(-1)
+          || turn.messages.some(message => message.role === "assistant") || snapshot.replies.some(reply => reply.turnKey === turn.turnKey)) return false;
+      used.add(index); order = index;
+    }
+    return true;
+  };
+  if (!valid(value) || expected !== undefined && !valid(expected)) return undefined;
+  const boundary = value.turns.findIndex(turn => turn.turnKey === proof.generationTurnKey);
+  const turns = value.turns.slice(boundary), forward = new Set(turns.map(turn => turn.turnKey));
+  const scoped = { ...value, turns, replies: value.replies.filter(reply => forward.has(reply.turnKey)) };
+  if (expected === undefined) return scoped;
+  return expected.turns[0]?.turnKey === proof.generationTurnKey && hash(scoped) === hash(expected) ? expected : undefined;
+}
+
 // Explicit maintenance recovery uses its own read-only projection. It neither
 // replays Send nor accepts the abandoned attempt as delivered context.
 async function runControlledRecovery(previous, options, nodeRepl, readReplies, createView, createContext, lifecycle) {
@@ -1828,7 +2049,7 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
     phase = "saved-url-recheck";
     if (tab.id !== currentTabId || await tab.url() !== proof.chatUrl) refuse("ownership-changed");
     phase = "dom-snapshot";
-    const snapshot = await context.mutationSnapshot({ includeReplies: true, projection: "recovery" });
+    const snapshot = await context.mutationSnapshot({ includeReplies: true, projection: "recovery", recoveryGenerationTurnKey: proof.generationTurnKey });
     const mutation = snapshot.mutation, replies = snapshot.replies, turns = snapshot.turns;
     phase = "generation-state";
     if (await context.role(options.ui.stopButtonExactName).filter({ visible: true }).count() !== 0) refuse("generation-active");
@@ -1849,14 +2070,28 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
     phase = "reply-history";
     if (replies.some(reply => !allowed.has(reply.messageId)) || replies.at(-1)?.messageId !== proof.observation.replyId) refuse("ownership-changed");
     phase = "anchor-snapshot";
-    const anchors = await context.snapshot(tab, `Router generation: ${proof.failedTurnId}`, undefined, "recovery-anchor", []);
+    const anchors = await context.snapshot(tab, `Router generation: ${proof.failedTurnId}`, undefined, "anchor", []);
     if (anchors.turns.length !== turns.length || anchors.turns.some((turn, index) => turn.turnKey !== turns[index].turnKey || turn.nestedInTurn)) refuse("snapshot-changed");
     const acceptedIndex = turns.findIndex(turn => turn.turnKey === proof.generationTurnKey);
     const abandoned = [...(proof.priorRevokedTurnIds ?? []), proof.failedTurnId], used = new Set();
     let previousMarkerIndex = -1;
     phase = "revoked-turn-order";
+    const semanticTurns = [];
+    phase = "semantic-projection";
+    for (const turn of turns) {
+        if (turn.recoveryProjectionComplete !== true || !Array.isArray(turn.recoveryMessages)
+            || turn.recoveryMessages.some(message => !["user", "assistant"].includes(message.role) || typeof message.text !== "string")
+            || turn.recoveryMessages.filter(message => message.role === "user").length !== 1) refuse("ownership-changed");
+        const user = turn.recoveryMessages.find(message => message.role === "user").text;
+        const markers = abandoned.filter(turnId => user.includes(`Router generation: ${turnId}`));
+        if (markers.length > 1) refuse("ownership-changed");
+        semanticTurns.push({ turnKey: turn.turnKey, complete: turn.complete, revokedTurnId: markers[0] ?? null,
+          messages: turn.recoveryMessages.map(message => ({ role: message.role, length: message.text.length, sha256: hash(message.text),
+            ...(message.role === "assistant" ? { replyIds: message.replyIds } : {}) })) });
+    }
     for (const turn of anchors.turns.slice(acceptedIndex + 1)) {
-      const markers = abandoned.flatMap((turnId, index) => turn.textContent.includes(`Router generation: ${turnId}`) ? [index] : []);
+      const payload = turns.find(candidate => candidate.turnKey === turn.turnKey).recoveryMessages.find(message => message.role === "user").text;
+      const markers = abandoned.flatMap((turnId, index) => payload.includes(`Router generation: ${turnId}`) ? [index] : []);
       if (markers.length !== 1 || used.has(markers[0]) || markers[0] <= previousMarkerIndex
           || markers[0] === abandoned.length - 1 && turn !== anchors.turns.at(-1)) refuse("ownership-changed");
       used.add(markers[0]); previousMarkerIndex = markers[0];
@@ -1868,8 +2103,12 @@ async function runControlledRecovery(previous, options, nodeRepl, readReplies, c
       return { pendingText: reply.recoveryTextContent };
     }
     if (hash(reply.text.slice(0, proof.observation.assistantPrefix.length)) !== proof.observation.assistantPrefix.sha256) refuse("ownership-changed");
-    return { originalTabId: proof.tabId, chatUrl: proof.chatUrl, turns: anchors.turns.map(turn => ({ turnKey: turn.turnKey, failed: turn.matchesGenerationMarker, sha256: hash(turn.textContent) })),
+    const result = { version: 2, originalTabId: proof.tabId, chatUrl: proof.chatUrl, turns: semanticTurns,
       replies: replies.map(reply => ({ messageId: reply.messageId, turnKey: reply.turnKey, sha256: hash(reply.text) })), idle: true, emptyComposer: true };
+    phase = "semantic-snapshot";
+    const reconciled = lifecycle.semanticSnapshot(result, proof, hash, options.expectedSnapshot);
+    if (!reconciled) refuse("snapshot-changed");
+    return reconciled;
   };
   const completeInspect = async () => {
     let result = await inspect();
@@ -1924,7 +2163,11 @@ function recoveryBrowserScript(options) {
         || new Set(proof.priorRevokedTurnIds).size !== proof.priorRevokedTurnIds.length || proof.priorRevokedTurnIds.includes(proof.failedTurnId))
       || !Array.isArray(options.expectedOwnerTurnIds) || !options.expectedOwnerTurnIds.includes(proof.failedTurnId)
       || typeof options.runtimeModule !== "string" || !options.runtimeModule
-      || options.inspectionOnly !== true && !/^[a-f0-9]{64}$/u.test(options.snapshotSha256 ?? "")) throw failure("Controlled recovery requires an exact completed prior checkpoint and reviewed snapshot.");
+      || options.snapshotPolicy !== "semantic-v1"
+      || options.expectedSnapshot !== undefined
+        && !reconcileControlledRecoverySnapshot(options.expectedSnapshot, proof, value => createHash("sha256").update(JSON.stringify(value)).digest("hex"), options.expectedSnapshot)
+      || options.inspectionOnly !== true && (!/^[a-f0-9]{64}$/u.test(options.snapshotSha256 ?? "")
+        || options.expectedSnapshot === undefined)) throw failure("Controlled recovery requires the current semantic snapshot contract and an exact completed prior checkpoint.");
   const [frameBegin, frameEnd] = frameParts(options.frameToken);
   const config = { ...options, ui: { ...browserDom, ...options.ui }, recoveryIdleButtonExactName: browserIdleButtonExactName, frameBegin, frameEnd };
   if (options.pluginAppId) {
@@ -1932,7 +2175,7 @@ function recoveryBrowserScript(options) {
     config.pluginChipSelector = `span[app-mention-display-name=${css(options.pluginName)}][app-mention-path=${css(`app://${options.pluginAppId}`)}][contenteditable="false"]`;
   }
   const binding = `globalThis.routerWeb_${options.bindingId}`;
-  return `await (async (previous, options) => { await (${runControlledRecovery.toString()})(previous, options, nodeRepl, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${createBrowserOperationContext.toString()}, { savedUrl: ${isSavedChatUrl.toString()}, homeUrl: ${isNormalChatHomeUrl.toString()}, pendingUrl: ${isPendingChatUrl.toString()}, observationState: ${createObservationBrowserState.toString()}, sendState: ${createSendBrowserState.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()} }); })(typeof ${binding} === "undefined" ? undefined : ${binding}, ${JSON.stringify(config)});`;
+  return `await (async (previous, options) => { await (${runControlledRecovery.toString()})(previous, options, nodeRepl, ${readBrowserReplies.toString()}, ${createBrowserView.toString()}, ${createBrowserOperationContext.toString()}, { savedUrl: ${isSavedChatUrl.toString()}, homeUrl: ${isNormalChatHomeUrl.toString()}, pendingUrl: ${isPendingChatUrl.toString()}, observationState: ${createObservationBrowserState.toString()}, sendState: ${createSendBrowserState.toString()}, navigationObserver: ${createBrowserNavigationObserver.toString()}, recoveryState: ${createRecoveryBrowserState.toString()}, browserReadiness: ${waitForBrowserReadiness.toString()}, createAllowance: ${createBrowserAllowance.toString()}, semanticSnapshot: ${reconcileControlledRecoverySnapshot.toString()} }); })(typeof ${binding} === "undefined" ? undefined : ${binding}, ${JSON.stringify(config)});`;
 }
 
 export function isBrowserContinuationCacheMiss(value) {

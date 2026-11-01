@@ -95,17 +95,22 @@ its uncertainty and no-replay rules. The first anchored observation also supplie
 current delivery evidence to Stop; before an anchor exists, cancellation can drain
 native work but cannot safely click an unowned page control.
 
-Send first verifies that the settled inline composer contains the complete intended
-prompt, allowing only CRLF or CR line endings to normalize to LF. Truncated text and transformations
-that cannot be verified stop preparation before Send and preserve the draft. An
-empty composer and enabled Send do not prove that an automatic text attachment
-contains the prompt; without payload proof that transformation cannot be sent.
-When exactly one visible `Show in text field` control and one visible
-`Remove pasted text attachment` control identify a converted paste, preparation
-may expand it back into the composer. Both attachment controls must disappear,
-and the complete restored inline text must match the intended prompt before
-adding generation authority or sending. Missing, ambiguous or partial expansion
-preserves the draft and fails preparation.
+Send verifies the complete intended prompt, allowing only CRLF or CR line endings
+to normalize to LF. It first inventories attachments outside the contenteditable;
+an empty editor alone cannot authorize overwriting an existing attachment draft.
+Ordinary inline text must match the full intended input exactly. For an automatic
+`Pasted text` conversion, the current composer form must contain exactly one known
+resource card in the observed attachment tray, with no other or unclassified
+children. Its unique enabled opener and `Remove pasted text attachment` control
+identify the card. Preparation opens its viewer through the public SDK, waits for
+the complete exact raw text, and independently reads the full rendered preview.
+The SDK then closes the unique `Close viewer` control; it does not expand or rewrite
+the attachment. Partial, changed, ambiguous or unready payloads fail before Send
+and preserve the actual draft. The same preparation deadline covers all readiness
+and viewer work. The full attachment is proved again after model selection and
+after handoff, together with fresh composer, plugin and ownership checks. Only the
+current generation marker and tool-token directive remain inline beside the chip.
+These content proofs stay private and do not enter dispatch receipts.
 Current-generation substantive assistant output or an authenticated current-token
 broker handler then acknowledges the verified input. Registration, declaration updates, Stop visibility
 and complete turn state do not. Until that proof, the active turn keeps its URL,
@@ -274,6 +279,64 @@ URL, verifies the full same-chat proof and marks that new tab for retention.
 Reopen/navigation/retention effects are recorded separately from the content
 snapshot. No fixed load delay counts as proof: coherent reads must agree.
 
+New controlled-recovery plans use `semantic-v1` snapshots scoped from the accepted
+generation forward. The approved contract binds those exact normalized user and
+assistant message bodies, turn identities and complete assistant reply hashes.
+Actual button controls and the renderer's existing excluded copy controls do not
+enter those bodies. Every accepted-generation reply and every later turn must
+remain mounted and exact. Earlier history may unmount or mount independently,
+including an older row absent from inspection. Every mounted earlier row must have
+actual assistant payload roots in that same DOM turn, each bound to globally unique
+reply IDs already present in the protected Send baseline. Unknown assistant bodies,
+unknown IDs and arbitrary user-only prefixes fail. Earlier bodies are outside the
+content snapshot: their old reply identities establish baseline membership, not
+unchanged historical text or new input, delivery or checkpoint authority. Baseline
+rows appearing after the accepted anchor remain failures. The current DOM profile
+uses exactly one `.rich-text-user-turn` user payload per turn and assistant markdown
+roots inside their scoped message-ID wrappers; it does not infer author-role
+attributes. Reasoning/status roots also require recognized same-turn reply wrappers
+and enter the complete accepted-forward payload. Missing accepted payload
+bodies, changed accepted-forward payloads and assistant output after acceptance fail
+closed. The shared snapshot predicate owns the browser, journal and maintenance checks.
+
+An armed or bounded raw-DOM journal never changes contract automatically. Revise it
+directly, retaining the original approval, receipt and uncertainty archive; restoring
+an older guard and rearming can discard compaction evidence acquired since approval.
+The runtime does not execute raw snapshot recovery. Armed or bounded raw journals
+fail before browser work or compaction with `web_recovery_snapshot_revision_required`;
+the stored uncertainty and replay guards remain unchanged. Historical raw plans and
+journals remain readable only for explicit snapshot revision or rollback. New
+controlled-recovery and native-compaction-restoration inspections, plans and
+confirmations require the same current semantic contract.
+
+```powershell
+node maintenance/web-recovery.mjs inspect-snapshot-revision 'C:\private\original-plan.json' '<original-approved-sha256>' 'C:\private\revision-request.json'
+node maintenance/web-recovery.mjs prepare-snapshot-revision 'C:\private\revision-request.json' 'C:\private\revision-receipt.txt' 'C:\private\revision-plan.json'
+```
+
+Between those commands, execute the generated inspection module in the owning
+native browser REPL and retain its exact private receipt. Raw turn hashes cannot
+prove equivalence to normalized bodies. The revised plan deliberately approves
+the fresh accepted-forward semantic bodies, while the previously approved accepted
+reply identities and full text hashes must still agree. Obtain explicit user approval
+of the new complete plan hash, then meet the same offline conditions as ordinary
+confirmation before running `confirm-snapshot-revision <revision-plan> <new-hash>`.
+The transaction binds the exact current ledger and archives its original
+bytes before changing only snapshot-contract fields. It preserves whole-input
+quarantine, revoked turns, checkpoints, native-compaction projection and all
+compaction sources. An armed journal's first subsequent request remains
+recovery-only under its already approved input policy. A bounded journal retains
+its exact existing input hashes and boundary owner; fresh input continues after
+saved-chat verification without recording another boundary or quarantining new
+messages. Strict V2 journals, including source plans whose omitted journal version
+defaults to V2, retain their strict input policy. Snapshot revision never upgrades
+that policy to whole-input quarantine. These preserving plans explicitly identify
+the original journal version, stage and input policy alongside the next-request
+disposition. The existing V3 armed plan format remains unchanged.
+`rollback-snapshot-revision <revision-plan> <new-hash>` restores that exact original
+raw-snapshot ledger only while no later evidence or state has changed; it never
+discards an advanced journal.
+
 Run from the reviewed checkout, using absolute private output paths:
 
 ```powershell
@@ -313,8 +376,8 @@ Review the exact thread, failed turn, ledger SHA, browser snapshot SHA and
 quarantined as abandoned/unconfirmed**. This can include native-model opaque
 compaction created while using the inspector. Native originals remain at their
 native owners; nothing in that prefix is decoded into Web context or claimed
-accepted. Plans prepared before this policy must be regenerated with the same
-saved request and successful inspection receipt into a new private plan file;
+accepted. Plans prepared before this policy require a fresh current semantic
+inspection and a new private plan file;
 keep the old plan. Obtain the user's explicit approval
 of this plan's `confirmationSha256` before confirming; general approval to add
 recovery support does not authorize abandoning an actual attempt. Then fully

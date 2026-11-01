@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { discoverBrowserExecutor, discoverBrowserOpener, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
+import { discoverBrowserExecutor, discoverBrowserOpener, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss, reconcileControlledRecoverySnapshot } from "./web-browser.mjs";
 import { savedChatRecoveryError } from "./web-browser-diagnostics.mjs";
 import { validWebConversationGuard, validNativeCompactionProjection, webConversationHistory as conversationHistory } from "./web-conversation-guard.mjs";
 import { webModelSelection } from "./web-models.mjs";
@@ -78,6 +78,8 @@ const validQuarantine = value => value.inputPolicy === undefined
         && value.inputHashes[item.index] === digest({ type: opaqueMarkerType, itemSha256: item.itemSha256 })));
 const validRecovery = value => record(value) && ["armed", "bounded", "continued"].includes(value.stage)
   && validQuarantine(value)
+  && (value.snapshotPolicy === undefined ? value.snapshot === undefined : value.snapshotPolicy === "semantic-v1"
+    && reconcileControlledRecoverySnapshot(value.snapshot, value.proof, digest, value.snapshot) !== undefined && digest(value.snapshot) === value.snapshotSha256)
   && sha256(value.ledgerSha256) && sha256(value.snapshotSha256) && sha256(value.confirmationSha256) && record(value.proof)
   && isSavedChatUrl(value.proof.chatUrl) && nonempty(value.proof.tabId) && uuid.test(value.proof.failedTurnId ?? "")
   && uuid.test(value.proof.generationTurnKey ?? "") && messageIds(value.proof.sendBaselineReplyIds) && messageIds(value.proof.generationReplyIds)
@@ -650,6 +652,9 @@ export function createInAppWebRuntime({
     if (stored.status !== "present" || !stateIsProtected(filePath) || !validWebConversation(stored.value, threadId)) {
       throw fail("The saved Web conversation record is unreadable or invalid; refusing to create another chat.", "web_conversation_state");
     }
+    if (["armed", "bounded"].includes(stored.value.recovery?.stage) && stored.value.recovery.snapshotPolicy !== "semantic-v1") {
+      throw fail("This saved recovery journal uses a retired raw snapshot. Explicitly review and confirm a semantic snapshot revision before resuming; its uncertainty and replay guards remain unchanged.", "web_recovery_snapshot_revision_required");
+    }
     const value = { ...stored.value };
     delete value.sendBaseline;
     if (value.observation) {
@@ -1030,7 +1035,8 @@ export function createInAppWebRuntime({
         ...(operation === "continue" && turn.interruptedTurnId ? { interruptedTurnId: turn.interruptedTurnId } : {}),
         ...(operation === "send" ? { prompt: turn.prompt, turnToken: turn.token } : {}),
         ...(operation === "recover" ? { recoveryProof: conversation.recovery.proof,
-          snapshotSha256: conversation.recovery.snapshotSha256, expectedOwnerTurnIds: [...conversation.browserOwnerTurnIds] } : {}),
+          snapshotSha256: conversation.recovery.snapshotSha256, expectedOwnerTurnIds: [...conversation.browserOwnerTurnIds],
+          snapshotPolicy: "semantic-v1", expectedSnapshot: conversation.recovery.snapshot } : {}),
         ...(operation === "observe" ? { observationWait: { url: services.mcp.observationUrl(turn.token,
           turn.pendingDelivery ? turn.inputObservationRevision ?? broker.revision(turn.token) : broker.revision(turn.token)) },
           ...(turn.pendingDelivery ? { inputAcknowledgementPending: true } : {}) } : {}),

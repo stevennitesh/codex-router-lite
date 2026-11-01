@@ -200,6 +200,7 @@ export const browserDom = Object.freeze({
   startNewChatButtonName: "Start new chat",
   messageSelector: '[data-chatgpt-selection-message-id]', messageIdAttribute: "data-chatgpt-selection-message-id",
   assistantSelector: '[data-markdown-text-style="assistant-message"]', turnSelector: '[data-turn-key]', turnKeyAttribute: "data-turn-key",
+  userMessageSelector: ".rich-text-user-turn",
   streamingStatusSelector: '[data-streaming-response-status]', reasoningSelector: '[data-testid^="cot-v5"]',
   turnStateSelector: '[data-talvt-turn-state]', turnStateAttribute: "data-talvt-turn-state", completeTurnState: "complete",
   labelSelector: '[aria-label]', labelAttribute: "aria-label", markdownCopyAttribute: "data-markdown-copy",
@@ -209,6 +210,8 @@ export const browserDom = Object.freeze({
   codeBlockCopyValue: "code-block", excludedCopyValue: "exclude", codeSelector: "code",
   codeEditorSelector: ".cm-content[data-language]", codeLineClass: "cm-line",
   contentEditableAttribute: "contenteditable", familySelector: '[role="menuitemradio"]', checkedAttribute: "aria-checked",
+  pastedTextLabel: "Pasted text", removePastedTextName: "Remove pasted text attachment", closeTextViewerName: "Close viewer",
+  pastedTextPreviewSelector: "div.whitespace-pre-wrap.select-text",
   powerValueAttribute: "aria-valuenow", powerMinimumAttribute: "aria-valuemin", powerMaximumAttribute: "aria-valuemax",
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',
 });

@@ -38,7 +38,8 @@ const { SseFrameBuffer, sseFrameFields } = await import("../src/sse-framing.mjs"
 const { decodeCompaction } = await import("../src/compaction-checkpoint.mjs");
 const { webCompactOutput } = await import("../src/web-response.mjs");
 const { privateFileIsProtected } = await import("../src/file-security.mjs");
-const { inspectControlledWebRecovery, prepareControlledWebRecovery, confirmControlledWebRecovery, restoreControlledWebRecoveryGuard } = await import("../maintenance/web-recovery.mjs");
+const { inspectControlledWebRecovery, prepareControlledWebRecovery, confirmControlledWebRecovery, restoreControlledWebRecoveryGuard,
+  inspectControlledWebRecoverySnapshotRevision, prepareControlledWebRecoverySnapshotRevision, confirmControlledWebRecoverySnapshotRevision } = await import("../maintenance/web-recovery.mjs");
 const { snapshotWebConversationLedgers, assertWebConversationLedgersUnchanged } = await import("../src/web-maintenance-proof.mjs");
 const { safeLocalHttpErrorPayload } = await import("../src/http-utils.mjs");
 
@@ -1446,6 +1447,164 @@ test("controlled recovery can abandon a repeated failure before fresh acceptance
   assert.equal(h.browser.ui.newTabs, 1); assert.equal(h.browser.ui.navigations, 1);
 });
 
+test("semantic controlled recovery tolerates renderer chrome and wrappers while refusing changed or incomplete authored bodies", async t => {
+  for (const [name, change, succeeds] of [
+    ["changed renderer controls and layout", ui => { ui.recoveryChrome = "Different renderer controls"; ui.recoveryWrapUser = true; }, true],
+    ["changed accepted user payload", ui => { ui.turns[0].prompt += " changed accepted payload"; }, false],
+    ["partial accepted user projection", ui => { ui.turns[0].omitUserRoot = true; }, false],
+  ]) await t.test(name, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const prepared = await fixture.prepare();
+    assert.equal(prepared.plan.snapshotPolicy, "semantic-v1");
+    await confirmControlledWebRecovery(prepared.plan, prepared.confirmationSha256, options);
+    change(h.browser.ui);
+    h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record only the recovery boundary");
+    const response = await h.request(), beforeSends = h.browser.ui.sends.length;
+    if (succeeds) {
+      const notice = await h.answerBrowser(response.output[0]);
+      assert.match(notice.output[0].content[0].text, /recovery boundary recorded/u);
+      assert.equal(JSON.parse(readFileSync(h.stateFile)).recovery.stage, "bounded");
+    } else {
+      await assert.rejects(h.executeBrowser(response.output[0]), /snapshot-changed|ownership-changed/u);
+      assert.equal(JSON.parse(readFileSync(h.stateFile)).recovery.stage, "armed");
+      assert.equal(JSON.parse(readFileSync(h.stateFile)).uncertainSend, true);
+    }
+    assert.equal(h.browser.ui.sends.length, beforeSends);
+  });
+});
+
+test("semantic recovery survives actual DOM baseline unmounting and a previously uninspected known baseline remount", async t => {
+  const fixture = await controlledRecoveryFixture(t), { h, options } = fixture, ui = h.browser.ui;
+  const olderTurnKey = "66002233-4455-6677-8899-aabbccddeeff", olderReplyId = "77002233-4455-6677-8899-aabbccddeeff";
+  const unseenTurnKey = "88002233-4455-6677-8899-aabbccddeeff", unseenReplyId = "99002233-4455-6677-8899-aabbccddeeff";
+  for (const turn of ui.turns) turn.baselineIds.push(olderReplyId);
+  ui.turns.unshift({ key: olderTurnKey, prompt: "Known earlier native generation", baselineIds: [] });
+  ui.replyIds = [olderReplyId, ...ui.texts.map((_, index) => messageId(index))];
+  ui.texts.unshift("Known earlier baseline answer");
+  const ledger = JSON.parse(readFileSync(h.stateFile));
+  ledger.sendBaselineReplyIds.push(olderReplyId, unseenReplyId); ledger.sendBaseline = ledger.sendBaselineReplyIds.length;
+  ledger.observation.replyCount = ledger.sendBaselineReplyIds.length + ledger.generationReplyIds.length;
+  writeFileSync(h.stateFile, JSON.stringify(ledger)); await h.restartRuntime();
+  const inspection = inspectControlledWebRecovery(threadId, options);
+  const receipt = await h.executeBrowser({ type: "function_call", namespace: "mcp__node_repl", name: "js", arguments: JSON.stringify({ code: inspection.program }) });
+  const prepared = prepareControlledWebRecovery(inspection.request, receipt, options);
+  assert.equal(prepared.plan.snapshot.turns[0].turnKey, ledger.generationTurnKey);
+  assert.equal(prepared.plan.snapshot.turns.some(turn => turn.turnKey === olderTurnKey), false);
+  await confirmControlledWebRecovery(prepared.plan, prepared.confirmationSha256, options);
+  ui.turns.shift(); ui.texts.shift(); ui.replyIds.shift();
+  h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record the recovery boundary after history virtualization");
+  const beforeSends = ui.sends.length, notice = await h.answerBrowser((await h.request()).output[0]);
+  assert.match(notice.output[0].content[0].text, /recovery boundary recorded/u);
+  const bounded = JSON.parse(readFileSync(h.stateFile));
+  assert.equal(bounded.recovery.stage, "bounded");
+  assert.equal(bounded.recovery.snapshot.turns[0].turnKey, ledger.generationTurnKey);
+  assert.equal(ui.sends.length, beforeSends);
+  h.append(notice.output[0]); await h.restartRuntime(); h.loseKernel();
+  for (const turn of ui.turns) turn.baselineIds.push(unseenReplyId);
+  ui.turns.unshift({ key: unseenTurnKey, prompt: "An older historical turn absent from inspection", baselineIds: [] });
+  ui.texts.unshift("Known earlier reply mounted after restart"); ui.replyIds.unshift(unseenReplyId);
+  const partialHistoricalCode = domElement("div", { "data-markdown-text-style": "assistant-message" },
+    domElement("div", { "data-markdown-copy": "code-block" }, domElement("div", { class: "cm-content", "data-language": "javascript" },
+      domElement("div", { class: "virtualized-spacer" }))));
+  ui.replyElements = [replyElement(partialHistoricalCode, unseenReplyId), replyElement(ui.texts[1], ui.replyIds[1])];
+  ui.recoveryChrome = "Changed historical renderer controls"; ui.recoveryWrapUser = true;
+  h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Fresh instruction after baseline remount");
+  const continued = await h.answerBrowser((await h.request()).output[0]);
+  assert.equal(JSON.parse(continued.output[0].arguments).title, "ChatGPT Web: continue");
+  assert.equal(ui.sends.length, beforeSends, "Controlled recovery accepts known baseline identities without parsing old virtualized code.");
+  ui.replyElements = undefined; // Historical renderer hydration is independent of the accepted-forward recovery proof.
+  const { call } = await h.toObserve();
+  assert.equal(ui.sends.length, beforeSends + 1);
+  assert.match(ui.sends.at(-1), /Fresh instruction after baseline remount/u);
+  assert.doesNotMatch(ui.sends.at(-1), /older historical turn absent|Known earlier reply mounted/u);
+  ui.replyIds.push(messageId(99));
+  await h.completeAnswer(call, "Fresh accepted answer after baseline remount.");
+});
+
+test("retired armed and bounded raw journals require explicit snapshot revision before browser work or compaction", async t => {
+  for (const stage of ["armed", "bounded"]) await t.test(stage, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const prepared = await fixture.prepare();
+    await confirmControlledWebRecovery(prepared.plan, prepared.confirmationSha256, options);
+    if (stage === "bounded") {
+      h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record the original recovery-only boundary");
+      const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    }
+    const historical = JSON.parse(readFileSync(h.stateFile));
+    delete historical.recovery.snapshotPolicy; delete historical.recovery.snapshot;
+    historical.recovery.snapshotSha256 = createHash("sha256").update("retained historical raw snapshot").digest("hex");
+    assert.equal(validWebConversation(historical, threadId), true, "Historical evidence remains parseable for explicit maintenance.");
+    writeFileSync(h.stateFile, JSON.stringify(historical)); const original = readFileSync(h.stateFile);
+    await h.restartRuntime(); h.loseKernel();
+    h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "Do not resume a retired snapshot implicitly");
+    const before = { sends: h.browser.ui.sends.length, tabs: h.browser.ui.newTabs, navigations: h.browser.ui.navigations };
+    await assert.rejects(h.request(), error => error.code === "web_recovery_snapshot_revision_required");
+    await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() },
+      { compact: true, headers: headers("44002233-4455-6677-8899-aabbccddeeff") }), error => error.code === "web_recovery_snapshot_revision_required");
+    assert.deepEqual(readFileSync(h.stateFile), original);
+    assert.deepEqual({ sends: h.browser.ui.sends.length, tabs: h.browser.ui.newTabs, navigations: h.browser.ui.navigations }, before);
+  });
+});
+
+test("explicit legacy snapshot migration preserves strict V2 and bounded replay boundaries through fresh continuation", async t => {
+  for (const [journalVersion, stage, unsentTail = false] of [[2, "armed"], [2, "bounded"], [3, "bounded"], [2, "bounded", true]]) await t.test(`V${journalVersion} ${stage}, unsent tail ${unsentTail}`, async t => {
+    const fixture = await controlledRecoveryFixture(t, { executed: false }), { h, options } = fixture;
+    const approved = await fixture.prepare();
+    await confirmControlledWebRecovery(approved.plan, approved.confirmationSha256, options);
+    if (stage === "bounded") {
+      h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Original recorded recovery-only boundary");
+      const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    }
+    const fingerprint = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const sourcePlan = structuredClone(approved.plan);
+    delete sourcePlan.snapshotPolicy; delete sourcePlan.request.snapshotPolicy;
+    sourcePlan.snapshot = { originalTabId: sourcePlan.snapshot.originalTabId, chatUrl: sourcePlan.snapshot.chatUrl,
+      turns: sourcePlan.snapshot.turns.map(turn => ({ turnKey: turn.turnKey, failed: false, sha256: fingerprint(turn) })),
+      replies: sourcePlan.snapshot.replies, idle: true, emptyComposer: true };
+    sourcePlan.snapshotSha256 = fingerprint(sourcePlan.snapshot);
+    if (journalVersion === 2) { delete sourcePlan.journalVersion; delete sourcePlan.inputPolicy; }
+    const sourceConfirmation = fingerprint(sourcePlan), historical = JSON.parse(readFileSync(h.stateFile));
+    historical.version = journalVersion;
+    delete historical.recovery.snapshotPolicy; delete historical.recovery.snapshot;
+    historical.recovery.confirmationSha256 = sourceConfirmation; historical.recovery.snapshotSha256 = sourcePlan.snapshotSha256;
+    if (journalVersion === 2) for (const key of ["inputPolicy", "opaqueItems", "boundaryOwner", "compactionLineage", "compactionSources"]) delete historical.recovery[key];
+    if (unsentTail) {
+      h.append({ role: "user", content: "FRESH UNSENT NATIVE TAIL RETAINED" });
+      const unsentTurn = "66002233-4455-6677-8899-aabbccddeeff";
+      historical.lastTurn = { turnId: unsentTurn, sendState: "unsent", completed: false }; historical.browserOwnerTurnIds.push(unsentTurn);
+    }
+    assert.equal(validWebConversation(historical, threadId), true);
+    writeFileSync(h.stateFile, JSON.stringify(historical)); await h.restartRuntime(); h.loseKernel();
+    const inspection = inspectControlledWebRecoverySnapshotRevision(sourcePlan, sourceConfirmation, options);
+    const receipt = await h.executeBrowser({ type: "function_call", namespace: "mcp__node_repl", name: "js", arguments: JSON.stringify({ code: inspection.program }) });
+    const revised = prepareControlledWebRecoverySnapshotRevision(inspection.request, receipt, options);
+    await confirmControlledWebRecoverySnapshotRevision(revised.plan, revised.confirmationSha256, options);
+    const migrated = JSON.parse(readFileSync(h.stateFile)), sendsBefore = h.browser.ui.sends.length;
+    assert.equal(migrated.recovery.stage, stage); assert.equal(migrated.recovery.inputPolicy, historical.recovery.inputPolicy);
+    assert.deepEqual(migrated.recovery.inputHashes, historical.recovery.inputHashes);
+    if (stage === "armed") {
+      h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "New recovery-only request under the original strict policy");
+      const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+      assert.match(notice.output[0].content[0].text, /recovery boundary recorded/u);
+      assert.equal(h.browser.ui.sends.length, sendsBefore);
+    }
+    const recorded = structuredClone(JSON.parse(readFileSync(h.stateFile)).recovery.inputHashes);
+    await h.restartRuntime(); h.loseKernel();
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "FRESH AFTER SNAPSHOT-ONLY MIGRATION");
+    const resumed = await h.answerBrowser((await h.request()).output[0]);
+    assert.equal(JSON.parse(resumed.output[0].arguments).title, "ChatGPT Web: continue", "An existing boundary is revalidated, never recorded a second time.");
+    assert.deepEqual(JSON.parse(readFileSync(h.stateFile)).recovery.inputHashes, recorded);
+    const { call } = await h.toObserve();
+    assert.equal(h.browser.ui.sends.length, sendsBefore + 1);
+    assert.match(h.browser.ui.sends.at(-1), /FRESH AFTER SNAPSHOT-ONLY MIGRATION/u);
+    if (unsentTail) assert.match(h.browser.ui.sends.at(-1), /FRESH UNSENT NATIVE TAIL RETAINED/u);
+    assert.doesNotMatch(h.browser.ui.sends.at(-1), /FAILED PRIVATE PROMPT|Original recorded recovery-only boundary|New recovery-only request under/u);
+    await h.completeAnswer(call, "Fresh input accepted without changing the legacy input policy.");
+    const accepted = JSON.parse(readFileSync(h.stateFile));
+    assert.equal(accepted.recovery.stage, "continued"); assert.equal(accepted.recovery.inputPolicy, historical.recovery.inputPolicy);
+  });
+});
+
 test("the generated recovery inspection module imports with code generation from strings disabled and an explicit nodeRepl argument", async t => {
   const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
   const directory = path.dirname(h.stateFile), runtimeFile = path.join(directory, "inspection-browser-fixture.mjs");
@@ -1481,7 +1640,10 @@ function fakeBrowser() {
     if (!root) {
       const roots = ui.turns.map((turn, index) => domElement("section", { [browserDom.turnKeyAttribute]: turn.key },
         domElement("div", { [browserDom.turnStateAttribute]: index < ui.turns.length - 1 || ui.complete ? "complete" : "streaming" },
-          domElement("div", {}, domText(turn.prompt)))));
+          domElement("div", turn.omitUserRoot ? {} : { class: "rich-text-user-turn MarkdownRoot-fixture" },
+            ...(ui.recoveryWrapUser ? [domElement("div", {}, domElement("p", {}, domElement("span", {}, domText(turn.prompt))))]
+              : [domElement("p", { class: "Paragraph-fixture" }, domElement("span", {}, domText(turn.prompt)))])),
+          ...(ui.recoveryChrome ? [control("button", ui.recoveryChrome)] : []))));
       const leadingUnowned = [], trailingUnowned = [];
       let hasOwnedReply = false;
       const elements = ui.replyElements ?? ui.texts.map((value, index) => replyElement(value, ui.replyIds ? ui.replyIds[index] : messageId(index)));
@@ -1526,6 +1688,7 @@ function fakeBrowser() {
       chip.getBoundingClientRect = () => ({ width: 32, height: 32 });
       composer.childNodes.push(chip); composer.children.push(chip); chip.parentElement = composer;
     }
+    const composerForm = domElement("form", {}, domElement("div", { class: "ComposerLayoutAttachments-bG080e" }), composer);
     const controls = [
       control("button", browserDom.modelButtonName),
       control("button", browserDom.temporaryButtonName, ui.normalHome),
@@ -1533,7 +1696,7 @@ function fakeBrowser() {
       ...Array.from({ length: ui.idleCount ?? (ui.stop && !ui.full ? 0 : 1) }, () => control("button", "Start Voice", ui.idleVisible ?? (!ui.stop || ui.full))),
       ...(ui.temporaryControls ? [control("button", "Turn off temporary chat"), control("h2", "Temporary chat")] : []),
       ...(ui.full ? [control("div", browserDom.conversationFullText), control("button", "Start new chat")] : []),
-      ...(!ui.observationRoot ? [composer] : []),
+      ...(!ui.observationRoot ? [composerForm] : []),
     ];
     const body = domElement("body", {}, root, ...controls);
     body.ownerDocument = { body, URL: ui.url, querySelectorAll: selector => body.querySelectorAll(selector),
@@ -1541,7 +1704,10 @@ function fakeBrowser() {
     const order = [];
     const visit = element => { order.push(element); element.children.forEach(visit); };
     visit(body);
-    for (const element of order) element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+    for (const element of order) {
+      element.ownerDocument = body.ownerDocument;
+      element.getBoundingClientRect ??= () => ({ width: 32, height: 32 });
+    }
     return { body, order };
   };
   const locator = (kind, name, visibleOnly = false, filters = [], offset, scope) => {

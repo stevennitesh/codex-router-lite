@@ -16,7 +16,9 @@ export function domElement(tag, attributes = {}, ...children) {
         }
         const requiredTag = part.match(/^[A-Za-z][A-Za-z0-9-]*/u)?.[0];
         const requiredAttributes = Array.from(part.matchAll(/\[([\w-]+)(?:(\^?=)"([^"]*)")?\]/gu));
-        return Boolean(requiredTag || requiredAttributes.length) && (!requiredTag || requiredTag.toUpperCase() === this.tagName)
+        const requiredClasses = Array.from(part.replace(/\[[^\]]*\]/gu, "").matchAll(/\.([A-Za-z_-][A-Za-z0-9_-]*)/gu), match => match[1]);
+        return Boolean(requiredTag || requiredAttributes.length || requiredClasses.length) && (!requiredTag || requiredTag.toUpperCase() === this.tagName)
+          && requiredClasses.every(name => (attributes.class ?? "").split(/\s+/u).includes(name))
           && requiredAttributes.every(match => match[2] === undefined ? attributes[match[1]] !== undefined
             : match[2] === "^=" ? attributes[match[1]]?.startsWith(match[3]) : attributes[match[1]] === match[3]);
       });
