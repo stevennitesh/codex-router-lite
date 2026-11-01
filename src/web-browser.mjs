@@ -540,11 +540,14 @@ function createBrowserView(state, options, replyReader, savedUrl, homeUrl, pendi
     ]);
     return banner && button;
   };
+  // Recovery can inspect a large saved DOM after a cold SDK acquisition.
+  // Its normal-mode proof is read-only; observation and Stop keep their short
+  // callbacks. A longer allowance never substitutes for the same page proof.
   const normalSnapshot = async (tab = state.tab) => createObservationState(tab, { ui, generationTurnKey: state.generationTurnKey ?? "pending" })
     .indicatorBody.evaluateAll(elements => {
       const body = elements[0];
       return elements.length === 1 && body.ownerDocument?.body === body ? { url: body.ownerDocument.URL } : null;
-    }, { normalMode: true }, { timeoutMs: 1000 });
+    }, { normalMode: true }, { timeoutMs: options.operation === "continue" && options.recovery ? 5000 : 1000 });
   const temporaryInactive = async (tab = state.tab) => (await normalSnapshot(tab)) !== null;
   const normal = async (value) => {
     const observed = await normalSnapshot();

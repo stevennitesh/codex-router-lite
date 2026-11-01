@@ -175,7 +175,12 @@ binding still owns a tab, ordinary open refuses it rather than creating another
 tab or changing its draft. This does not replace an established saved conversation.
 
 Native REPL handles are a cache: Interrupt or restart can remove them while the
-original tab survives. Continuation can restore the binding on that exact tab
+original tab survives. Recovery allows five seconds for each read-only
+normal-mode proof. Large saved
+pages can exceed the ordinary one-second read allowance during cold acquisition.
+The normal-mode predicate and subsequent checkpoint checks are unchanged; ordinary
+observation and Stop retain their existing short deadlines.
+Continuation can restore the binding on that exact tab
 at its recorded saved URL without opening or navigating a tab. If the original
 tab is absent, recovery may reacquire one unique saved-URL match or reopen the
 recorded chat in that Codex conversation's browser. Every path requires the

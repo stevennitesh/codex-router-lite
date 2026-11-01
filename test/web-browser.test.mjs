@@ -915,7 +915,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       assert(Number.isInteger(timeoutMs) && timeoutMs > 0);
       if (argument?.normalMode) {
         ui.normalReads = (ui.normalReads ?? 0) + 1;
-        await ui.onNormalRead?.();
+        await ui.onNormalRead?.({ timeoutMs });
       } else {
         ui.stopReads += 1;
         await ui.onStopRead?.();
@@ -3767,6 +3767,35 @@ test("a rendered recovery checkpoint with a wrong stable digest fails immediatel
   f.ui.onGoto = () => { f.ui.messageRoot = domElement("main", {}, observedTurn(f.recovery.generationTurnKey, "Request", [assistantMessage(0, "Different checkpoint content.")])); };
   await assert.rejects(f.run("continue", { turnId: "next-turn", recovery: f.recovery }), /reply-prefix-mismatch/);
   assert.equal(f.ui.attachmentWaits, 1); assert.equal(f.ui.waitedMs, 0); assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.reloads, 0);
+});
+
+test("saved-chat recovery permits a slow normal-mode proof without relaxing checkpoint validation", async () => {
+  for (const changed of [false, true]) {
+    const f = await recoverableFixture(); f.loseBinding();
+    const reads = [];
+    f.ui.onNormalRead = ({ timeoutMs }) => {
+      reads.push(timeoutMs);
+      if (timeoutMs < 1100) throw new Error("CDP operation exceeded its deadline before command dispatch");
+    };
+    if (changed) f.ui.texts = ["Changed saved reply that exceeds the recorded prefix length."];
+    const continuation = f.run("continue", { turnId: "next-turn", recovery: f.recovery });
+    if (changed) await assert.rejects(continuation, /reply-prefix-mismatch/u);
+    else {
+      const result = await continuation;
+      assert.equal(result.recovered, true);
+      assert.equal(result.assistantText, f.text);
+    }
+    assert.ok(reads.includes(5000));
+    assert.equal(f.ui.sendClicks, 1); assert.equal(f.ui.stopClicks, 0);
+    assert.equal(f.ui.newTabs, 1); assert.equal(f.ui.reloads, 0);
+  }
+  const ordinary = fixture({ fastTimers: true }); await ordinary.ready();
+  const reads = [];
+  ordinary.ui.onNormalRead = ({ timeoutMs }) => reads.push(timeoutMs);
+  await ordinary.run("send", { ...plugin, prompt: "Ordinary request" });
+  await ordinary.run("observe");
+  assert.ok(reads.length > 0);
+  assert.ok(reads.every(timeoutMs => timeoutMs === 1000), "Ordinary reads retain their short allowance.");
 });
 
 test("a missing same-session browser yields only a no-action panel request and full checkpoint recovery resumes after native opening", async () => {
