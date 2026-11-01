@@ -5,7 +5,8 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSyn
 import path from "node:path";
 import { assertControlledRecoveryOffline, canonicalNativeCompactionSource, inspectNativeCompactionRestoration,
   prepareNativeCompactionRestoration, inspectNativeCompactionRestorationPlan, applyNativeCompactionRestoration,
-  rollbackNativeCompactionRestoration, readCanonicalNativeSource } from "../maintenance/web-recovery.mjs";
+  rollbackNativeCompactionRestoration, readCanonicalNativeSource, inspectControlledWebRecovery, prepareControlledWebRecovery,
+  confirmControlledWebRecovery, restoreControlledWebRecoveryGuard } from "../maintenance/web-recovery.mjs";
 import { validWebConversation } from "../src/web-runtime.mjs";
 import { nativeCompactionWitnessReference, readNativeCompactionWitness } from "../src/web-native-compaction.mjs";
 
@@ -118,6 +119,23 @@ test("canonical restoration preserves duplicates, actual results and configurati
   assert.deepEqual(witness.source, canonical.source);
   await rollbackNativeCompactionRestoration(prepared.plan, prepared.confirmationSha256, f.options);
   assert.equal(hash(readFileSync(f.ledgerPath)), hash(original));
+});
+
+test("controlled abandonment preserves a restored native-compaction guard and rolls back to its exact original bytes", async t => {
+  const f = restorationFixture(t), prepared = f.prepare();
+  await applyNativeCompactionRestoration(prepared.plan, prepared.confirmationSha256, f.options);
+  const value = JSON.parse(readFileSync(f.ledgerPath)); value.uncertainSend = true; value.lastTurn.sendState = "uncertain";
+  writeFileSync(f.ledgerPath, JSON.stringify(value)); const original = readFileSync(f.ledgerPath);
+  const { request } = inspectControlledWebRecovery(restorationThread, f.options);
+  const recovery = prepareControlledWebRecovery(request, f.receipt(request), f.options);
+  await confirmControlledWebRecovery(recovery.plan, recovery.confirmationSha256, f.options);
+  const armed = JSON.parse(readFileSync(f.ledgerPath));
+  assert.equal(validWebConversation(armed, restorationThread), true);
+  assert.equal(armed.version, 4); assert.equal(armed.priorVersion, 3); assert.equal(armed.recovery.stage, "armed");
+  assert.deepEqual(armed.nativeCompactionProjection, value.nativeCompactionProjection);
+  assert.deepEqual(armed.checkpoint, value.checkpoint); assert.equal(armed.uncertainSend, true);
+  await restoreControlledWebRecoveryGuard(recovery.plan, recovery.confirmationSha256, f.options);
+  assert.deepEqual(readFileSync(f.ledgerPath), original);
 });
 
 test("read-only inspection append is retained at preparation; later source change blocks application", async t => {

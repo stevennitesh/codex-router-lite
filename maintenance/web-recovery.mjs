@@ -169,10 +169,13 @@ export async function confirmControlledWebRecovery(plan, confirmationSha256, opt
     if (hash(readProtected(archive, options.isPrivate)) !== plan.request.ledgerSha256) throw failure("The original ledger archive could not be verified.");
     await (options.assertOffline ?? assertControlledRecoveryOffline)();
     if (hash(readProtected(current.file, options.isPrivate)) !== plan.request.ledgerSha256) throw failure("The ledger changed before recovery publication.");
-    const next = { ...current.value, version: plan.journalVersion, recovery: { stage: "armed", ledgerSha256: plan.request.ledgerSha256, confirmationSha256,
+    let next = { ...current.value, version: plan.journalVersion, priorVersion: undefined, nativeCompactionProjection: undefined,
+      recovery: { stage: "armed", ledgerSha256: plan.request.ledgerSha256, confirmationSha256,
       inputPolicy: WEB_RECOVERY_INPUT_POLICY,
       revokedTurnIds: [...new Set([...(current.value.recovery?.revokedTurnIds ?? []), plan.request.failedTurnId])],
       snapshotSha256: plan.snapshotSha256, inspectionTabId: plan.inspectionTabId, inspectionEffects: plan.inspectionEffects, proof: plan.request.proof } };
+    if (current.value.nativeCompactionProjection) next = guardedWebConversation(next, {
+      nativeCompactionProjection: current.value.nativeCompactionProjection });
     if (!validWebConversation(next, next.threadId)) throw failure("The armed recovery record is invalid.");
     write(current.file, `${JSON.stringify(next, null, 2)}\n`);
     if (hash(readProtected(current.file, options.isPrivate)) !== hash(`${JSON.stringify(next, null, 2)}\n`)) throw failure("Recovery publication readback failed; retain original archive and inspect before retrying.");
@@ -193,9 +196,10 @@ export async function restoreControlledWebRecoveryGuard(plan, confirmationSha256
     const file = path.join(stateDir, "web-in-app", "conversations", `${threadId}.json`), bytes = readProtected(file, options.isPrivate), value = json(bytes);
     const archive = `${file}.abandoned-${plan.request.failedTurnId}-${plan.request.ledgerSha256}.original`;
     const original = readProtected(archive, options.isPrivate), prior = json(original);
-    if (!validWebConversation(value, threadId) || value.version !== (plan.journalVersion ?? 2) || value.recovery.confirmationSha256 !== confirmationSha256
+    if (!validWebConversation(value, threadId) || (value.version === 4 ? value.priorVersion : value.version) !== (plan.journalVersion ?? 2) || value.recovery.confirmationSha256 !== confirmationSha256
         || hash(original) !== plan.request.ledgerSha256 || !validWebConversation(prior, threadId) || prior.uncertainSend !== true
         || hash(value.checkpoint) !== hash(prior.checkpoint) || value.generationTurnKey !== prior.generationTurnKey
+        || JSON.stringify(value.nativeCompactionProjection) !== JSON.stringify(prior.nativeCompactionProjection)
         || value.unresolvedCoding.length || value.lastTurn.sendState !== "abandoned" && value.lastTurn.turnId !== plan.request.failedTurnId) throw failure("Recovery advanced or changed; restoring an old guard would lose current evidence.");
     const retained = `${file}.guard-restore-${hash(bytes)}.original`;
     if (readOptionalProtected(retained, options.isPrivate) === undefined) write(retained, bytes);
