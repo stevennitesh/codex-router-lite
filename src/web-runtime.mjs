@@ -8,6 +8,7 @@ import { browserObservationIdleComplete, browserObservationOwnershipLost } from 
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
 import { decodeCompaction, renderCompactionValue } from "./compaction-checkpoint.mjs";
 import { readJsonFile } from "./file-probe.mjs";
+import { safeLocalHttpError } from "./http-utils.mjs";
 import { privateFileIsProtected, writePrivateJsonAsync } from "./file-security.mjs";
 import { STATE_DIR } from "./paths.mjs";
 import { startWebMcp } from "./web-mcp.mjs";
@@ -321,6 +322,101 @@ function isCurrentNativeContext(item, owner) {
 const nativeContextHash = item => digest({ type: item.type, role: item.role, content: item.content,
   internal_chat_message_metadata_passthrough: item.internal_chat_message_metadata_passthrough });
 const matchesNativeContextProof = (prefix, proof) => !!proof && digest(prefix.filter(item => isCurrentNativeContext(item, { turnId: proof.turnId })).map(nativeContextHash)) === digest(proof.contextHashes);
+
+const contextDiagnosticMarker = "ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC";
+const diagnosticCount = value => Math.min(Math.max(0, value), 10000);
+const diagnosticShape = value => value === undefined ? "missing" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+const diagnosticKeys = (value, allowed) => ({ keys: record(value) ? allowed.filter(key => Object.hasOwn(value, key)) : [],
+  otherKeysPresent: record(value) && Object.keys(value).some(key => !allowed.includes(key)) });
+function contextItemDiagnostic(item, owner) {
+  const metadata = item?.internal_chat_message_metadata_passthrough, parts = Array.isArray(item?.content) ? item.content : [];
+  const kinds = Array.isArray(metadata?.content_item_kinds) ? metadata.content_item_kinds : [];
+  const evidence = Array.isArray(metadata?.content_item_metadata) ? metadata.content_item_metadata : [];
+  return {
+    type: item?.type === undefined ? "missing" : ["message", "compaction", "configuration_update", ...callTypes, ...outputTypes].includes(item.type) ? item.type : "other",
+    role: item?.role === undefined ? "missing" : ["developer", "system", "user", "assistant"].includes(item.role) ? item.role : "other",
+    typeShape: diagnosticShape(item?.type), idShape: diagnosticShape(item?.id), idValid: item?.id === undefined || nonempty(item.id),
+    status: item?.status === undefined ? "missing" : ["in_progress", "completed", "incomplete"].includes(item.status) ? item.status : "other",
+    phase: item?.phase === undefined ? "missing" : ["analysis", "commentary", "final_answer"].includes(item.phase) ? item.phase : "other",
+    ...diagnosticKeys(item, ["type", "id", "role", "content", "internal_chat_message_metadata_passthrough", "status", "phase", "call_id", "name", "namespace", "output", "arguments", "input", "execution", "tools", "encrypted_content"]),
+    contentShape: diagnosticShape(item?.content), partCount: Array.isArray(item?.content) ? diagnosticCount(parts.length) : null, partsTruncated: parts.length > 4,
+    metadataShape: diagnosticShape(metadata), metadataKeys: diagnosticKeys(metadata, ["turn_id", "create_time", "content_item_kinds", "content_item_metadata"]),
+    ownerMatches: typeof metadata?.turn_id === "string" && metadata.turn_id.toLowerCase() === owner?.turnId,
+    turnIdentityValid: typeof metadata?.turn_id === "string" && uuid.test(metadata.turn_id),
+    kindCount: Array.isArray(metadata?.content_item_kinds) ? diagnosticCount(kinds.length) : null,
+    evidenceCount: Array.isArray(metadata?.content_item_metadata) ? diagnosticCount(evidence.length) : null,
+    partsAligned: parts.length > 0 && kinds.length === parts.length && evidence.length === parts.length,
+    currentContext: isCurrentNativeContext(item, owner),
+    parts: parts.slice(0, 4).map((part, index) => {
+      const definition = nativeContextParts.get(kinds[index]), provenance = evidence[index]?.provenance, expected = definition?.[1];
+      return { type: part?.type === undefined ? "missing" : ["input_text", "output_text", "text", "encrypted_content"].includes(part.type) ? part.type : "other",
+        ...diagnosticKeys(part, ["type", "text", "annotations", "logprobs", "encrypted_content"]), textIsString: typeof part?.text === "string",
+        kind: definition ? kinds[index] : kinds[index] === undefined ? "missing" : "other", roleMatchesKind: !!definition && item.role === definition[0],
+        evidenceKeys: diagnosticKeys(evidence[index], ["provenance"]), provenanceKeys: diagnosticKeys(provenance, ["type", "hook", "namespace", "from_additional_requirements"]),
+        provenanceMatches: !!expected && record(provenance) && Object.keys(provenance).sort().join() === Object.keys(expected).sort().join()
+          && Object.keys(expected).every(key => provenance[key] === expected[key]) };
+    }),
+  };
+}
+function contextDiagnosticError(message, code, diagnostic) {
+  while (Buffer.byteLength(JSON.stringify(diagnostic), "utf8") > 6 * 1024 && diagnostic.mismatches.length) {
+    diagnostic.mismatches.pop(); diagnostic.mismatchesTruncated = true;
+  }
+  const error = safeLocalHttpError(`${message} ${contextDiagnosticMarker} ${JSON.stringify(diagnostic)}`, { code, status: 409 });
+  error.nativeContextDiagnostic = diagnostic; error.nativeContextDiagnosticMessage = message;
+  return error;
+}
+function contextMismatchDiagnostic(raw, current, owner, index, sources, proven) {
+  const limit = Math.min(index, 16), counts = new Map(), mismatches = [];
+  for (const hash of sources[0].inputHashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
+  let copied = 0, mismatchCount = 0;
+  for (let offset = 0; offset < limit; offset++) {
+    const hash = digest(current[offset]), count = counts.get(hash) ?? 0;
+    if (count) { copied++; counts.set(hash, count - 1); }
+    else {
+      mismatchCount++;
+      if (mismatches.length < 4) mismatches.push({ index: offset, ...contextItemDiagnostic(raw[offset], owner) });
+    }
+  }
+  return { stage: "prefix-source-match", reason: "source-copies-changed", fallback: "not-evaluated", canonicalRead: "not-attempted",
+    prefixCount: diagnosticCount(index), prefixCountCapped: index > 10000, inspectedPrefixCount: limit, inspectionTruncated: index > limit,
+    candidateReceiptCount: diagnosticCount(sources.length), receiptCompared: "first", sourceItemCount: diagnosticCount(sources[0].inputHashes.length),
+    copiedCount: copied, mismatchCount, mismatchesTruncated: mismatchCount > mismatches.length, proofPresent: !!owner?.nativeContextProof,
+    proofCohortMatches: proven, mismatches };
+}
+function diagnosticText(content) {
+  if (typeof content === "string") return content.length <= 256 * 1024 ? content : undefined;
+  if (!Array.isArray(content) || content.length > 32 || content.some(part => !["input_text", "output_text", "text"].includes(part?.type) || typeof part.text !== "string")
+      || content.reduce((length, part) => length + part.text.length, 0) > 256 * 1024) return undefined;
+  return content.map(part => part.text).join("\n");
+}
+function diagnosticMetadata(value) {
+  let budget = 128;
+  const visit = (item, depth = 0) => {
+    if (--budget < 0 || depth > 6) return false;
+    if (item === null || typeof item === "boolean" || typeof item === "number") return true;
+    if (typeof item === "string") return item.length <= 128;
+    if (Array.isArray(item)) return item.length <= 32 && item.every(child => visit(child, depth + 1));
+    if (!record(item)) return false;
+    const keys = Object.keys(item);
+    return keys.length <= 16 && keys.every(key => key.length <= 128 && visit(item[key], depth + 1));
+  };
+  return visit(value) ? JSON.stringify(value) : undefined;
+}
+function contextComparisonDiagnostic(diagnostic, raw, proof, attempted) {
+  return { ...diagnostic, canonicalRead: proof ? "matched-record" : attempted ? "unavailable" : "not-attempted", ...(proof ? { canonicalPrefixCount: diagnosticCount(proof.prefix.length) } : {}),
+    mismatches: diagnostic.mismatches.map(item => {
+      const native = proof?.prefix[item.index], actual = raw[item.index];
+      const left = diagnosticText(actual?.content), right = diagnosticText(native?.content);
+      const actualMetadata = actual?.internal_chat_message_metadata_passthrough, nativeMetadata = native?.internal_chat_message_metadata_passthrough;
+      const leftMetadata = diagnosticMetadata(actualMetadata), rightMetadata = diagnosticMetadata(nativeMetadata);
+      return { ...item, ...(native ? { canonicalRoleMatch: actual?.role === native.role, canonicalTypeMatch: actual?.type === native.type,
+        canonicalTextMatch: left === undefined || right === undefined ? null : left === right,
+        canonicalContentShapeMatch: diagnosticShape(actual?.content) === diagnosticShape(native.content),
+        canonicalMetadataMatch: actualMetadata === undefined || nativeMetadata === undefined ? actualMetadata === nativeMetadata
+          : leftMetadata === undefined || rightMetadata === undefined ? null : leftMetadata === rightMetadata } : {}) };
+    }) };
+}
 
 function recoveryUserInput(raw, current, owner, { requireAttribution = false } = {}) {
   const final = raw.at(-1), finalUser = current.at(-1), metadata = final?.internal_chat_message_metadata_passthrough, attributedTurn = metadata?.turn_id;
@@ -673,7 +769,8 @@ export function createInAppWebRuntime({
             counts.set(hash, count - 1); return true;
           });
         });
-        if (!sourceCopies) throw fail("The approved recovery compaction source copies changed.", "web_history_mismatch");
+        if (!sourceCopies) throw contextDiagnosticError("The approved recovery compaction source copies changed.", "web_history_mismatch",
+          contextMismatchDiagnostic(raw, current, owner, matches[0].index, matches[0].sources, proven));
       }
     }
     if (recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY && recovery.stage !== "armed") {
@@ -700,20 +797,34 @@ export function createInAppWebRuntime({
         ? [{ item, index, sources: records.filter(source => source.encryptedSha256 === textDigest(item.encrypted_content)) }].filter(match => match.sources.length) : []);
       if (matches.length !== 1) throw error;
       const { item, index, sources } = matches[0], prefix = raw.slice(0, index);
-      if (!prefix.some(value => {
+      const eligible = prefix.some(value => {
         const turn = value.internal_chat_message_metadata_passthrough?.turn_id;
         return typeof turn === "string" && !isCurrentNativeContext(value, owner) && isCurrentNativeContext(value, { turnId: turn.toLowerCase() });
-      })) throw error;
+      });
       const carrierSha256 = digest(transcript({ input: [item] })[0]), sourceSha256 = digest(sources);
-      if (sources.some(source => source.carrierSha256 !== undefined && source.carrierSha256 !== carrierSha256)) throw fail("The retained native context source receipt changed.", "web_native_context_proof_unavailable");
-      const proof = await readNativeCompactionContext({ threadId: owner.threadId, carrier: item,
-        encryptedSha256: textDigest(item.encrypted_content), carrierSha256, sourceSha256 });
+      const sourceReceiptMatches = !sources.some(source => source.carrierSha256 !== undefined && source.carrierSha256 !== carrierSha256);
+      const diagnostic = error.nativeContextDiagnostic && { ...error.nativeContextDiagnostic, sourceReceiptMatches };
+      const explain = (message, code, fallback, proof, attempted = true) => diagnostic
+        ? contextDiagnosticError(message, code, { ...contextComparisonDiagnostic(diagnostic, raw, proof, attempted), fallback })
+        : fail(message, code);
+      const query = { threadId: owner.threadId, carrier: item, encryptedSha256: textDigest(item.encrypted_content), carrierSha256, sourceSha256 };
+      if (!eligible) {
+        // Diagnostic comparison cannot qualify a stripped or changed wire
+        // projection. Keep rejection even if its text matches native originals.
+        let observed;
+        if (diagnostic && sourceReceiptMatches) { try { observed = await readNativeCompactionContext(query); } catch { /* Fixed unavailable category only. */ } }
+        throw diagnostic ? explain(error.nativeContextDiagnosticMessage, error.code, "no-qualified-historical-context", observed, sourceReceiptMatches) : error;
+      }
+      if (!sourceReceiptMatches) throw explain("The retained native context source receipt changed.", "web_native_context_proof_unavailable", "source-receipt-changed", undefined, false);
+      let proof;
+      try { proof = await readNativeCompactionContext(query); }
+      catch { throw explain("The retained native context has no exact canonical compaction proof.", "web_native_context_proof_unavailable", "canonical-proof-unavailable"); }
       const context = proof.prefix.filter(value => value?.internal_chat_message_metadata_passthrough?.content_item_kinds !== undefined
         || value?.internal_chat_message_metadata_passthrough?.content_item_metadata !== undefined);
       const nativeContextProof = { turnId: proof.turnId, contextHashes: context.map(nativeContextHash) };
       if (!context.length || context.some(value => !isCurrentNativeContext(value, proof))
           || proof.sourceSha256 !== digest(sources) || !matchesNativeContextProof(prefix, nativeContextProof)) {
-        throw fail("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable");
+        throw explain("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
       }
       return { ...owner, nativeContextProof };
     }

@@ -356,6 +356,21 @@ no compact-owner field; it obtains the owner from the exact native record rather
 than inventing user evidence. The context remains wholly quarantined. A missing
 proof fails preparation with `web_native_context_proof_unavailable`; no browser
 action, Send retry or user-admission authority follows from elapsed time.
+An armed prefix/source rejection carries `ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC`
+through the ordinary local HTTP error. Its fixed stage/reason are
+`prefix-source-match`/`source-copies-changed`. The fallback category distinguishes
+`no-qualified-historical-context`, `source-receipt-changed`,
+`canonical-proof-unavailable`, `canonical-cohort-mismatch` and `not-evaluated`.
+Known role/type/status/phase and key-name lists, other-key presence,
+content/metadata shapes, part counts, kind/provenance alignment and owner-match
+flags describe the actual HTTP projection. Inspection covers at most sixteen
+prefix items, four source mismatches and four parts per mismatch; counts cap at
+10,000 and serialized diagnostics at 6 KiB. Missing array counts remain null.
+An optional bounded, read-only comparison with the exact native record reports
+only role/type/text/metadata match flags and `matched-record`, `unavailable` or
+`not-attempted` acquisition status. Even matching text cannot qualify a stripped
+or changed transport projection. No text, unknown key names, identities, tokens,
+opaque values or content hashes are exposed, and diagnostics grant no authority.
 A carrier can stand in for compacted
 user input only when its receipt binds a nonempty user message attributed to
 that exact native turn. The same rule recognizes the maintained canonical

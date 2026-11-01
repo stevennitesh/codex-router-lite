@@ -500,6 +500,67 @@ test("retained native context proof refuses missing, foreign, ambiguous and chan
   });
 });
 
+test("native context rejection reports bounded wire structure without accepting transport projections or exposing contents", async t => {
+  const compactOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  const secret = "PRIVATE_TOKEN_https://private.invalid/opaque-context-value";
+  for (const kind of ["omitted type", "omitted metadata", "scalar content", "extra item fields", "extra part fields", "text part type", "private unknown fields", "bounded prefix"]) await t.test(kind, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+      { compactV2: true, headers: headers(compactOwner) }));
+    const canonical = rebuiltNativeContext(compactOwner, secret), file = publishCanonicalContextFixture(t, [canonicalContextRecord(carrier, canonical, compactOwner)]);
+    const prefix = kind === "bounded prefix" ? Array.from({ length: 40 }, (_, index) => structuredClone(canonical[index % canonical.length])) : structuredClone(canonical);
+    for (const item of prefix) {
+      if (kind === "omitted type") delete item.type;
+      else if (kind === "omitted metadata") delete item.internal_chat_message_metadata_passthrough;
+      else if (kind === "scalar content") item.content = item.content.map(part => part.text).join("\n");
+      else if (kind === "extra item fields") { item.status = secret; item.phase = secret; }
+      else if (kind === "extra part fields") for (const part of item.content) part.annotations = [{ private: secret }];
+      else if (kind === "text part type") for (const part of item.content) part.type = "text";
+      else {
+        item[secret] = secret;
+        if (kind === "private unknown fields") {
+          item.id = secret; item.type = secret; item.role = secret;
+          item.internal_chat_message_metadata_passthrough[secret] = secret;
+          item.internal_chat_message_metadata_passthrough.content_item_kinds[0] = secret;
+          item.content[0][secret] = secret;
+          item.internal_chat_message_metadata_passthrough.content_item_metadata[0].provenance.namespace = secret;
+        }
+      }
+    }
+    h.input().splice(0, h.input().length, ...prefix, carrier); h.newTurn(nextOwner, secret);
+    await h.restartRuntime(); h.loseKernel();
+    const bytes = readFileSync(h.stateFile), source = readFileSync(file), operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), error => {
+      assert.equal(error.code, "web_history_mismatch");
+      const diagnostic = JSON.parse(error.message.split(" ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC ")[1]);
+      assert.equal(diagnostic.stage, "prefix-source-match"); assert.equal(diagnostic.reason, "source-copies-changed");
+      assert.equal(diagnostic.fallback, "no-qualified-historical-context"); assert.equal(diagnostic.canonicalRead, "matched-record");
+      assert.equal(diagnostic.sourceReceiptMatches, true); assert.equal(diagnostic.prefixCount, prefix.length);
+      assert.equal(diagnostic.canonicalPrefixCount, canonical.length); assert.equal(diagnostic.proofPresent, false);
+      assert.ok(diagnostic.mismatches.length > 0 && diagnostic.mismatches.length <= 4);
+      const item = diagnostic.mismatches[0];
+      assert.equal(item.currentContext, false); assert.equal(item.ownerMatches, false);
+      if (kind !== "private unknown fields") {
+        assert.equal(item.canonicalRoleMatch, true); assert.equal(item.canonicalTextMatch, true);
+      }
+      if (kind === "omitted type") { assert.equal(item.type, "missing"); assert.equal(item.canonicalTypeMatch, false); }
+      else if (kind === "omitted metadata") { assert.equal(item.metadataShape, "missing"); assert.equal(item.canonicalMetadataMatch, false); }
+      else if (kind === "scalar content") { assert.equal(item.contentShape, "string"); assert.equal(item.canonicalContentShapeMatch, false); }
+      else if (kind === "extra item fields") { assert.ok(item.keys.includes("status") && item.keys.includes("phase")); assert.equal(item.status, "other"); assert.equal(item.phase, "other"); assert.equal(item.otherKeysPresent, false); }
+      else if (kind === "extra part fields") assert.ok(item.parts[0].keys.includes("annotations"));
+      else if (kind === "text part type") assert.equal(item.parts[0].type, "text");
+      else if (kind === "private unknown fields") { assert.equal(item.type, "other"); assert.equal(item.role, "other"); assert.equal(item.otherKeysPresent, true); assert.equal(item.parts[0].kind, "other"); }
+      else { assert.equal(diagnostic.inspectedPrefixCount, 16); assert.equal(diagnostic.inspectionTruncated, true); assert.equal(diagnostic.mismatchesTruncated, true); }
+      assert.ok(error.message.length < 8192);
+      assert.doesNotMatch(error.message, /PRIVATE_|private\.invalid|[a-f0-9]{64}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/u);
+      assert.equal(safeLocalHttpErrorPayload(error).error.message, error.message);
+      return true;
+    });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.deepEqual(readFileSync(file), source); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+});
+
 test("quarantine retains rebuilt current native context around its exact compaction carrier", async t => {
   const recoveryId = "33002233-4455-6677-8899-aabbccddeeff", freshId = "44002233-4455-6677-8899-aabbccddeeff";
   const normalize = item => ({ role: item.role, content: item.content.map(part => part.text).join("\n") });
