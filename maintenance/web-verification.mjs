@@ -302,12 +302,13 @@ export function evaluateWebPhase({ run, phase, turnId, sessionRows, eventRows, l
       const appContext = Array.isArray(contextKinds) && contextKinds.some(kind => contextPrefix.some(entry => entry.kinds.includes(kind)));
       if (appContext || firstResponseItem && p?.type === 'message' && (p.role === 'user' || contextLength > 0)) {
         // The current app may refresh environment and client-time context
-        // before its incoming tool envelope. Only this exact ordered pair can
-        // extend the prefix; its private text grants no tool-result authority.
+        // before its incoming tool envelope. Environment is refreshed only
+        // when needed; client time may appear alone. Neither grants authority.
         const expectedContext = contextPrefix[contextLength];
+        const timeOnly = contextLength === 0 && appMessageEnvelope(p, turnId, contextPrefix[1].role, contextPrefix[1].kinds);
         requireValue(firstResponseItem && (prefixLength === 0 || prefixLength === switchPrefix.length)
-          && expectedContext && appMessageEnvelope(p, turnId, expectedContext.role, expectedContext.kinds), 'unsupported_app_context_prefix');
-        contextLength++;
+          && expectedContext && (timeOnly || appMessageEnvelope(p, turnId, expectedContext.role, expectedContext.kinds)), 'unsupported_app_context_prefix');
+        contextLength = timeOnly ? contextPrefix.length : contextLength + 1;
         continue;
       }
       if (firstResponseItem && p?.type === 'message' && p.role === 'developer') {

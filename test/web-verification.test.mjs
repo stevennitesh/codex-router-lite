@@ -303,10 +303,9 @@ test('current app environment and client-time contexts preserve only the followi
   }
 });
 
-test('app context prefixes reject missing, duplicate, reversed or late envelopes and never authorize orphan outputs', () => {
+test('app context prefixes reject incomplete, duplicate, reversed or late envelopes and never authorize orphan outputs', () => {
   for (const [mutate, code] of [
     [(input, prefix) => { input.sessionRows = input.sessionRows.filter(entry => entry !== prefix[1]); }, 'unsupported_app_prompt_ingress'],
-    [(input, prefix) => { input.sessionRows = input.sessionRows.filter(entry => entry !== prefix[0]); }, 'unsupported_app_context_prefix'],
     [(input, prefix) => { const index = input.sessionRows.indexOf(prefix[0]); input.sessionRows.splice(index, 2, prefix[1], prefix[0]); }, 'unsupported_app_context_prefix'],
     [(input, prefix) => { input.sessionRows.splice(input.sessionRows.indexOf(prefix[1]), 0, structuredClone(prefix[0])); }, 'unsupported_app_context_prefix'],
     [(input, prefix) => { input.sessionRows.push(structuredClone(prefix[1])); }, 'unsupported_app_context_prefix'],
@@ -323,6 +322,28 @@ test('app context prefixes reject missing, duplicate, reversed or late envelopes
   interleaved.sessionRows.splice(interleaved.sessionRows.indexOf(modelPrefix[1]), 1);
   interleaved.sessionRows.splice(interleaved.sessionRows.indexOf(contexts[0]) + 1, 0, modelPrefix[1]);
   assert.equal(evaluateWebPhase(interleaved).receipt.code, 'unsupported_app_context_prefix');
+});
+
+test('a current app time-only refresh requires its exact envelope and following prompt ingress', () => {
+  const timeOnly = () => {
+    const input = evidence('native'), prefix = addAppContextPrefix(input);
+    input.sessionRows = input.sessionRows.filter(entry => entry !== prefix[0]);
+    return { input, message: prefix[1].payload };
+  };
+  assert.equal(evaluateWebPhase(timeOnly().input).receipt.status, 'passed');
+  for (const mutate of [
+    (input, message) => { message.role = 'user'; },
+    (input, message) => { message.internal_chat_message_metadata_passthrough.turn_id = generation; },
+    (input, message) => { message.internal_chat_message_metadata_passthrough.create_time = null; },
+    (input, message) => { message.internal_chat_message_metadata_passthrough.content_item_kinds = ['unknown']; },
+    (input, message) => { message.internal_chat_message_metadata_passthrough.content_item_metadata = []; },
+    (input, message) => { message.content[0].type = 'output_text'; },
+    input => { input.sessionRows = input.sessionRows.filter(entry => entry.payload?.name !== 'send_message_to_thread'); },
+    input => { input.sessionRows.push(row('response_item', { type: 'function_call_output', call_id: 'orphan', output: marker })); },
+  ]) {
+    const { input, message } = timeOnly(); mutate(input, message);
+    assert.equal(evaluateWebPhase(input).receipt.status, 'failed');
+  }
 });
 
 test('every phase with an expected route proves the selected native model, effort and pre-Send browser selection', () => {
