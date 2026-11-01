@@ -19,7 +19,8 @@ import { conclusivelyRefused } from "../src/transport-error-graph.mjs";
 import { isUtf8 } from "node:buffer";
 import { jsonIsUnambiguousForRewrite } from "../src/namespace-relay.mjs";
 import { createNativeCompactionWitness, nativeCompactionSource, nativeCompactionWitnessReference,
-  nativeCompactionWitnessPath, validNativeCompactionWitness, readCanonicalNativeSource as acquireCanonicalNativeSource } from "../src/web-native-compaction.mjs";
+  nativeCompactionWitnessPath, validNativeCompactionWitness, MAX_CANONICAL_NATIVE_SOURCE_BYTES,
+  readCanonicalNativeSource as acquireCanonicalNativeSource } from "../src/web-native-compaction.mjs";
 import { guardedWebConversation, inspectNativeCompactionSource, isCanonicalWebAppIngress } from "../src/web-runtime.mjs";
 
 const hash = bytes => createHash("sha256").update(typeof bytes === "string" || Buffer.isBuffer(bytes) ? bytes : JSON.stringify(bytes)).digest("hex");
@@ -30,9 +31,9 @@ const recoveryInputPolicy = Object.freeze({ mode: WEB_RECOVERY_INPUT_POLICY,
   opaqueCompaction: "exact whole-item fingerprints only; never decoded, rendered or sent",
   nativeHistory: "retained at its original native owners", acceptedWebCheckpoint: "unchanged" });
 const json = bytes => { try { return JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString("utf8") : bytes); } catch { throw failure("Recovery input is not valid JSON."); } };
-function readProtected(file, isPrivate = privateFileIsProtected) {
+function readProtected(file, isPrivate = privateFileIsProtected, maxBytes = 16 * 1024 * 1024) {
   const before = lstatSync(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > 16 * 1024 * 1024 || !isPrivate(file)) throw failure("Recovery requires protected bounded regular files.");
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maxBytes || !isPrivate(file)) throw failure("Recovery requires protected bounded regular files.");
   for (let cursor = path.dirname(file); ; cursor = path.dirname(cursor)) {
     if (lstatSync(cursor).isSymbolicLink()) throw failure("Recovery refuses linked paths.");
     if (cursor === path.dirname(cursor)) break;
@@ -41,8 +42,8 @@ function readProtected(file, isPrivate = privateFileIsProtected) {
   if (before.ino !== after.ino || before.dev !== after.dev || before.mtimeMs !== after.mtimeMs || before.size !== after.size) throw failure("Recovery input changed during inspection.");
   return bytes;
 }
-function readOptionalProtected(file, isPrivate) {
-  try { return readProtected(file, isPrivate); }
+function readOptionalProtected(file, isPrivate, maxBytes) {
+  try { return readProtected(file, isPrivate, maxBytes); }
   catch (error) { if (error?.code === "ENOENT") return undefined; throw error; }
 }
 
@@ -57,7 +58,7 @@ const nativeSourceSnapshotPath = (threadId, sha256, options) => path.join(option
   "web-in-app", "restoration", `${threadId}.native-source-${sha256}.jsonl`);
 function retainNativeSource(threadId, bytes, options) {
   const file = nativeSourceSnapshotPath(threadId, hash(bytes), options);
-  preserveOriginal(file, bytes, options);
+  preserveOriginal(file, bytes, options, MAX_CANONICAL_NATIVE_SOURCE_BYTES);
   return file;
 }
 function ledger(threadId, options) {
@@ -353,7 +354,7 @@ export async function rollbackControlledWebRecoverySnapshotRevision(plan, confir
 // never a claim that the original provider request can be reconstructed exactly.
 export function canonicalNativeCompactionSource(bytes, threadId) {
   if (!Buffer.isBuffer(bytes)) bytes = Buffer.from(bytes);
-  if (!isUtf8(bytes) || bytes.length > 16 * 1024 * 1024 || !bytes.length || bytes.at(-1) !== 10) {
+  if (!isUtf8(bytes) || bytes.length > MAX_CANONICAL_NATIVE_SOURCE_BYTES || !bytes.length || bytes.at(-1) !== 10) {
     throw failure("Canonical compaction requires a bounded complete UTF-8 rollout.");
   }
   let offset = 0, meta, compacted, priorClock = -Infinity;
@@ -457,7 +458,7 @@ function checkRestorationRequest(request, options) {
       || request.failedTurnId !== current.value.lastTurn.turnId || hash(request.expectedOwnerTurnIds) !== hash(current.value.browserOwnerTurnIds)
       || !path.isAbsolute(request.rolloutPath ?? "")) throw failure("The inspected restoration ledger changed.");
   if (request.sourceSnapshotPath !== nativeSourceSnapshotPath(request.threadId, request.sourceSha256, options)) throw failure("Canonical source snapshot identity changed.");
-  const originalSource = readProtected(request.sourceSnapshotPath, options.isPrivate);
+  const originalSource = readProtected(request.sourceSnapshotPath, options.isPrivate, MAX_CANONICAL_NATIVE_SOURCE_BYTES);
   if (originalSource.length !== request.sourceBytes || hash(originalSource) !== request.sourceSha256) throw failure("Protected canonical source snapshot changed.");
   const sourceBytes = readCanonicalNativeSource(request.rolloutPath);
   if (!Number.isSafeInteger(request.sourceBytes) || request.sourceBytes < 1 || sourceBytes.length < request.sourceBytes
@@ -507,7 +508,7 @@ function validRestorationPlan(plan, confirmationSha256, { allowHistoricalSnapsho
 }
 function checkPreparedNativeSource(plan, current, options) {
   if (plan.rolloutSnapshotPath !== nativeSourceSnapshotPath(plan.request.threadId, plan.rolloutSha256, options)) throw failure("Prepared canonical source snapshot identity changed.");
-  const snapshot = readProtected(plan.rolloutSnapshotPath, options.isPrivate);
+  const snapshot = readProtected(plan.rolloutSnapshotPath, options.isPrivate, MAX_CANONICAL_NATIVE_SOURCE_BYTES);
   if (snapshot.length !== plan.rolloutBytes || hash(snapshot) !== plan.rolloutSha256
       || current.sourceBytes.length !== plan.rolloutBytes || hash(current.sourceBytes) !== plan.rolloutSha256) throw failure("Canonical rollout changed after plan preparation.");
 }
@@ -530,10 +531,10 @@ export function inspectNativeCompactionRestorationPlan(planPath, confirmationSha
       { name: path.basename(rolloutArchive), sha256: plan.rolloutSha256 },
       { name: path.basename(witnessFile), sha256: hash(`${JSON.stringify(plan.request.witness, null, 2)}\n`) }] };
 }
-function preserveOriginal(file, bytes, options) {
-  const existing = readOptionalProtected(file, options.isPrivate);
+function preserveOriginal(file, bytes, options, maxBytes) {
+  const existing = readOptionalProtected(file, options.isPrivate, maxBytes);
   if (existing === undefined) (options.write ?? writePrivateFile)(file, bytes);
-  if (hash(readProtected(file, options.isPrivate)) !== hash(bytes)) throw failure("Restoration archive readback failed.");
+  if (hash(readProtected(file, options.isPrivate, maxBytes)) !== hash(bytes)) throw failure("Restoration archive readback failed.");
 }
 
 export async function applyNativeCompactionRestoration(plan, confirmationSha256, options = {}) {
@@ -546,7 +547,7 @@ export async function applyNativeCompactionRestoration(plan, confirmationSha256,
     const archive = `${current.file}.native-compaction-${confirmationSha256}.original`;
     const rolloutArchive = `${archive}.rollout.jsonl`;
     preserveOriginal(archive, current.bytes, options);
-    preserveOriginal(rolloutArchive, current.sourceBytes, options);
+    preserveOriginal(rolloutArchive, current.sourceBytes, options, MAX_CANONICAL_NATIVE_SOURCE_BYTES);
     const witness = plan.request.witness, reference = nativeCompactionWitnessReference(witness);
     const witnessFile = nativeCompactionWitnessPath(stateDir, current.value.threadId, reference.opaqueSha256);
     const witnessBytes = `${JSON.stringify(witness, null, 2)}\n`;

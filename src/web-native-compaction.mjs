@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { isUtf8 } from "node:buffer";
@@ -15,6 +15,9 @@ import { validNativeCompactionReference } from "./web-conversation-guard.mjs";
 export { validNativeCompactionReference } from "./web-conversation-guard.mjs";
 
 export const MAX_NATIVE_COMPACTION_WITNESS_BYTES = 16 * 1024 * 1024;
+// Append-only native tool evidence is larger than its readable checkpoint.
+// Keep acquisition bounded independently of the compact witness payload.
+export const MAX_CANONICAL_NATIVE_SOURCE_BYTES = 64 * 1024 * 1024;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = value => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(value);
 const sha256 = value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -30,7 +33,7 @@ export function readCanonicalNativeSource(file) {
   const refused = message => Object.assign(new Error(message), { code: "web_native_compaction_state", status: 409 });
   if (!path.isAbsolute(file ?? "")) throw refused("Canonical native source requires an absolute path.");
   const before = lstatSync(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_NATIVE_COMPACTION_WITNESS_BYTES) throw refused("Canonical native source requires a bounded regular file.");
+  if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_CANONICAL_NATIVE_SOURCE_BYTES) throw refused("Canonical native source requires a bounded regular file.");
   const noLinks = () => {
     for (let cursor = path.dirname(file); ; cursor = path.dirname(cursor)) {
       if (lstatSync(cursor).isSymbolicLink()) throw refused("Canonical native source refuses linked paths.");
@@ -45,7 +48,11 @@ export function readCanonicalNativeSource(file) {
     const same = (left, right) => left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino
       && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
     if (!same(before, opened)) throw refused("Canonical native source changed while opening.");
-    const bytes = readFileSync(fd), after = fstatSync(fd), named = lstatSync(file);
+    const buffer = Buffer.alloc(before.size + 1);
+    let offset = 0, count;
+    do { count = readSync(fd, buffer, offset, buffer.length - offset, offset); offset += count; }
+    while (count && offset < buffer.length);
+    const bytes = buffer.subarray(0, offset), after = fstatSync(fd), named = lstatSync(file);
     if (named.isSymbolicLink() || bytes.length !== before.size || !same(opened, after) || !same(after, named)) throw refused("Canonical native source changed during acquisition.");
     noLinks();
     return bytes;

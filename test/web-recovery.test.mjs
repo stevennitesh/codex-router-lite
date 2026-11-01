@@ -384,6 +384,22 @@ test("restoration refuses missing actual results, orphan outputs, checkpoint cha
   }
 });
 
+test("native restoration retains and verifies long source snapshots and rollback without enlarging the witness", async t => {
+  const f = restorationFixture(t), ledgerBefore = readFileSync(f.ledgerPath);
+  const padding = 'x'.repeat(1024 * 1024);
+  for (let index=0; index<17; index++) writeFileSync(f.rolloutPath,
+    row('event_msg', {type:'token_count',diagnostic:padding},100+index), {flag:'a',encoding:'utf8'});
+  const source = readFileSync(f.rolloutPath); assert(source.length > 16 * 1024 * 1024);
+  const prepared = f.prepare();
+  assert.deepEqual(readFileSync(prepared.plan.rolloutSnapshotPath), source);
+  const result = await applyNativeCompactionRestoration(prepared.plan,prepared.confirmationSha256,f.options);
+  assert.deepEqual(readFileSync(result.rolloutArchive), source);
+  assert(JSON.stringify(prepared.plan.request.witness).length < 16 * 1024 * 1024);
+  await rollbackNativeCompactionRestoration(prepared.plan,prepared.confirmationSha256,f.options);
+  assert.deepEqual(readFileSync(f.ledgerPath), ledgerBefore);
+  assert.deepEqual(readFileSync(f.rolloutPath), source);
+});
+
 test("restoration refuses live state and persistence failure without losing the original ledger", async t => {
   const f = restorationFixture(t), original = readFileSync(f.ledgerPath), prepared = f.prepare();
   await assert.rejects(applyNativeCompactionRestoration(prepared.plan, prepared.confirmationSha256,

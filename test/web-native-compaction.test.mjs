@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, truncateSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { createNativeCompactionWitness, validNativeCompactionWitness, validNativeCompactionReference,
   nativeCompactionWitnessReference, nativeCompactionWitnessPath, readNativeCompactionWitness,
-  expandNativeCompactionWitnesses, nativeCompactionResponse, readNativeCompactionContext } from "../src/web-native-compaction.mjs";
+  expandNativeCompactionWitnesses, nativeCompactionResponse, readNativeCompactionContext, readCanonicalNativeSource,
+  MAX_CANONICAL_NATIVE_SOURCE_BYTES, MAX_NATIVE_COMPACTION_WITNESS_BYTES } from "../src/web-native-compaction.mjs";
 import { webCompactOutput } from "../src/web-response.mjs";
 import { renderCompactionValue } from "../src/compaction-checkpoint.mjs";
 
@@ -50,6 +51,21 @@ test("canonical context acquisition binds one native session and exact trusted l
   assert.deepEqual(proof.prefix, fixture.prefix); assert.match(proof.recordSha256, /^[a-f0-9]{64}$/u);
   assert.deepEqual(readFileSync(fixture.file), original);
   assert.deepEqual(await readNativeCompactionContext(fixture.options), proof);
+});
+
+test("long native histories retain exact context proof without enlarging compaction witness authority", async t => {
+  const f = contextProofFixture(t);
+  const padding = { timestamp: f.rows[0].timestamp, type: 'event_msg', payload: { type: 'token_count',
+    diagnostic: 'x'.repeat(1024 * 1024) } };
+  f.rows.splice(1, 0, ...Array.from({length:17}, () => padding)); f.publish();
+  const original = readFileSync(f.file);
+  assert(original.length > MAX_NATIVE_COMPACTION_WITNESS_BYTES);
+  assert.deepEqual((await readNativeCompactionContext(f.options)).prefix, f.prefix);
+  assert.deepEqual(readFileSync(f.file), original);
+  assert.throws(() => make({source:[{role:'user',content:'x'.repeat(MAX_NATIVE_COMPACTION_WITNESS_BYTES / 2)}]}),
+    {code:'web_native_compaction_state'});
+  truncateSync(f.file, MAX_CANONICAL_NATIVE_SOURCE_BYTES + 1);
+  assert.throws(() => readCanonicalNativeSource(f.file), /bounded regular file/u);
 });
 
 test("canonical context acquisition refuses foreign owners, ambiguity and changed or incomplete evidence", async t => {

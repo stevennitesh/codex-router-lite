@@ -254,6 +254,13 @@ proof. Preparation preserves all later readable work and labels its canonical
 provenance separately from a captured native request. It does not abandon input,
 rewrite native history, claim delivery or clear uncertain actions.
 
+Canonical native rollout acquisition and its protected source archives have a
+separate 64 MiB bound. The compact readable source and witness retain their
+existing 8 MiB and 16 MiB limits. Repeated tool evidence can grow the native
+rollout beyond the witness limit without invalidating an otherwise exact
+compaction proof. Acquisition still rejects links and any source identity,
+size or timestamp change during its descriptor-bound read.
+
 Application requires stopped Router service and absent native hosts, protected
 byte-verified originals, and an unchanged prepared plan. The independent Web
 maintenance entrypoint accepts `-NativeCompactionRestorePlan` with its exact
