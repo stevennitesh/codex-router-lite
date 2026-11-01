@@ -69,13 +69,20 @@ const headers = (turn = turnId) => ({ "x-codex-turn-metadata": JSON.stringify(me
 const outputFor = (call, output) => ({ type: call.type === "tool_search_call" ? "tool_search_output" : "function_call_output", call_id: call.call_id,
   ...(call.type === "tool_search_call" ? { tools: output, execution: "client", status: "completed" } : { output }) });
 
-async function controlledRecoveryFixture(t, { executed = true, legacy = true, compaction, harnessOptions, acceptedHistoryItems = 1 } = {}) {
+async function controlledRecoveryFixture(t, { executed = true, legacy = true, compaction, nativeCompaction = false, harnessOptions, acceptedHistoryItems = 1 } = {}) {
   const h = harness(t, harnessOptions);
   for (let index = 1; index < acceptedHistoryItems; index++) h.input().unshift({ role: "developer", content: `Accepted historical context ${index}` });
   if (compaction) h.input().unshift({ role: "developer", content: "Accepted native developer context before compaction" });
   const { call } = await h.toObserve();
   await h.completeAnswer(call, "Accepted answer retained through recovery.");
   const accepted = JSON.parse(readFileSync(h.stateFile, "utf8"));
+  if (nativeCompaction) {
+    const source = structuredClone(h.input()), opaque = { type: "compaction", id: "native-before-recovery", encrypted_content: "PRIVATE_NATIVE_RECOVERY_CHECKPOINT" };
+    const stage = await h.runtime.stageNativeCompaction({ payload: { input: source }, headers: headers(followupId) });
+    try { await h.runtime.finalizeNativeCompaction(stage, { output: [opaque], responseId: "native-before-recovery-response" }); }
+    finally { h.runtime.releaseNativeCompaction(stage); }
+    h.input().splice(0, h.input().length, ...nativeV2Users(source), opaque);
+  }
   if (compaction) {
     h.append({ role: "user", content: "FAILED PRE-COMPACTION INPUT MUST NOT BE REPLAYED" });
     const v2 = compaction.startsWith("v2"), original = structuredClone(h.input());
@@ -116,7 +123,6 @@ test("controlled legacy recovery archives exact failure and consumes one native 
     const armed = JSON.parse(readFileSync(h.stateFile, "utf8"));
     assert.equal(armed.version, plan.journalVersion); assert.equal(armed.uncertainSend, true);
     assert.deepEqual(armed.checkpoint, accepted.checkpoint);
-    await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_recovery_pending" });
     const sends = h.browser.ui.sends.length;
     h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record the explicitly approved recovery boundary only.");
     const recoveryCall = (await h.request()).output[0];
@@ -131,7 +137,6 @@ test("controlled legacy recovery archives exact failure and consumes one native 
     assert.equal(snapshot.find(row => row.kind === "conversation").uncertainSend, false);
     assert.ok(snapshot.some(row => row.kind === "sidecar" && row.sha256 === createHash("sha256").update(original).digest("hex")));
     assertWebConversationLedgersUnchanged(options.stateDir, snapshot, options);
-    await assert.rejects(h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input() }, { compact: true, headers: headers() }), { code: "web_recovery_pending" });
     assert.equal(h.browser.ui.sends.length, sends);
     await assert.rejects(h.broker.invoke(fixture.token, { wireName: "old-authority", arguments: {} }));
     h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "FRESH REQUEST AFTER RECOVERY");
@@ -202,6 +207,249 @@ function opaqueReplacementHistory() {
     ...["developer", "user", "assistant", "user", "assistant"].map((role, index) => ({ type: "message", role,
       content: [{ type: role === "assistant" ? "output_text" : "input_text", text: `PRIVATE_REPLACEMENT_HISTORY_${index}` }] }))];
 }
+
+test("preturn compaction preserves approved recovery through its local boundary and the first fresh accepted Send", async t => {
+  for (const compactedUser of [false, true]) for (const armedV2 of [false, true]) for (const boundedV2 of [false, true]) await t.test(`compacted user ${compactedUser}, armed V2 ${armedV2}, bounded V2 ${boundedV2}`, async t => {
+    const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.append({ role: "developer", content: "ABANDONED_PRIVATE_PREFIX ".repeat(6000) });
+    if (compactedUser) {
+      h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "RECORD ONLY THE APPROVED RECOVERY BOUNDARY");
+      h.input().at(-1).internal_chat_message_metadata_passthrough = { create_time: 1, turn_id: "33002233-4455-6677-8899-aabbccddeeff" };
+    }
+    const sends = h.browser.ui.sends.length, operations = h.observations.nativeOperations.length;
+    const compact = async (v2, turn) => {
+      const source = structuredClone(h.input());
+      const response = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: [...source, ...(v2 ? [{ type: "compaction_trigger" }] : [])], stream: v2 },
+        { ...(v2 ? { compactV2: true } : { compact: true }), headers: headers(turn) });
+      const output = v2 ? [await nativeV2Checkpoint(response)] : (await response.json()).output;
+      assert.deepEqual(h.input(), source);
+      h.input().splice(0, h.input().length, ...(v2 ? [...nativeV2Users(source), ...output] : output));
+      return output;
+    };
+    for (const v2 of [armedV2, armedV2, !armedV2]) {
+      const output = await compact(v2, "33002233-4455-6677-8899-aabbccddeeff");
+      assert.doesNotMatch(JSON.stringify(decodeCompaction(output[0].encrypted_content)), /ABANDONED_PRIVATE_PREFIX|FAILED PRIVATE PROMPT|PRIVATE_NATIVE_RECOVERY_CHECKPOINT|Accepted answer/u);
+      const armed = JSON.parse(readFileSync(h.stateFile, "utf8"));
+      assert.equal(validWebConversation(armed, threadId), true);
+      assert.equal(armed.version, 4); assert.equal(armed.priorVersion, 3); assert.equal(armed.recovery.stage, "armed");
+      assert.equal(armed.uncertainSend, true); assert.deepEqual(armed.checkpoint, accepted.checkpoint);
+      assert.equal(h.browser.ui.sends.length, sends); assert.equal(h.observations.nativeOperations.length, operations);
+      await h.restartRuntime(); h.loseKernel();
+    }
+    const receipts = JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.compactionSources;
+    assert.equal(receipts.length, 3); assert.ok(receipts[0].inputHashes.length > 1);
+    assert.doesNotMatch(JSON.stringify(receipts), /ABANDONED_PRIVATE_PREFIX|PRIVATE_NATIVE/u);
+    if (!compactedUser) h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "RECORD ONLY THE APPROVED RECOVERY BOUNDARY");
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    const bounded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(bounded.recovery.stage, "bounded"); assert.deepEqual(bounded.checkpoint, accepted.checkpoint);
+    assert.deepEqual(bounded.recovery.compactionSources, receipts); assert.equal(h.browser.ui.sends.length, sends);
+    const fresh = [{ role: "developer", content: "New context after the approved boundary" },
+      { type: "function_call", call_id: "fresh-native-after-boundary", name: "read", arguments: '{"path":"new.txt"}' },
+      { type: "function_call_output", call_id: "fresh-native-after-boundary", output: "Actual new result after the boundary" }];
+    h.append(...fresh);
+    for (const v2 of [boundedV2, boundedV2, !boundedV2]) {
+      const output = await compact(v2, "44002233-4455-6677-8899-aabbccddeeff");
+      assert.doesNotMatch(JSON.stringify(decodeCompaction(output[0].encrypted_content)), /ABANDONED_PRIVATE_PREFIX|FAILED PRIVATE PROMPT|RECORD ONLY THE APPROVED/u);
+      assert.equal(h.browser.ui.sends.length, sends);
+      const pending = JSON.parse(readFileSync(h.stateFile, "utf8"));
+      assert.equal(pending.recovery.stage, "bounded"); assert.deepEqual(pending.recovery.inputHashes, bounded.recovery.inputHashes);
+      assert.deepEqual(pending.checkpoint, accepted.checkpoint); assert.equal(validWebConversation(pending, threadId), true);
+      await h.restartRuntime(); h.loseKernel();
+    }
+    h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "ONLY THIS FRESH USER REQUEST MAY CONTINUE");
+    const observation = await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [...fresh, { role: "user", content: "ONLY THIS FRESH USER REQUEST MAY CONTINUE" }]);
+    assert.equal(h.browser.ui.sends.length, sends + 1); assert.equal(h.browser.ui.newTabs, 1);
+    await h.completeAnswer(observation.call, "The first fresh Web turn was accepted.");
+    const continued = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(continued.recovery.stage, "continued"); assert.equal(validWebConversation(continued, threadId), true);
+    await h.restartRuntime(); h.loseKernel();
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "A later user request remains a delta");
+    await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [{ role: "user", content: "A later user request remains a delta" }]);
+  });
+});
+
+test("recovery preturn compaction keeps action, carrier, evidence and cold-concurrency guards", async t => {
+  const recoveryId = "33002233-4455-6677-8899-aabbccddeeff";
+  const compact = (h, compactV2, owner = recoveryId) => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: [...h.input(), ...(compactV2 ? [{ type: "compaction_trigger" }] : [])], stream: compactV2 },
+    { ...(compactV2 ? { compactV2: true } : { compact: true }), headers: headers(owner) });
+  for (const v2 of [false, true]) for (const kind of ["unpaired", "duplicate result", "pending browser", "strict policy", "evidence limit"]) await t.test(`${kind}, V2 ${v2}`, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.newTurn(recoveryId, "Only the approved recovery boundary");
+    let code;
+    if (kind === "strict policy") {
+      const strict = JSON.parse(readFileSync(h.stateFile, "utf8")); strict.version = 2; delete strict.recovery.inputPolicy;
+      writeFileSync(h.stateFile, JSON.stringify(strict), "utf8"); code = "web_recovery_pending";
+    } else if (kind === "pending browser") {
+      await h.request(); code = "web_compaction_control_pending";
+    } else if (kind === "evidence limit") {
+      h.append(...Array.from({ length: 4096 }, (_, index) => ({ role: "developer", content: `Canonical source item ${index}` })));
+      code = "web_recovery_compaction_too_large";
+    } else {
+      const call = { type: "function_call", call_id: "unresolved-recovery-action", name: "read", arguments: "{}" };
+      h.append(call); code = "web_coding_uncertain";
+      if (kind === "duplicate result") { h.append(outputFor(call, "Actual result"), outputFor(call, "Changed duplicated result")); code = "web_tool_result"; }
+    }
+    const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    await assert.rejects(compact(h, v2), { code });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+  for (const kind of ["carrier changed", "source copy changed", "forged digest", "oversized evidence"]) await t.test(kind, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const source = structuredClone(h.input()), checkpoint = await nativeV2Checkpoint(await compact(h, true));
+    h.input().splice(0, h.input().length, ...nativeV2Users(source), checkpoint);
+    if (kind === "carrier changed") h.input().at(-1).encrypted_content += "changed";
+    else if (kind === "source copy changed") h.input()[0].content[0].text = "Changed copied source";
+    else {
+      const ledger = JSON.parse(readFileSync(h.stateFile, "utf8"));
+      if (kind === "forged digest") ledger.recovery.compactionSources[0].encryptedSha256 = "0".repeat(64);
+      else ledger.recovery.compactionSources[0].inputHashes = Array(4096).fill("0".repeat(64));
+      writeFileSync(h.stateFile, JSON.stringify(ledger), "utf8");
+    }
+    await h.restartRuntime(); h.loseKernel(); h.newTurn(recoveryId, "Changed evidence cannot obtain recovery authority");
+    const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), error => ["encrypted_v2_unsupported", "web_history_mismatch", "web_conversation_state"].includes(error.code));
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+  await t.test("cold compaction reserves custody until its receipt is durable", async t => {
+    const reached = Promise.withResolvers(), proceed = Promise.withResolvers(); let hold = false;
+    t.after(() => proceed.resolve());
+    const fixture = await controlledRecoveryFixture(t, { harnessOptions: { storage: { ...syntheticStorage, writeState: async (file, value) => {
+      if (hold && value.recovery?.compactionSources) { reached.resolve(); await proceed.promise; }
+      await syntheticStorage.writeState(file, value);
+    } } } }), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options); await h.restartRuntime();
+    hold = true; const pending = compact(h, true); await reached.promise;
+    await assert.rejects(compact(h, false), /already advancing/u);
+    h.newTurn(recoveryId, "A concurrent inference cannot steal compacting custody");
+    await assert.rejects(h.request(), /already owns this native conversation/u);
+    proceed.resolve(); await pending;
+    const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.recovery.stage, "armed"); assert.equal(saved.uncertainSend, true); assert.equal(saved.recovery.compactionSources.length, 1);
+  });
+  await t.test("a fresh owned coding action still requires its actual result", async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.newTurn(recoveryId, "Record the approved recovery-only boundary");
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    const freshId = "44002233-4455-6677-8899-aabbccddeeff";
+    h.newTurn(freshId, "Read the current file after recovery");
+    const observation = await h.toObserve(), read = h.broker.list(h.token()).tools.find(tool => tool.name === "read");
+    void h.broker.invoke(h.token(), { wireName: read.wireName, arguments: { path: "fresh.txt" } }).catch(() => {});
+    const coding = (await h.answerBrowser(observation.call)).output[0]; h.append(coding);
+    const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    for (const v2 of [false, true]) await assert.rejects(compact(h, v2, freshId), { code: "web_coding_uncertain" });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+});
+
+test("recovery-only carriers require a consumed user from their exact native turn", async t => {
+  const recoveryId = "33002233-4455-6677-8899-aabbccddeeff", otherId = "44002233-4455-6677-8899-aabbccddeeff";
+  for (const v2 of [false, true]) for (const kind of ["assistant only", "unattributed user", "historical user", "current user", "current app ingress", "direct app ingress",
+    "historical app ingress", "malformed app ingress", "empty app ingress", "user after pre-user carrier", "foreign inference", "changed user hash", "changed user turn"]) await t.test(`${kind}, V2 ${v2}`, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.newTurn(recoveryId, "This request needs its own nonempty user input");
+    const source = { role: ["assistant only", "user after pre-user carrier"].includes(kind) ? "assistant" : "user", content: "The only source message" };
+    if (!["assistant only", "unattributed user"].includes(kind)) source.internal_chat_message_metadata_passthrough = {
+      create_time: 1, turn_id: kind === "historical user" ? followupId : recoveryId,
+    };
+    const app = kind.includes("app ingress");
+    const ingress = { type: "function_call_output", id: "current-native-ingress", namespace: "codex_app", name: "send_message_to_thread",
+      output: kind === "empty app ingress" ? "   " : "Current native user instruction", internal_chat_message_metadata_passthrough: {
+        turn_id: kind === "historical app ingress" ? followupId : recoveryId, create_time: 1,
+      } };
+    if (kind === "malformed app ingress") ingress.call_id = "historical-orphan";
+    h.input().splice(0, h.input().length, ...(app ? [{ role: "developer", content: "Current native context" }, ingress,
+      { type: "configuration_update", reasoning: { effort: "low" } }] : [source]));
+    for (const [round, format] of (kind === "direct app ingress" ? [] : [v2, v2, !v2]).entries()) {
+      if (kind === "user after pre-user carrier" && round === 1) h.append({ role: "user", content: "The current user arrived after preparation",
+        internal_chat_message_metadata_passthrough: { turn_id: recoveryId, create_time: 1 } });
+      const original = structuredClone(h.input());
+      const response = await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: original, stream: format },
+        { ...(format ? { compactV2: true } : { compact: true }), headers: headers(recoveryId) });
+      const output = format ? [await nativeV2Checkpoint(response)] : (await response.json()).output;
+      h.input().splice(0, h.input().length, ...(format ? [...nativeV2Users(original), ...output] : output));
+      await h.restartRuntime(); h.loseKernel();
+    }
+    if (kind === "foreign inference") { h.newTurn(otherId, "This later turn has not supplied a user"); h.input().pop(); }
+    else if (kind.startsWith("changed user")) {
+      const saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+      for (const receipt of saved.recovery.compactionSources) {
+        if (kind === "changed user hash") receipt.user.inputSha256 = "0".repeat(64);
+        else receipt.user.turnId = otherId;
+      }
+      writeFileSync(h.stateFile, JSON.stringify(saved), "utf8"); await h.restartRuntime();
+    }
+    const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length, sends = h.browser.ui.sends.length;
+    if (["current user", "current app ingress", "direct app ingress", "user after pre-user carrier"].includes(kind)) {
+      const recovery = (await h.request()).output[0];
+      assert.equal(readBrowserProgram(JSON.parse(recovery.arguments).code).operation, "recover");
+      const notice = await h.answerBrowser(recovery);
+      assert.match(notice.output[0].content[0].text, /no prompt was sent/u);
+      assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.stage, "bounded");
+    } else {
+      await assert.rejects(h.request(), error => ["web_history_mismatch", "web_conversation_state"].includes(error.code));
+      assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+      if (kind === "assistant only") {
+        h.newTurn(otherId, "A fresh explicit user instruction now supplies the missing authority");
+        const recovery = (await h.request()).output[0];
+        assert.equal(readBrowserProgram(JSON.parse(recovery.arguments).code).operation, "recover");
+        await h.answerBrowser(recovery);
+        assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.stage, "bounded");
+      }
+    }
+    assert.equal(h.browser.ui.sends.length, sends);
+  });
+});
+
+test("bounded recovery compaction rejects changed fences and preserves new material without excerpting it", async t => {
+  for (const v2 of [false, true]) for (const kind of ["changed prefix", "changed carrier", "missing result", "oversized tail"]) {
+    if (!v2 && kind === "oversized tail") continue;
+    await t.test(`${kind}, V2 ${v2}`, async t => {
+      const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+      const { plan, confirmationSha256 } = await fixture.prepare();
+      await confirmControlledWebRecovery(plan, confirmationSha256, options);
+      h.input().splice(0, h.input().length, ...opaqueReplacementHistory());
+      h.newTurn("33002233-4455-6677-8899-aabbccddeeff", "Record only the approved opaque boundary");
+      const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+      const call = { type: "function_call", call_id: "bounded-actual-action", name: "read", arguments: "{}" };
+      h.append(call);
+      if (kind !== "missing result") h.append(outputFor(call, kind === "oversized tail" ? "NEW_RESULT_MUST_NOT_BE_EXCERPTED ".repeat(6000) : "Actual new result"));
+      if (kind === "changed prefix") h.input()[2].content[0].text = "Changed abandoned prefix";
+      const source = structuredClone(h.input()), bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+      const pending = h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: source, stream: v2 },
+        { ...(v2 ? { compactV2: true } : { compact: true }), headers: headers("44002233-4455-6677-8899-aabbccddeeff") });
+      if (kind === "changed carrier") {
+        const output = v2 ? [await nativeV2Checkpoint(await pending)] : (await (await pending).json()).output;
+        h.input().splice(0, h.input().length, ...(v2 ? [...nativeV2Users(source), ...output] : output));
+        h.input().find(item => item.type === "compaction").encrypted_content += "changed";
+        await h.restartRuntime(); h.loseKernel(); h.newTurn("44002233-4455-6677-8899-aabbccddeeff", "A changed compact carrier cannot resume");
+        await assert.rejects(h.request(), error => ["encrypted_v2_unsupported", "web_history_mismatch"].includes(error.code));
+      } else if (kind === "missing result") {
+        // A historical native call without Router custody remains data with an
+        // unknown outcome. Compaction must retain it without inventing a result.
+        const output = v2 ? [await nativeV2Checkpoint(await pending)] : (await (await pending).json()).output;
+        assert.deepEqual(v2 ? decodeCompaction(output[0].encrypted_content).checkpoint.retained_tail : output.slice(1), [call]);
+      } else {
+        await assert.rejects(pending, { code: kind === "changed prefix" ? "web_history_mismatch" : "web_compaction_tail_too_large" });
+        assert.deepEqual(readFileSync(h.stateFile), bytes);
+      }
+      assert.equal(h.observations.nativeOperations.length, operations);
+    });
+  }
+});
 
 test("explicit whole-input quarantine recovers native opaque compaction and preserves later local Web compaction", async t => {
   for (const [compactV2, repeated] of [[false, false], [true, false], [false, true], [true, true]]) await t.test(`local V2: ${compactV2}, repeated: ${repeated}`, async t => {

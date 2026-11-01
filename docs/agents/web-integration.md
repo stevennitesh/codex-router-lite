@@ -331,6 +331,29 @@ the exact browser snapshot proof, records that request's canonical input hashes 
 separate abandoned-input replay boundary and returns a local notice without
 Send or coding-tool work. The next fresh user instruction sends only new material;
 the failed prompt, recovery-only request and local notice are not replayed.
+Native preturn compaction may run before that recovery-only request. Under this
+whole-input policy, armed recovery returns a source-free local checkpoint and
+retains exact source-item hashes plus encoded and readable carrier digests in
+`recovery.compactionSources`. The receipt list is bounded to 256 KiB; exceeding
+that bound fails before returning replacement history. Repeated compaction and
+restart accept only an unchanged recorded source prefix or an exact returned
+carrier with counted source copies. These receipts do not acknowledge delivery
+or replace the required saved-chat proof. A carrier can stand in for compacted
+user input only when its receipt binds a nonempty user message attributed to
+that exact native turn. The same rule recognizes the maintained canonical
+`codex_app` create/send ingress with matching turn metadata, even when native
+context or configuration envelopes follow it. Historical orphan outputs supply
+no user authority. Repeated compaction inherits that evidence only through an
+exact earlier carrier in the same turn, with its readable digest present among
+the new source hashes. A carrier issued before the user input existed still
+requires explicit current input; restart or a different inference turn cannot
+supply the missing authority.
+After the recovery boundary is bounded,
+local compaction preserves only the exact new tail through the ordinary checkpoint
+and alias machinery. It cannot summarize quarantined history or discard new
+material. Pending browser/discovery controls and unresolved owned native actions
+still block compaction. Strict recovery journals without the whole-input policy
+still require one fresh accepted Web turn before compaction.
 Legacy records need no invented attempted-delivery evidence. New uncertain
 records additionally retain `attemptedDelivery` hashes before dispatch; these
 are never accepted-context proof. Accepted checkpoints and instruction digests

@@ -56,9 +56,21 @@ const validCompactionAlias = value => record(value) && nonempty(value.id) && sha
   && sha256(value.deliverySha256) && Array.isArray(value.retainedHashes) && value.retainedHashes.every(sha256)
   && (value.acknowledgedTailHashes === undefined || Array.isArray(value.acknowledgedTailHashes) && value.acknowledgedTailHashes.every(sha256))
   && (value.protocol === undefined || value.protocol === "v2" && Array.isArray(value.inputHashes) && value.inputHashes.every(sha256));
+const validRecoveryCompactionSources = value => Array.isArray(value) && value.length > 0
+  && value.every((source, index) => record(source)
+    && Object.keys(source).sort().join() === (source.user === undefined ? "carrierSha256,encryptedSha256,inputHashes" : "carrierSha256,encryptedSha256,inputHashes,user")
+    && sha256(source.encryptedSha256) && sha256(source.carrierSha256)
+    && Array.isArray(source.inputHashes) && source.inputHashes.length > 0 && source.inputHashes.every(sha256)
+    && (source.user === undefined || record(source.user) && Object.keys(source.user).sort().join() === "inputSha256,turnId"
+      && uuid.test(source.user.turnId ?? "") && sha256(source.user.inputSha256)
+      && (source.inputHashes.includes(source.user.inputSha256) || value.slice(0, index).some(prior => prior.user && digest(prior.user) === digest(source.user)
+        && source.inputHashes.includes(prior.carrierSha256)))))
+  && Buffer.byteLength(JSON.stringify(value), "utf8") <= 256 * 1024;
 const validQuarantine = value => value.inputPolicy === undefined
-  ? value.opaqueItems === undefined && value.boundaryOwner === undefined && value.compactionLineage === undefined
-  : value.inputPolicy === WEB_RECOVERY_INPUT_POLICY && (value.stage === "armed"
+  ? value.opaqueItems === undefined && value.boundaryOwner === undefined && value.compactionLineage === undefined && value.compactionSources === undefined
+  : value.inputPolicy === WEB_RECOVERY_INPUT_POLICY
+    && (value.compactionSources === undefined || validRecoveryCompactionSources(value.compactionSources))
+    && (value.stage === "armed"
     ? value.opaqueItems === undefined && value.boundaryOwner === undefined && value.compactionLineage === undefined
     : record(value.boundaryOwner) && uuid.test(value.boundaryOwner.threadId ?? "") && uuid.test(value.boundaryOwner.turnId ?? "")
       && (value.compactionLineage === undefined || value.stage === "continued" && validCompactionAlias(value.compactionLineage))
@@ -275,6 +287,19 @@ export function isCanonicalWebAppIngress(item) {
     && Object.keys(item).sort().join() === "id,internal_chat_message_metadata_passthrough,name,namespace,output,type"
     && typeof item.output === "string" && record(metadata) && Object.keys(metadata).sort().join() === "create_time,turn_id"
     && uuid.test(metadata.turn_id ?? "") && Number.isFinite(metadata.create_time) && metadata.create_time > 0;
+}
+
+function recoveryUserInput(raw, current, owner, { requireAttribution = false } = {}) {
+  const final = raw.at(-1), finalUser = current.at(-1), attributedTurn = final?.internal_chat_message_metadata_passthrough?.turn_id;
+  if (finalUser?.role === "user" && finalUser.content.trim()
+      && (!requireAttribution || typeof attributedTurn === "string" && attributedTurn.toLowerCase() === owner.turnId)) {
+    return { turnId: owner.turnId, inputSha256: digest(finalUser) };
+  }
+  // Native app messages are attributed ingress, not historical orphan-result
+  // authority. Context/configuration envelopes may follow the one current item.
+  const ingress = raw.flatMap((item, index) => isCanonicalWebAppIngress(item) && item.output.trim()
+    && item.internal_chat_message_metadata_passthrough.turn_id.toLowerCase() === owner.turnId ? [index] : []);
+  return ingress.length === 1 ? { turnId: owner.turnId, inputSha256: digest(current[ingress[0]]) } : undefined;
 }
 
 function validateQuarantineActions(payload, { rejectOrphans = false } = {}) {
@@ -591,12 +616,35 @@ export function createInAppWebRuntime({
   const conversationInput = (conversation, payload) => {
     payload = projectedPayload(conversation, payload);
     const current = transcript(payload, conversation.recovery), recovery = conversation.recovery;
+    if (recovery?.stage === "armed" && recovery.compactionSources) {
+      // A compact response can be abandoned by its native caller. Accept either
+      // its unchanged source prefix or the exact local carrier, with counted
+      // retained source copies. A forged carrier cannot erase this custody.
+      const original = recovery.compactionSources.some(source => source.inputHashes.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash));
+      if (!original) {
+        const raw = readableInput(payload), matches = raw.flatMap((item, index) => item.type === "compaction" && typeof item.encrypted_content === "string"
+          ? [{ sources: recovery.compactionSources.filter(source => textDigest(item.encrypted_content) === source.encryptedSha256), index }].filter(match => match.sources.length) : []);
+        if (matches.length !== 1) throw fail("The approved recovery compaction carrier changed.", "web_history_mismatch");
+        // V1 source-free carriers have identical bytes across compactions.
+        // One actual carrier may therefore have several valid source receipts.
+        const sourceCopies = matches[0].sources.some(source => {
+          const counts = new Map();
+          for (const hash of source.inputHashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
+          return current.slice(0, matches[0].index).every(item => {
+            const hash = digest(item), count = counts.get(hash) ?? 0;
+            if (!count) return false;
+            counts.set(hash, count - 1); return true;
+          });
+        });
+        if (!sourceCopies) throw fail("The approved recovery compaction source copies changed.", "web_history_mismatch");
+      }
+    }
     if (recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY && recovery.stage !== "armed") {
       // Removing an opaque item cannot erase its fence. A newer readable
       // representation needs an exact runtime-owned alias until accepted.
       const anchor = recovery.stage === "bounded" ? recovery.inputHashes : conversation.checkpoint;
       const anchored = anchor?.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash);
-      if (!anchored && (recovery.stage !== "continued" || compactTail(conversation, readableInput(payload), undefined, false) === undefined)) {
+      if (!anchored && compactTail(conversation, readableInput(payload), undefined, false) === undefined) {
         throw fail("Native history no longer matches the quarantine fence or an authorized compaction transition.", "web_history_mismatch");
       }
       quarantineContext(conversation, readableInput(payload), current);
@@ -615,15 +663,16 @@ export function createInAppWebRuntime({
     if (!conversation) return seed();
     if (conversation.pendingBrowserOpen) throw fail("The saved browser opening has not been verified; native compaction must wait for its exact saved-chat proof.", "web_browser_open_pending");
     raw = nativeInput(conversation, payload); clean = { ...payload, input: raw };
-    if (conversation.recovery && ["armed", "bounded"].includes(conversation.recovery.stage)) {
+    const pendingRecovery = conversation.recovery && ["armed", "bounded"].includes(conversation.recovery.stage);
+    if (pendingRecovery && conversation.recovery.inputPolicy !== WEB_RECOVERY_INPUT_POLICY) {
       throw fail("Complete one fresh accepted Web turn after explicit recovery before compaction.", "web_recovery_pending");
     }
     conversations.set(owner.threadId, conversation);
     if (conversation.activeTurn && conversation.activeTurn !== owner.turnId) throw fail("A different native turn owns this Web conversation's compaction.");
     if (conversation.compacting || [...turns.values()].some(turn => turn.conversation === conversation && turn.busy)) throw fail("A native Web request is already advancing this conversation.");
-    if (compactV2 && [...turns.values()].some(turn => turn.conversation === conversation && !turn.done && !turn.cancelled
+    if ((compactV2 || pendingRecovery) && [...turns.values()].some(turn => turn.conversation === conversation && !turn.done && !turn.cancelled
         && turn.pending && turn.pending.kind !== "coding")) {
-      throw fail("Native V2 compaction cannot discard a pending browser or discovery result; finish that native call first.", "web_compaction_control_pending");
+      throw fail("Native compaction cannot discard a pending browser or discovery result; finish that native call first.", "web_compaction_control_pending");
     }
     conversation.compacting = true;
     try {
@@ -631,10 +680,32 @@ export function createInAppWebRuntime({
       const current = conversationInput(conversation, clean);
       const retained = compactTail(conversation, raw, undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
+      if (pendingRecovery && conversation.recovery.stage === "armed") {
+        if (!current.length) throw fail("Approved recovery compaction requires its canonical native input.", "web_history_mismatch");
+        // Approval abandons all input through the later recovery-only request.
+        // A preturn compaction must not summarize that prefix into executable
+        // Web context. Keep exact source fingerprints as a carrier receipt;
+        // native history retains the originals. Browser proof alone bounds the
+        // recovery, and neither this carrier nor its receipt acknowledges Send.
+        const output = webCompactOutput({ ...clean, input: [] }, { compactV2 }), checkpoint = output[0];
+        const user = recoveryUserInput(raw, current, owner, { requireAttribution: true })
+          ?? conversation.recovery.compactionSources?.find(source => source.user?.turnId === owner.turnId
+            && raw.some(item => item.type === "compaction" && typeof item.encrypted_content === "string"
+              && textDigest(item.encrypted_content) === source.encryptedSha256))?.user;
+        const sources = [...(conversation.recovery.compactionSources ?? []), {
+          encryptedSha256: textDigest(checkpoint.encrypted_content), carrierSha256: digest(transcript({ input: [checkpoint] })[0]),
+          inputHashes: current.map(digest), ...(user ? { user } : {}),
+        }];
+        if (!validRecoveryCompactionSources(sources)) throw fail("The approved recovery compaction evidence exceeds its 256 KiB limit; conversation history was not compacted.", "web_recovery_compaction_too_large", 413);
+        conversation.recovery.compactionSources = sources;
+        await persist(conversation);
+        return webCompactResponse(clean, { output, compactV2 });
+      }
       compactTail(conversation, raw);
       if (!conversation.checkpoint || conversation.needsHistory) return seed(conversation.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY
         ? quarantineContext(conversation, raw, current).input : raw);
       let tail = retained;
+      if (pendingRecovery && conversation.recovery.stage === "bounded") tail ??= quarantineContext(conversation, raw, current).input;
       if (!tail && conversation.checkpoint.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) tail = raw.slice(conversation.checkpoint.length);
       if (!tail) throw fail("Native Web compaction no longer matches the confirmed delivery checkpoint.", "web_history_mismatch");
       // The latest Web answer is already in that chat. Preserve every other raw
@@ -863,7 +934,7 @@ export function createInAppWebRuntime({
     const checkpoint = recoveryBoundary ? conversation.recovery.inputHashes : conversation.checkpoint;
     let history = conversation.needsHistory && safeContext ? transcript({ input: safeContext.input }) : current;
     if (checkpoint && !conversation.needsHistory) {
-      const retained = recoveryBoundary ? undefined : compactTail(conversation, nativeInput(conversation, payload), undefined, false);
+      const retained = compactTail(conversation, nativeInput(conversation, payload), undefined, false);
       let common = 0;
       while (common < checkpoint.length && common < hashes.length && checkpoint[common] === hashes[common]) common += 1;
       if (retained) history = transcript({ input: retained });
@@ -1255,7 +1326,13 @@ export function createInAppWebRuntime({
       // compaction. Checking it cannot acknowledge the abandoned input.
       const tail = retained === undefined ? current.slice(conversation.checkpoint.length) : transcript({ input: retained });
       const wholeInputQuarantine = conversation.recovery.inputPolicy === WEB_RECOVERY_INPUT_POLICY;
-      if (wholeInputQuarantine ? current.at(-1)?.role !== "user" || !current.at(-1).content.trim()
+      const raw = nativeInput(conversation, payload), finalItem = raw.at(-1);
+      const compactedRequest = finalItem?.type === "compaction" && typeof finalItem.encrypted_content === "string" && conversation.recovery.compactionSources
+        ?.some(source => source.encryptedSha256 === textDigest(finalItem.encrypted_content) && source.user?.turnId === owner.turnId);
+      // A carrier substitutes for user admission only when this exact native
+      // turn's nonempty input was attributed before it was compacted. A pre-user
+      // carrier and historical/orphan outputs cannot supply that authority.
+      if (wholeInputQuarantine ? !compactedRequest && !recoveryUserInput(raw, current, owner)
         : retained === undefined && !conversation.checkpoint.every((hash, index) => turn.recoveryInputHashes[index] === hash)
           || !tail.some(item => item.role === "user")) {
         conversation.activeTurn = undefined;
