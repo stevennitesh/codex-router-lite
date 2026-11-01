@@ -509,6 +509,43 @@ test("the observed provenance-array omission requires exact canonical content an
   });
 });
 
+test("model-switch context requires its exact canonical provenance and observed HTTP kind projection", async t => {
+  const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  for (const variant of ["canonical", "projected", "changed text", "wrong kind", "unknown canonical kind", "wrong provenance", "missing proof", "extra copy"]) await t.test(variant, async t => {
+    const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+      { compactV2: true, headers: headers(oldOwner) }));
+    const context = rebuiltNativeContext(oldOwner, "exact switched model cohort"), message = context[0];
+    message.content.unshift({ type: "input_text", text: "<model_switch>Current native model instructions</model_switch>" });
+    message.internal_chat_message_metadata_passthrough.content_item_kinds.unshift("model_switch.instructions");
+    message.internal_chat_message_metadata_passthrough.content_item_metadata.unshift({ provenance: { type: "harness", hook: false } });
+    const record = canonicalContextRecord(carrier, structuredClone(context), oldOwner);
+    if (variant === "unknown canonical kind") record.payload.replacement_history[0].internal_chat_message_metadata_passthrough.content_item_kinds[0] = "other";
+    if (variant === "wrong provenance") record.payload.replacement_history[0].internal_chat_message_metadata_passthrough.content_item_metadata[0].provenance.hook = true;
+    if (variant !== "missing proof") publishCanonicalContextFixture(t, [record]);
+    const wire = structuredClone(context);
+    if (variant !== "canonical") {
+      for (const item of wire) delete item.internal_chat_message_metadata_passthrough.content_item_metadata;
+      wire[0].internal_chat_message_metadata_passthrough.content_item_kinds[0] = "other";
+    }
+    if (variant === "changed text") wire[0].content[0].text += " changed";
+    if (variant === "wrong kind") wire[0].internal_chat_message_metadata_passthrough.content_item_kinds[1] = "other";
+    if (variant === "extra copy") wire.push(structuredClone(wire[0]));
+    h.input().splice(0, h.input().length, ...wire, carrier); h.newTurn(nextOwner, "The fresh user is separate from model context");
+    await h.restartRuntime(); h.loseKernel(); const bytes = readFileSync(h.stateFile), sends = h.browser.ui.sends.length;
+    if (["canonical", "projected"].includes(variant)) {
+      const notice = await h.answerBrowser((await h.request()).output[0]);
+      assert.match(notice.output[0].content[0].text, /no prompt was sent/u);
+      assert.deepEqual(JSON.parse(readFileSync(h.stateFile, "utf8")).checkpoint, accepted.checkpoint);
+    } else {
+      await assert.rejects(h.request(), { code: "web_native_context_proof_unavailable" });
+      assert.deepEqual(readFileSync(h.stateFile), bytes);
+    }
+    assert.equal(h.browser.ui.sends.length, sends);
+  });
+});
+
 test("projected native context rejects changed, partial, unproved and over-counted prefixes without user authority", async t => {
   const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
   for (const kind of ["text", "kinds", "role", "owner", "partial provenance", "null provenance", "present bad provenance", "unknown metadata", "canonical provenance missing",

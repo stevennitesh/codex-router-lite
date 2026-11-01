@@ -100,6 +100,12 @@ prompt, allowing only CRLF or CR line endings to normalize to LF. Truncated text
 that cannot be verified stop preparation before Send and preserve the draft. An
 empty composer and enabled Send do not prove that an automatic text attachment
 contains the prompt; without payload proof that transformation cannot be sent.
+When exactly one visible `Show in text field` control and one visible
+`Remove pasted text attachment` control identify a converted paste, preparation
+may expand it back into the composer. Both attachment controls must disappear,
+and the complete restored inline text must match the intended prompt before
+adding generation authority or sending. Missing, ambiguous or partial expansion
+preserves the draft and fails preparation.
 Current-generation substantive assistant output or an authenticated current-token
 broker handler then acknowledges the verified input. Registration, declaration updates, Stop visibility
 and complete turn state do not. Until that proof, the active turn keeps its URL,
@@ -351,9 +357,11 @@ canonical native compaction record in that thread's current canonical home. The
 session, compact owner, trusted local carrier and source receipt must agree.
 Canonical context in `replacement_history` must retain complete valid provenance.
 The observed native HTTP projection may omit the entire `content_item_metadata`
-array while retaining exact type, role, content, turn and part kinds. That shape
-is only a proof candidate: it must match the deliberate one-field projection of
-the exact canonical record. Present partial, null or invalid provenance is never
+array while retaining exact type, role, content and turn. Its native
+`model_switch.instructions` part kind becomes `other` on HTTP; only that recorded
+kind is projected, with its canonical developer role and non-hook harness
+provenance still required. These shapes are only proof candidates and must match
+the exact canonical record under those two defined transformations. Present partial, null or invalid provenance is never
 ignored. Counted source copies are reconciled independently on both sides before
 checking the exact order of unmatched context, so an extra counted leading copy
 cannot shift the proof and an excess copy cannot gain context authority.

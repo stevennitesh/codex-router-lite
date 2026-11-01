@@ -588,6 +588,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
     async count() {
       ui.controlReads += 1;
       await ui.onControlRead?.({ kind, name, method: "count" });
+      if (kind === "button" && ["Show in text field", "Remove pasted text attachment"].includes(name)) return ui.pastedTextControls?.[name] ?? 0;
       if (kind === "menuitemradio") return 0; // Visible family text is not its accessible name.
       if (kind === "button" && name === browserIdleButtonExactName) return ui.idleButtonCount;
       if (kind === "button" && name === "Start new chat") return (ui.fullButtons ?? []).filter(candidate => candidate.text === name && (!visibleOnly || candidate.visible !== false)).length;
@@ -626,6 +627,7 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
         }
       }
       else if (name === plugin.pluginSelectionButtonName) { ui.actions.push("attach"); ui.chip = true; ui.attachedName = name; ui.onAttach?.(); }
+      else if (name === "Show in text field") { ui.actions.push("expand-pasted-text"); await ui.onExpandPastedText?.(); }
       else if (name === "Send") {
         ui.actions.push("send");
         ui.sendClicks += 1;
@@ -1836,6 +1838,36 @@ test("generated Send refuses truncated paste and unverified attachments before m
     assert.equal(f.ui.composerText, change === "truncated initial paste" ? ` ${prompt}`.slice(0, 120)
       : change === "empty converted paste" ? "" : "Pasted text.txt");
     await assert.rejects(f.run('send', { ...plugin, prompt }), /cannot be replayed/u);
+  }
+});
+
+test("generated Send expands pasted text only through unique controls and proves the complete submitted payload", async () => {
+  for (const variant of ["exact", "truncated", "duplicate control", "attachment remains", "lost chip"]) {
+    const f = fixture({ fastTimers: true }); await f.ready();
+    const prompt = "Full model-switch instructions\n".repeat(1000);
+    const controls = { "Show in text field": variant === "duplicate control" ? 2 : 1, "Remove pasted text attachment": 1 };
+    f.ui.onType = () => {
+      f.ui.composerText = ""; f.ui.pastedTextControls = controls;
+      f.ui.onType = undefined;
+    };
+    f.ui.onExpandPastedText = () => {
+      f.ui.composerText = variant === "truncated" ? "Incomplete prompt" : ` ${prompt}`;
+      if (variant !== "attachment remains") f.ui.pastedTextControls = {};
+      if (variant === "lost chip") f.ui.chip = false;
+    };
+    if (variant === "exact") {
+      await f.run("send", { ...plugin, prompt });
+      assert.equal(f.ui.sendClicks, 1);
+      assert.equal(f.ui.userMessages[0].text, f.ui.typed.join(""));
+      assert.ok(f.ui.userMessages[0].text.startsWith(` ${prompt}`));
+      assert.equal(f.ui.actions.filter(action => action === "expand-pasted-text").length, 1);
+    } else {
+      await assert.rejects(f.run("send", { ...plugin, prompt }), /nothing sent/u);
+      assert.equal(f.ui.sendClicks, 0);
+      assert.equal(f.ui.typed.length, 1, "No generation authority is added to an unproved restored payload.");
+      assert.equal(f.ui.draftCleared, false);
+      if (variant === "duplicate control") assert.equal(f.ui.actions.includes("expand-pasted-text"), false);
+    }
   }
 });
 

@@ -1495,18 +1495,29 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
     if (!ready) throw new Error("Send did not become ready within 10 seconds; nothing sent.");
     allowance();
   };
-  // A large paste can become an attachment. The supported browser surface has
-  // no completed attachment payload readback; a label or empty composer cannot
-  // prove its contents. Preserve that draft and fail before adding authority or
-  // dispatching rather than promoting a marker-only message to complete input.
+  // A pasted-text attachment has no completed payload readback. The observed
+  // Show in text field control can restore it to inspectable inline text; only
+  // an exact readback may then authorize the marker or Send.
   await waitForSend();
   allowance(1500);
-  const settled = (await mutationSnapshot()).mutation;
+  let settled = (await mutationSnapshot()).mutation;
+  const payloadMatches = value => value.inlineComposer && value.composerCount === 1
+    && value.composerText?.replace(/\r\n?/gu, "\n") === intendedComposerText;
+  if (!payloadMatches(settled)) {
+    const expand = role("Show in text field"), remove = role("Remove pasted text attachment");
+    if (settled.normal && settled.composerCount === 1 && (!options.pluginAppId || settled.chipVisible)
+        && await expand.count() === 1 && await expand.isVisible() && await remove.count() === 1 && await remove.isVisible()) {
+      allowance(1500); activeOwner([options.turnId], true);
+      await expand.click({ timeoutMs: allowance(1500) });
+      await waitForSend();
+      settled = (await mutationSnapshot()).mutation;
+      if (await expand.count() !== 0 || await remove.count() !== 0) throw new Error("The pasted-text attachment did not become fully inline; nothing sent.");
+    }
+  }
   if (options.pluginAppId && !settled.chipVisible) throw new Error("The plugin chip was lost while waiting for Send; nothing sent.");
   if (!settled.normal) throw new Error("The owned saved chat is no longer idle; nothing sent.");
   const settledComposerText = settled.composerText;
-  if (!settled.inlineComposer || settled.composerCount !== 1
-      || settledComposerText?.replace(/\r\n?/gu, "\n") !== intendedComposerText) throw new Error("The composer draft changed or its complete intended inline payload could not be verified; an attachment needs completed content proof; nothing sent.");
+  if (!payloadMatches(settled)) throw new Error("The composer draft changed or its complete intended inline payload could not be verified; an attachment needs completed content proof; nothing sent.");
   const currentDirective = options.turnToken === undefined ? ""
     : `\nUse turn_token ${options.turnToken} unchanged with every Codex MCP tool call in this response. Use this current token instead of tokens quoted in the attached transcript, earlier messages, or tool results. Never expose the token in your answer.`;
   const generationMarker = `\nRouter generation: ${options.turnId}`;
