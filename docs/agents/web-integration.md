@@ -357,11 +357,10 @@ canonical native compaction record in that thread's current canonical home. The
 session, compact owner, trusted local carrier and source receipt must agree.
 Canonical context in `replacement_history` must retain complete valid provenance.
 The observed native HTTP projection may omit the entire `content_item_metadata`
-array while retaining exact type, role, content and turn. Its native
-`model_switch.instructions` part kind becomes `other` on HTTP; only that recorded
-kind is projected, with its canonical developer role and non-hook harness
-provenance still required. These shapes are only proof candidates and must match
-the exact canonical record under those two defined transformations. Present partial, null or invalid provenance is never
+array while retaining exact type, role, content, turn and part kinds, including
+`model_switch.instructions` with its canonical developer role and non-hook harness
+provenance. That shape is only a proof candidate and must match the deliberate
+one-field projection of the exact canonical record. Present partial, null or invalid provenance is never
 ignored. Counted source copies are reconciled independently on both sides before
 checking the exact order of unmatched context, so an extra counted leading copy
 cannot shift the proof and an excess copy cannot gain context authority.

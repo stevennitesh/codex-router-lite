@@ -303,10 +303,7 @@ function nativeContextShape(item, owner, requireProvenance) {
     && metadata.content_item_kinds.length === item.content.length
     && (!requireProvenance || Array.isArray(metadata.content_item_metadata) && metadata.content_item_metadata.length === item.content.length)
     && item.content.every((part, index) => {
-      // Native HTTP labels model-switch context as other. This is only a
-      // candidate; exact canonical content, provenance and cohort still decide.
-      const kind = metadata.content_item_kinds[index];
-      const definition = nativeContextParts.get(!requireProvenance && kind === "other" ? "model_switch.instructions" : kind), evidence = metadata.content_item_metadata?.[index];
+      const definition = nativeContextParts.get(metadata.content_item_kinds[index]), evidence = metadata.content_item_metadata?.[index];
       if (!definition || item.role !== definition[0] || !record(part) || Object.keys(part).sort().join() !== "text,type"
           || part.type !== "input_text" || typeof part.text !== "string") return false;
       if (!requireProvenance) return true; // Candidate shape only; never sufficient authority without exact native proof.
@@ -322,8 +319,7 @@ const nativeContextHash = item => digest({ type: item.type, role: item.role, con
   internal_chat_message_metadata_passthrough: item.internal_chat_message_metadata_passthrough });
 const projectedNativeContextHash = item => {
   const { content_item_metadata: _provenance, ...metadata } = item.internal_chat_message_metadata_passthrough;
-  return nativeContextHash({ ...item, internal_chat_message_metadata_passthrough: { ...metadata,
-    content_item_kinds: metadata.content_item_kinds.map(kind => kind === "model_switch.instructions" ? "other" : kind) } });
+  return nativeContextHash({ ...item, internal_chat_message_metadata_passthrough: metadata });
 };
 function matchesNativeContextProof(prefix, current, sourceHashes, proof, owner) {
   if (!proof) return false;
