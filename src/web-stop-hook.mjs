@@ -3,11 +3,12 @@ import { pathToFileURL } from "node:url";
 import { isSavedChatUrl } from "./web-browser.mjs";
 import { browserDom, browserIdleButtonExactName, createStopBrowserState, waitForBrowserReadiness } from "./web-browser-state.mjs";
 import { STOP_BUDGET, STOP_CODES } from "./web-stop-contract.mjs";
+import { validWebConversationGuard, validNativeCompactionProjection, validNativeCompactionReference } from "./web-conversation-guard.mjs";
 
 // Serialized into the native JS tool: no Router module, secret, or cached
 // request metadata is imported. The caller owns validation/protection of stateDir
 // and runtimeModule; Router's atomic ledger writer preserves its private ACL.
-async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState, waitForState) {
+async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes, createBrowserState, waitForState, validGuard, validProjection) {
   const { threadId: nativeThread, turnId: nativeTurn, sessionId: nativeSession } = identity;
   const started = Date.now(), deadline = started + budgetMs;
   const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -61,9 +62,10 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
       // unchanged and continues to block ordinary replay and continuation.
       const deliveredUncertain = deliveryMatches && value?.uncertainSend === true && last?.sendState === "uncertain";
       const recovery = value?.recovery;
-      const recoveryVersion = value?.version === 2 && recovery?.inputPolicy === undefined
+      const historyVersion = value?.version === 4 ? value.priorVersion : value?.version;
+      const recoveryVersion = historyVersion === 2 && recovery?.inputPolicy === undefined
           && recovery?.opaqueItems === undefined && recovery?.boundaryOwner === undefined && recovery?.compactionLineage === undefined
-        || value?.version === 3 && recovery?.inputPolicy === "quarantine-all-native-input-through-first-recovery-request-v1";
+        || historyVersion === 3 && recovery?.inputPolicy === "quarantine-all-native-input-through-first-recovery-request-v1";
       const currentRecovery = recoveryVersion && record(recovery) && ["bounded", "continued"].includes(recovery.stage)
         && /^[a-f0-9]{64}$/u.test(recovery.confirmationSha256 ?? "") && record(recovery.proof)
         && uuid(recovery.proof.failedTurnId) && Array.isArray(recovery.revokedTurnIds)
@@ -71,7 +73,8 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
         && !recovery.revokedTurnIds.includes(nativeTurn);
       // Only the fields which authorize Stop are needed. History, compaction,
       // and reply-recovery schemas remain owned by the ordinary Web runtime.
-      if (!record(value) || !(value.version === 1 && recovery === undefined || currentRecovery) || value.threadId !== nativeThread
+      if (!validGuard(value, normalUrl, validProjection) || value.pendingBrowserOpen !== undefined
+          || !(historyVersion === 1 && recovery === undefined || currentRecovery) || value.threadId !== nativeThread
           || typeof value.bindingId !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,100}$/u.test(value.bindingId)
           || !Array.isArray(value.browserOwnerTurnIds) || !value.browserOwnerTurnIds.every(uuid)
           || new Set(value.browserOwnerTurnIds).size !== value.browserOwnerTurnIds.length
@@ -85,10 +88,12 @@ async function stopOwnedWebTurn(identity, config, budgetMs, normalUrl, stopCodes
     stage = "ledger";
     const ledger = readLedger(true);
     if (!ledger) return;
-    const tuple = value => JSON.stringify([value.version, value.threadId, value.bindingId,
+    const tuple = value => JSON.stringify([value.version, value.priorVersion,
+      value.nativeCompactionProjection?.map(reference => [reference.opaqueSha256, reference.witnessSha256, reference.sourceSha256, reference.checkpointSha256]),
+      value.threadId, value.bindingId,
       value.browserOwnerTurnIds, value.tabId, value.chatUrl, value.generationTurnKey, value.uncertainSend,
       value.lastTurn.turnId, value.lastTurn.sendState, value.lastTurn.completed,
-      value.version !== 1 ? [value.recovery.stage, value.recovery.confirmationSha256, value.recovery.revokedTurnIds, value.recovery.inputPolicy] : null]);
+      value.recovery !== undefined ? [value.recovery.stage, value.recovery.confirmationSha256, value.recovery.revokedTurnIds, value.recovery.inputPolicy] : null]);
     const ledgerTuple = tuple(ledger);
     key = "routerWeb_" + ledger.bindingId;
     const actualMetadata = () => {
@@ -337,5 +342,5 @@ export function createWebStopCode({ stateDir, runtimeModule }, { threadId, turnI
     ...(delivery === undefined ? {} : { delivery }),
     ui: Object.fromEntries(["turnSelector", "turnKeyAttribute", "turnStateSelector", "turnStateAttribute", "completeTurnState"]
       .map(name => [name, browserDom[name]])) };
-  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()}, ${waitForBrowserReadiness.toString()});`;
+  return `await (${stopOwnedWebTurn.toString()})(${JSON.stringify({ threadId, turnId, sessionId })}, ${JSON.stringify(config)}, ${budgetMs}, ${isSavedChatUrl.toString()}, ${JSON.stringify(STOP_CODES)}, ${createStopBrowserState.toString()}, ${waitForBrowserReadiness.toString()}, ${validWebConversationGuard.toString()}, value => (${validNativeCompactionProjection.toString()})(value, ${validNativeCompactionReference.toString()}));`;
 }

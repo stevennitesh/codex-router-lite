@@ -28,9 +28,10 @@ function fixture(t, { hooks = undefined, baseline = { CODEX_CLI_PATH: "original 
   const sources = { "web-stop-adapter.mjs": 'import "./web-browser.mjs"; import "./web-stop-hook.mjs"; import "./web-stop-contract.mjs"; import "./web-process-snapshot.mjs";\n',
     "web-process-snapshot.mjs": "export const processSnapshotFixture = true;\n",
     "web-browser.mjs": 'import "./web-browser-state.mjs"; export const browserFixture = true;\n',
-    "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; export const hookFixture = true;\n',
+    "web-stop-hook.mjs": 'import "./web-browser-state.mjs"; import "./web-conversation-guard.mjs"; export const hookFixture = true;\n',
     "web-browser-state.mjs": "export const stateFixture = true;\n",
     "web-stop-contract.mjs": "export const contractFixture = true;\n",
+    "web-conversation-guard.mjs": "export const guardFixture = true;\n",
     "web-stop-adapter-entry.cs": 'class Entry { string Node = @"@@NODE@@", Adapter = @"@@ADAPTER@@", Config = @"@@CONFIG@@", Events = @"@@EVENTS@@", OfficialRepl = @"@@OFFICIAL_REPL@@", OfficialReplSha256 = "@@OFFICIAL_REPL_SHA256@@", NodeSha256 = "@@NODE_SHA256@@", CuaEntry = @"@@CUA_ENTRY@@", CuaEntrySha256 = "@@CUA_ENTRY_SHA256@@", CuaGuard = @"@@CUA_GUARD@@", CuaGuardSha256 = "@@CUA_GUARD_SHA256@@"; }\n' };
   for (const [name, contents] of Object.entries(sources)) writeFileSync(path.join(sourceDir, name), contents);
   const manifest = { version: 1 };
@@ -195,7 +196,7 @@ test("adapter install publishes private baseline before global changes and prese
   assert.deepEqual(config, { version: 1, server: f.manifest.officialNodeRepl.path, serverSha256: f.manifest.officialNodeRepl.sha256,
     stateDir: f.stateDir, runtimeModule: f.manifest.runtimeModule, sdkPackageJson: f.manifest.sdkPackageJson,
     threadIds: [trialThread], receiptPath: path.join(f.stateDir, "web-stop-adapter", "events.jsonl") });
-  for (const name of ["web-stop-adapter.mjs", "web-process-snapshot.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
+  for (const name of ["web-stop-adapter.mjs", "web-process-snapshot.mjs", "web-browser.mjs", "web-browser-state.mjs", "web-stop-hook.mjs", "web-stop-contract.mjs", "web-conversation-guard.mjs"]) assert.equal(readFileSync(path.join(result.managedDirectory, name), "utf8"), f.sources[name]);
   const launcher = readFileSync(path.join(result.managedDirectory, "entry.cs"), "utf8");
   assert.equal(launcher.includes("@@"), false); assert.ok(launcher.includes(result.configPath)); assert.ok(launcher.includes(f.manifest.node.path));
   assert.deepEqual(webStopAdapterStatus(f.options).conflicts, []);
@@ -513,10 +514,12 @@ test("a verified older snapshot remains readable and upgrades new dependencies a
   writeFileSync(path.join(first.managedDirectory, "web-stop-hook.mjs"), oldHook);
   rmSync(path.join(first.managedDirectory, "web-browser-state.mjs"));
   rmSync(path.join(first.managedDirectory, "web-process-snapshot.mjs"));
+  rmSync(path.join(first.managedDirectory, "web-conversation-guard.mjs"));
   const manifestPath = path.join(first.managedDirectory, "manifest.json");
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   delete manifest.files["web-browser-state.mjs"];
   delete manifest.files["web-process-snapshot.mjs"];
+  delete manifest.files["web-conversation-guard.mjs"];
   delete manifest.plan.cuaBootstrap;
   manifest.files["web-stop-adapter.mjs"] = hash(oldSource);
   manifest.files["web-browser.mjs"] = hash(oldBrowser);
@@ -535,6 +538,7 @@ test("a verified older snapshot remains readable and upgrades new dependencies a
   assert.equal(readFileSync(path.join(first.managedDirectory, "web-stop-adapter.mjs"), "utf8"), oldSource);
   assert.equal(existsSync(path.join(next.managedDirectory, "web-browser-state.mjs")), true);
   assert.equal(existsSync(path.join(next.managedDirectory, "web-process-snapshot.mjs")), true);
+  assert.equal(existsSync(path.join(next.managedDirectory, "web-conversation-guard.mjs")), true);
   assert.equal(rollbackWebStopAdapter(f.options).state, "removed");
   assert.deepEqual(f.environment.values, { CODEX_CLI_PATH: "original working CLI", CODEX_NODE_REPL_PATH: null });
   assert.equal(existsSync(f.hooksPath), false);

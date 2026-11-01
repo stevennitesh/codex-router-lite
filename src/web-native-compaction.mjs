@@ -11,6 +11,8 @@ import { ResponseUsageTransform } from "./response-usage.mjs";
 import { SseFrameBuffer, sseFrameFields } from "./sse-framing.mjs";
 import { findNativeRollout } from "./web-turn-cancellation.mjs";
 import { CODEX_HOME } from "./paths.mjs";
+import { validNativeCompactionReference } from "./web-conversation-guard.mjs";
+export { validNativeCompactionReference } from "./web-conversation-guard.mjs";
 
 export const MAX_NATIVE_COMPACTION_WITNESS_BYTES = 16 * 1024 * 1024;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -97,11 +99,6 @@ export function nativeCompactionSource(input) {
   const serialized = JSON.stringify(source);
   if (Buffer.byteLength(serialized) > MAX_NATIVE_COMPACTION_WITNESS_BYTES / 2) throw failure();
   return JSON.parse(serialized);
-}
-
-export function validNativeCompactionReference(value) {
-  return record(value) && Object.keys(value).sort().join() === "checkpointSha256,opaqueSha256,sourceSha256,witnessSha256"
-    && [value.checkpointSha256, value.opaqueSha256, value.sourceSha256, value.witnessSha256].every(sha256);
 }
 
 export function validNativeCompactionWitness(value, { threadId, opaqueItem, reference } = {}) {

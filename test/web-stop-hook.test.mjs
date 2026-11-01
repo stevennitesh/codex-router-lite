@@ -260,6 +260,63 @@ test("Stop retains current-turn authority after strict V2 and quarantine V3 aban
   ]) await blocked(f => { f.first.ledger.version = 3; f.first.ledger.recovery = quarantine(); change(f.first.ledger); }, "ledger_invalid");
 });
 
+const guardedReference = () => ({ checkpointSha256: "a".repeat(64), opaqueSha256: "b".repeat(64),
+  sourceSha256: "c".repeat(64), witnessSha256: "d".repeat(64) });
+function guardedContinuedLedger(value) {
+  value.version = 4; value.priorVersion = 3; value.nativeCompactionProjection = [guardedReference()];
+  value.recovery = { stage: "continued", inputPolicy: "quarantine-all-native-input-through-first-recovery-request-v1",
+    confirmationSha256: "a".repeat(64), proof: { failedTurnId: id(10) }, revokedTurnIds: [id(10)],
+    inputHashes: ["e".repeat(64)], opaqueItems: [], boundaryOwner: { threadId: id(1), turnId: id(10) },
+    compactionSources: [{ encryptedSha256: "f".repeat(64), carrierSha256: "a".repeat(64), inputHashes: ["e".repeat(64)] }] };
+  return value;
+}
+
+test("current V4 native-compaction guards retain exact Stop authority after a continued recovery, including fresh controllers", async () => {
+  for (const fresh of [false, true]) {
+    const f = fixture(); guardedContinuedLedger(f.first.ledger);
+    if (fresh) f.fresh(f.first);
+    const before = JSON.stringify(f.first.ledger), result = await f.run();
+    stopped(result);
+    assert.equal(result.freshController, fresh);
+    assert.equal(JSON.stringify(f.first.ledger), before, "Stop never promotes or rewrites the guarded history.");
+    assert.equal(clicked(f).length, 1);
+  }
+  for (const priorVersion of [1, 2]) {
+    const f = fixture(); guardedContinuedLedger(f.first.ledger); f.first.ledger.priorVersion = priorVersion;
+    if (priorVersion === 1) delete f.first.ledger.recovery;
+    else f.first.ledger.recovery = { stage: "bounded", confirmationSha256: "a".repeat(64),
+      proof: { failedTurnId: id(10) }, revokedTurnIds: [id(10)] };
+    stopped(await f.run());
+  }
+});
+
+test("Stop refuses malformed or pending V4 guards and forged current-turn authority before any browser action", async () => {
+  for (const change of [
+    value => { value.version = 5; }, value => { delete value.priorVersion; },
+    value => { value.priorVersion = 4; }, value => { value.priorVersion = "3"; },
+    value => { value.priorVersion = 1; }, value => { value.priorVersion = 2; },
+    value => { delete value.nativeCompactionProjection; }, value => { value.nativeCompactionProjection = []; },
+    value => { value.nativeCompactionProjection.push(guardedReference()); },
+    value => { value.nativeCompactionProjection[0].sourceSha256 = "malformed"; },
+    value => { value.nativeCompactionProjection[0].extra = "unreviewed"; },
+    value => { value.pendingBrowserOpen = { turnId: id(11), callId: "call_router_web_" + "f".repeat(32), chatUrl: value.chatUrl };
+      value.lastTurn.sendState = "unsent"; },
+    value => { value.uncertainSend = true; value.lastTurn.sendState = "uncertain"; },
+    value => { value.browserOwnerTurnIds = [id(10)]; },
+    value => { value.recovery.revokedTurnIds.push(id(11)); },
+  ]) await blocked(f => { guardedContinuedLedger(f.first.ledger); change(f.first.ledger); }, "ledger_invalid");
+  await blocked(f => { guardedContinuedLedger(f.first.ledger); f.context.nodeRepl.requestMeta = f.metadata(id(1), id(10)); }, "metadata_mismatch");
+});
+
+test("V4 guard changes fence Stop while unrelated historical compaction sources grant no new authority", async () => {
+  const changed = fixture(); guardedContinuedLedger(changed.first.ledger);
+  changed.model.onCall = name => { if (name === "browsers") changed.first.ledger.nativeCompactionProjection[0].witnessSha256 = "e".repeat(64); };
+  assert.equal((await changed.run()).code, "ledger_changed"); assert.deepEqual(mutations(changed), []);
+  const history = fixture(); guardedContinuedLedger(history.first.ledger);
+  history.model.onCall = name => { if (name === "browsers") history.first.ledger.recovery.compactionSources[0].carrierSha256 = "e".repeat(64); };
+  stopped(await history.run());
+});
+
 test("the adapter's generated Stop program preserves escaped paths as data", async () => {
   const suffix = '\'"; globalThis.injected = true; //${session_id}';
   const f = fixture({ stateDir: stateDir + suffix, runtimeModule: runtimeModule + suffix });

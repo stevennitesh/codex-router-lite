@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { discoverBrowserExecutor, discoverBrowserOpener, browserScript, isSavedChatUrl, isNormalChatHomeUrl, parseBrowserOutput, isBrowserContinuationCacheMiss } from "./web-browser.mjs";
 import { savedChatRecoveryError } from "./web-browser-diagnostics.mjs";
+import { validWebConversationGuard, validNativeCompactionProjection, webConversationHistory as conversationHistory } from "./web-conversation-guard.mjs";
 import { webModelSelection } from "./web-models.mjs";
 import { browserObservationIdleComplete, browserObservationOwnershipLost } from "./web-browser-state.mjs";
 import { WEB_BRIDGE_TUNNEL_KEY_PATH } from "./chatgpt-web.mjs";
@@ -36,12 +37,7 @@ const outputTypeFor = new Map(Object.values(webToolKinds).map(kind => [kind.call
 const internalCall = value => typeof value === "string" && /^call_router_web_[a-f0-9]{32}$/u.test(value);
 const fail = (message, code = "web_runtime_unavailable", status = 409) => Object.assign(new Error(message), { code, status });
 const nonempty = value => typeof value === "string" && value.length > 0;
-const validPendingBrowserOpen = value => record(value) && uuid.test(value.turnId ?? "") && internalCall(value.callId)
-  && Object.keys(value).sort().join() === "callId,chatUrl,turnId" && isSavedChatUrl(value.chatUrl);
-const validNativeProjection = value => Array.isArray(value) && value.length > 0 && value.length <= 64
-  && value.every(validNativeCompactionReference) && new Set(value.map(item => item.opaqueSha256)).size === value.length;
-const conversationHistory = value => value?.version === 4 ? { ...value, version: value.priorVersion,
-  priorVersion: undefined, pendingBrowserOpen: undefined, nativeCompactionProjection: undefined } : value;
+const validNativeProjection = value => validNativeCompactionProjection(value, validNativeCompactionReference);
 const guardConversation = conversation => {
   if (conversation.version !== 4) { conversation.priorVersion = conversation.version ?? 1; conversation.version = 4; }
 };
@@ -108,13 +104,8 @@ const instructionProtocol = `You are answering the current native Codex conversa
 // Maintenance needs the durable replay/action risks, independently of whether
 // historical browser/checkpoint fields still qualify for current execution.
 export function validWebConversationRisk(value, threadId) {
-  if (value?.version === 4) {
-    if (![1, 2, 3].includes(value.priorVersion) || value.pendingBrowserOpen === undefined && value.nativeCompactionProjection === undefined
-        || value.pendingBrowserOpen !== undefined && (!validPendingBrowserOpen(value.pendingBrowserOpen)
-          || value.uncertainSend || value.lastTurn?.sendState !== "unsent" || value.lastTurn.completed !== false)
-        || value.nativeCompactionProjection !== undefined && !validNativeProjection(value.nativeCompactionProjection)) return false;
-    value = conversationHistory(value);
-  } else if (value?.priorVersion !== undefined || value?.pendingBrowserOpen !== undefined || value?.nativeCompactionProjection !== undefined) return false;
+  if (!validWebConversationGuard(value, isSavedChatUrl, validNativeProjection)) return false;
+  value = conversationHistory(value);
   const last = value?.lastTurn;
   return record(value) && (value.version === 1 && value.recovery === undefined
     || value.version === 2 && value.recovery?.inputPolicy === undefined && validRecovery(value.recovery)
