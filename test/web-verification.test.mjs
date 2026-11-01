@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { browserScript } from '../src/web-browser.mjs';
-import { validWebConversation, WEB_RECOVERY_INPUT_POLICY } from '../src/web-runtime.mjs';
+import { validWebConversation, guardedWebConversation, WEB_RECOVERY_INPUT_POLICY } from '../src/web-runtime.mjs';
 import { evaluateWebPhase, parseWebJsonLines, prepareWebVerification, waitWebVerification, watchWebEvidence, webVerificationPrompt } from '../maintenance/web-verification.mjs';
 
 const threadId = '01a16fe6-04f4-7882-abd1-7ef5b26c5b65';
@@ -30,11 +30,13 @@ function continuedRecoveryLedger(ledger, version = 2) {
       revokedTurnIds: [failedTurnId], inputHashes: ['d'.repeat(64)],
       proof: { chatUrl: ledger.chatUrl, tabId: String(ledger.tabId), failedTurnId, generationTurnKey: generation,
         sendBaselineReplyIds: [], generationReplyIds: [replyId], observation: { replyId, completed: true, assistantPrefix: prefix('Prior accepted answer') } } } };
-  if (version === 3) {
+  if ([3, 4].includes(version)) {
     value.version = 3; value.recovery.inputPolicy = WEB_RECOVERY_INPUT_POLICY;
     value.recovery.opaqueItems = []; value.recovery.boundaryOwner = { threadId: value.threadId, turnId: failedTurnId };
   }
   assert.equal(validWebConversation(value, value.threadId), true, 'The fixture must satisfy the maintained complete recovery runtime schema.');
+  if (version === 4) return guardedWebConversation(value, { nativeCompactionProjection: [{ checkpointSha256: '1'.repeat(64),
+    opaqueSha256: '2'.repeat(64), sourceSha256: '3'.repeat(64), witnessSha256: '4'.repeat(64) }] });
   return value;
 }
 
@@ -154,8 +156,8 @@ test('readiness requires accepted Send, the current generation, and canonical pa
   assert.equal(evaluateWebPhase(input).receipt.status, 'pending');
 });
 
-test('verification evaluates strict V2 and quarantine V3 recovery ledgers while invalid journals never qualify', () => {
-  for (const version of [2, 3]) for (const phase of ['native', 'recall', 'continuation']) {
+test('verification evaluates maintained recovery and native-compaction guard ledgers while invalid journals never qualify', () => {
+  for (const version of [2, 3, 4]) for (const phase of ['native', 'recall', 'continuation']) {
     const input = evidence(phase); input.ledger = continuedRecoveryLedger(input.ledger, version);
     assert.equal(evaluateWebPhase(input).receipt.status, 'passed', phase);
     input.ledger.version = 1;
@@ -784,6 +786,19 @@ test('prepare binds exact thread and snapshots rollback inputs without changing 
   assert.equal(recoveredRun.prepared, true);
   assert.equal(readFileSync(ledgerFile, 'utf8'), recoveredBefore); assert.equal(readFileSync(protectedFile, 'utf8'), protectedBefore);
   assert.equal(JSON.parse(readFileSync(path.join(sourceRoot, 'generated', 'recovered', 'baseline-ledger.json'), 'utf8')).version, 3);
+  const guarded = continuedRecoveryLedger(input.ledger, 4);
+  writeJson(ledgerFile, guarded);
+  const guardedProtected = { ...guarded, threadId: generation,
+    recovery: { ...guarded.recovery, boundaryOwner: { ...guarded.recovery.boundaryOwner, threadId: generation } } };
+  writeJson(protectedFile, guardedProtected);
+  const guardedRun = prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'guarded'), rollout, protectLedger: protectedFile }, dependencies);
+  assert.equal(guardedRun.prepared, true);
+  assert.deepEqual(JSON.parse(readFileSync(ledgerFile)), guarded);
+  assert.deepEqual(JSON.parse(readFileSync(protectedFile)), guardedProtected);
+  const invalidGuard = structuredClone(guarded); invalidGuard.nativeCompactionProjection[0].witnessSha256 = 'invalid';
+  writeJson(ledgerFile, invalidGuard);
+  assert.throws(() => prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'invalid-guard'), rollout }, dependencies), /unsupported_ledger/u);
+  writeJson(ledgerFile, recovered);
   const spoofedProtected = JSON.parse(protectedBefore); spoofedProtected.version = 1;
   writeJson(protectedFile, spoofedProtected);
   assert.throws(() => prepareWebVerification({ threadId, output: path.join(sourceRoot, 'generated', 'spoofed-protected'), rollout,
