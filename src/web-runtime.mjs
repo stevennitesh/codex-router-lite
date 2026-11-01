@@ -752,7 +752,8 @@ export function createInAppWebRuntime({
       if (indexes.length !== 1) continue;
       const index = indexes[0];
       const context = [];
-      const projected = !!owner?.nativeContextProof && owner.nativeContextProof.turnId === owner.turnId
+      const projected = !!owner?.nativeContextProof && (owner.nativeContextProof.turnId === owner.turnId
+          || owner.nativeContextProof.afterQuarantineBoundary === true)
         && matchesNativeContextProof(raw.slice(0, index), current, alias.inputHashes, owner.nativeContextProof, owner);
       if (alias.protocol === "v2") {
         const checkpoint = decodeCompaction(raw[index].encrypted_content)?.checkpoint;
@@ -763,7 +764,8 @@ export function createInAppWebRuntime({
         for (const item of raw.slice(0, index)) {
           const hash = digest(transcript({ input: [item] })[0]), count = sources.get(hash) ?? 0;
           if (count) sources.set(hash, count - 1);
-          else if (isCurrentNativeContext(item, owner) || projected && isProjectedNativeContext(item, owner)) context.push(item);
+          else if (isCurrentNativeContext(item, owner) || projected
+              && (isCurrentNativeContext(item, owner.nativeContextProof) || isProjectedNativeContext(item, owner.nativeContextProof))) context.push(item);
           else throw fail("Native source copies changed before the quarantined compaction checkpoint.", "web_history_mismatch");
         }
       } else if (index !== 0 || raw[0].id !== alias.id || !alias.retainedHashes.every((hash, offset) => raw[offset + 1] !== undefined && digest(raw[offset + 1]) === hash)) continue;
@@ -836,7 +838,8 @@ export function createInAppWebRuntime({
       const explain = (message, code, fallback, proof, attempted = true) => diagnostic
         ? contextDiagnosticError(message, code, { ...contextComparisonDiagnostic(diagnostic, raw, proof, attempted), fallback })
         : fail(message, code);
-      const query = { threadId: owner.threadId, carrier: item, encryptedSha256: textDigest(item.encrypted_content), carrierSha256, sourceSha256 };
+      const query = { threadId: owner.threadId, carrier: item, encryptedSha256: textDigest(item.encrypted_content), carrierSha256, sourceSha256,
+        ...(conversation.recovery.boundaryOwner ? {boundaryOwner:conversation.recovery.boundaryOwner} : {}) };
       if (!eligible) {
         // Diagnostic comparison cannot qualify a stripped or changed wire
         // projection. Keep rejection even if its text matches native originals.
@@ -848,15 +851,19 @@ export function createInAppWebRuntime({
       let proof;
       try { proof = await readNativeCompactionContext(query); }
       catch { throw explain("The retained native context has no exact canonical compaction proof.", "web_native_context_proof_unavailable", "canonical-proof-unavailable"); }
-      if (conversation.recovery.stage !== "armed" && proof.turnId !== owner.turnId) {
-        throw explain("Only exact current-turn native context may cross the bounded quarantine fence.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
+      // Native may retain a rebuilt cohort into a later request. Its exact
+      // canonical turn must demonstrably follow the recorded quarantine fence;
+      // a different owner or matching text alone supplies no such proof.
+      if (conversation.recovery.stage !== "armed" && proof.turnId !== owner.turnId && proof.afterQuarantineBoundary !== true) {
+        throw explain("The retained native context is not proven to follow the quarantine boundary.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
       }
       const context = proof.prefix.filter(value => value?.internal_chat_message_metadata_passthrough?.content_item_kinds !== undefined
         || value?.internal_chat_message_metadata_passthrough?.content_item_metadata !== undefined);
       if (!context.length || context.some(value => !isCurrentNativeContext(value, proof))) {
         throw explain("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
       }
-      const nativeContextProof = { turnId: proof.turnId, context: context.map(value => ({ sourceHash: digest(transcript({ input: [value] })[0]),
+      const nativeContextProof = { turnId: proof.turnId, afterQuarantineBoundary: proof.afterQuarantineBoundary === true,
+        context: context.map(value => ({ sourceHash: digest(transcript({ input: [value] })[0]),
         fullHash: nativeContextHash(value), projectedHash: projectedNativeContextHash(value) })) };
       const current = transcript({ input: raw }, conversation.recovery);
       if (proof.sourceSha256 !== digest(sources) || !sources.some(source => matchesNativeContextProof(prefix, current, source.inputHashes, nativeContextProof, owner))) {

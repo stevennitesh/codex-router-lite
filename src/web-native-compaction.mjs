@@ -59,28 +59,35 @@ export function readCanonicalNativeSource(file) {
   } finally { if (fd !== undefined) closeSync(fd); }
 }
 
-export async function readNativeCompactionContext({ threadId, carrier, encryptedSha256, carrierSha256, sourceSha256, codexHome = CODEX_HOME } = {}) {
+export async function readNativeCompactionContext({ threadId, carrier, encryptedSha256, carrierSha256, sourceSha256, boundaryOwner, codexHome = CODEX_HOME } = {}) {
   const refused = () => Object.assign(new Error("The retained native context has no exact canonical compaction proof."), { code: "web_native_context_proof_unavailable", status: 409 });
   try {
     const textHash = value => createHash("sha256").update(value, "utf8").digest("hex");
     if (!uuid(threadId) || !opaque(carrier) || !decodeCompaction(carrier.encrypted_content)
         || ![encryptedSha256, carrierSha256, sourceSha256].every(sha256) || textHash(carrier.encrypted_content) !== encryptedSha256
-        || digest({ role: "developer", content: renderCompactionValue(carrier.encrypted_content) }) !== carrierSha256) throw refused();
+        || digest({ role: "developer", content: renderCompactionValue(carrier.encrypted_content) }) !== carrierSha256
+        || boundaryOwner !== undefined && (!record(boundaryOwner) || boundaryOwner.threadId !== threadId || !uuid(boundaryOwner.turnId)
+          || Object.keys(boundaryOwner).sort().join() !== 'threadId,turnId')) throw refused();
     const home = await realpath(codexHome), file = await findNativeRollout(home, threadId);
     if (!file) throw refused();
     const bytes = readCanonicalNativeSource(file);
     if (!bytes.length || bytes.at(-1) !== 10 || !isUtf8(bytes)) throw refused();
-    let session, clock = -Infinity; const matches = [];
+    let session, clock = -Infinity, position = 0; const matches = [], starts = new Map();
     for (const line of bytes.toString("utf8").split(/\r?\n/u)) {
       if (!line.length) continue;
       if (!jsonIsUnambiguousForRewrite(line)) throw refused();
       const row = JSON.parse(line), timestamp = Date.parse(row.timestamp);
+      position++;
       if (!Number.isFinite(timestamp) || timestamp < clock) throw refused();
       clock = timestamp;
       if (row.type === "session_meta") {
         if (session || row.payload?.id !== threadId || row.payload.session_id !== threadId) throw refused();
         session = row.payload;
       } else if (!session) throw refused();
+      if (row.type === 'event_msg' && row.payload?.type === 'task_started' && uuid(row.payload.turn_id)) {
+        const prior = starts.get(row.payload.turn_id);
+        starts.set(row.payload.turn_id, { position, count: Math.min(2, (prior?.count ?? 0) + 1) });
+      }
       if (row.type !== "compacted") continue;
       const replacement = row.payload?.replacement_history;
       if (!Array.isArray(replacement)) throw refused();
@@ -91,10 +98,16 @@ export async function readNativeCompactionContext({ threadId, carrier, encrypted
       if (indexes.length !== 1 || indexes[0] !== replacement.length - 1 || !uuid(turnId)
           || native.resume_metadata?.turn_attribution?.turn_id !== turnId || native.resume_metadata?.dynamic_tools?.thread_id !== threadId
           || native.latest_token_usage_record?.thread_id !== threadId || native.latest_token_usage_record?.session_id !== session.session_id) throw refused();
-      matches.push({ turnId, prefix: replacement.slice(0, indexes[0]), recordSha256: textHash(line), sourceSha256 });
+      matches.push({ turnId, prefix: replacement.slice(0, indexes[0]), recordSha256: textHash(line), sourceSha256, position });
     }
     if (!session || matches.length !== 1) throw refused();
-    return matches[0];
+    const {position: compactPosition, ...proof} = matches[0];
+    if (boundaryOwner !== undefined) {
+      const boundary = starts.get(boundaryOwner.turnId), cohort = starts.get(proof.turnId);
+      proof.afterQuarantineBoundary = boundary?.count === 1 && cohort?.count === 1
+        && boundary.position < cohort.position && cohort.position < compactPosition;
+    }
+    return proof;
   } catch { throw refused(); }
 }
 

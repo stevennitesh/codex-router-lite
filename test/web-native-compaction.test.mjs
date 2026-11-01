@@ -68,6 +68,20 @@ test("long native histories retain exact context proof without enlarging compact
   assert.throws(() => readCanonicalNativeSource(f.file), /bounded regular file/u);
 });
 
+test('historical context crosses a quarantine fence only with unique ordered canonical turn boundaries', async t => {
+  for (const variant of ['later','earlier','missing boundary','missing cohort','duplicate boundary','duplicate cohort']) await t.test(variant, async t => {
+    const f=contextProofFixture(t);
+    f.options.boundaryOwner={threadId,turnId:otherId};
+    const ids=variant==='earlier'?[requestId,otherId]:[otherId,requestId];
+    const starts=ids.filter(id=>!(variant==='missing boundary'&&id===otherId)&&!(variant==='missing cohort'&&id===requestId));
+    if(variant==='duplicate boundary')starts.push(otherId);
+    if(variant==='duplicate cohort')starts.push(requestId);
+    f.rows.splice(1,0,...starts.map((id,index)=>({timestamp:`2026-11-01T05:00:0${index+1}.000Z`,type:'event_msg',payload:{type:'task_started',turn_id:id}})));
+    f.publish();const proof=await readNativeCompactionContext(f.options);
+    assert.equal(proof.afterQuarantineBoundary,variant==='later');
+  });
+});
+
 test("canonical context acquisition refuses foreign owners, ambiguity and changed or incomplete evidence", async t => {
   for (const kind of ["foreign thread", "foreign session", "foreign usage", "foreign dynamic owner", "foreign turn", "changed carrier", "changed carrier receipt",
     "changed readable receipt", "duplicate carrier", "duplicate record", "multiple rollouts", "trailing source", "partial line", "ambiguous JSON"]) await t.test(kind, async t => {

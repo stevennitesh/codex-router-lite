@@ -445,9 +445,13 @@ than inventing user evidence. The context remains wholly quarantined. A missing
 proof fails preparation with `web_native_context_proof_unavailable`; no browser
 action, Send retry or user-admission authority follows from elapsed time.
 After the boundary is bounded, the same exact transport proof may preserve newly
-rebuilt context only when the canonical compact owner is the current native turn.
-That context remains in the exact new tail. A different owner's retrospective
-cohort cannot be reclassified as new material after the fence.
+rebuilt context from the current native turn or a canonical cohort proven to
+follow that boundary. The latter requires unique native `task_started` records
+for both the recorded quarantine owner and compact owner, in that order and
+before the exact compaction record. The full canonical/projection, source-copy
+and carrier checks still apply. That context remains in the exact new tail when
+a later request retains the cohort. Missing, duplicate, reversed or pre-boundary
+turn evidence cannot reclassify an older cohort as new material after the fence.
 An armed prefix/source rejection carries `ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC`
 through the ordinary local HTTP error. Its fixed stage/reason are
 `prefix-source-match`/`source-copies-changed`. The fallback category distinguishes

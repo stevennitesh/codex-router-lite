@@ -733,6 +733,40 @@ test("bounded quarantine never reclassifies a different native owner's projected
   assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
 });
 
+test('an exact canonical context cohort proven after quarantine survives a later native turn', async t => {
+  const recoveredOwner='33002233-4455-6677-8899-aabbccddeeff',compactOwner='44002233-4455-6677-8899-aabbccddeeff',nextOwner='55002233-4455-6677-8899-aabbccddeeff';
+  for(const continued of [false,true]) for(const variant of ['exact','changed wire','reversed boundary']) await t.test(`continued ${continued}, ${variant}`,async t=>{
+    const fixture=await controlledRecoveryFixture(t),{h,options}=fixture;
+    const {plan,confirmationSha256}=await fixture.prepare();await confirmControlledWebRecovery(plan,confirmationSha256,options);
+    h.newTurn(recoveredOwner,'Record the approved boundary only');
+    const notice=await h.answerBrowser((await h.request()).output[0]);h.append(notice.output[0]);
+    if(continued){h.newTurn('66002233-4455-6677-8899-aabbccddeeff','Accepted post-boundary work');const observing=await h.toObserve();await h.completeAnswer(observing.call,'Accepted post-boundary answer');}
+    const boundary=JSON.parse(readFileSync(h.stateFile,'utf8')).recovery.boundaryOwner;
+    h.append({role:'developer',content:'Actual new post-boundary source'});
+    const carrier=await nativeV2Checkpoint(await h.runtime.request({model:'chatgpt-web/gpt-6-sol-instant',input:h.input(),stream:true},{compactV2:true,headers:headers(compactOwner)}));
+    const context=rebuiltNativeContext(compactOwner,'exact post-boundary cohort');
+    publishCanonicalContextFixture(t,[
+      {timestamp:'2026-11-01T05:01:00.000Z',type:'event_msg',payload:{type:'task_started',turn_id:variant==='reversed boundary'?compactOwner:boundary.turnId}},
+      {timestamp:'2026-11-01T05:02:00.000Z',type:'event_msg',payload:{type:'task_started',turn_id:variant==='reversed boundary'?boundary.turnId:compactOwner}},
+      canonicalContextRecord(carrier,structuredClone(context),compactOwner)]);
+    for(const item of context)delete item.internal_chat_message_metadata_passthrough.content_item_metadata;
+    if(variant==='changed wire')context[0].content[0].text+=' changed';
+    h.input().splice(0,h.input().length,...context,carrier);h.newTurn(nextOwner,'Fresh actual user instruction');
+    await h.restartRuntime();h.loseKernel();
+    if(variant!=='exact'){
+      const before=readFileSync(h.stateFile),operations=h.observations.nativeOperations.length;
+      await assert.rejects(h.request(),{code:'web_native_context_proof_unavailable'});
+      assert.deepEqual(readFileSync(h.stateFile),before);assert.equal(h.observations.nativeOperations.length,operations);return;
+    }
+    const observation=await h.toObserve();
+    assert.deepEqual(sentTranscript(h),[
+      ...context.map(item=>({role:item.role,content:item.content.map(p=>p.text).join('\n')})),
+      {role:'developer',content:'Actual new post-boundary source'},
+      {role:'user',content:'Fresh actual user instruction'}]);
+    await h.completeAnswer(observation.call,'The exact post-boundary context reached the same chat.');
+  });
+});
+
 test("rebuilt-context recognition preserves source-copy checks and cannot supply user admission", async t => {
   const recoveryId = "33002233-4455-6677-8899-aabbccddeeff";
   for (const kind of ["foreign turn", "invalid turn attribution", "unknown kind", "changed provenance", "unaligned metadata", "unattributed developer", "changed user copy",
