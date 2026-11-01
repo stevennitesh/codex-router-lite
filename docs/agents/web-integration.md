@@ -102,7 +102,11 @@ Ordinary inline text must match the full intended input exactly. For an automati
 `Pasted text` conversion, the current composer form must contain exactly one known
 resource card in the observed attachment tray, with no other or unclassified
 children. Its unique enabled opener and `Remove pasted text attachment` control
-identify the card. Preparation opens its viewer through the public SDK, waits for
+identify the card. A two-button card must have the `Pasted text` caption; a
+three-button card must have the exact enabled `Show in text field` button, and
+its caption may be absent. Unknown or duplicate controls fail closed. Router
+recognizes the optional conversion button without clicking it. Preparation opens
+the card's viewer through the public SDK, waits for
 the complete exact raw text, and independently reads the full rendered preview.
 The SDK then closes the unique `Close viewer` control; it does not expand or rewrite
 the attachment. Partial, changed, ambiguous or unready payloads fail before Send

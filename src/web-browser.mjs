@@ -182,7 +182,7 @@ const operationDomKeys = new Set([
   "modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
   "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute",
   "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
-  "pastedTextLabel", "removePastedTextName", "closeTextViewerName", "pastedTextPreviewSelector",
+  "pastedTextLabel", "removePastedTextName", "showPastedTextName", "closeTextViewerName", "pastedTextPreviewSelector",
 ]);
 const residentBrowserDom = Object.freeze(Object.fromEntries(Object.entries(browserDom).filter(([key]) => !operationDomKeys.has(key))));
 
@@ -1524,9 +1524,15 @@ async function runBrowserSend(state, options, nodeRepl, replyReader, viewFactory
       for (const card of cards) {
         if (!classes(card).includes("group/resource-card")) return null;
         const buttons = Array.from(card.querySelectorAll("button")), remove = buttons.filter(button => button.getAttribute("aria-label") === ui.removePastedTextName);
-        const open = buttons.filter(button => !remove.includes(button));
+        // The observed card either has its Pasted text caption, or replaces it
+        // with this optional conversion action. Recognize it without clicking it.
+        const show = buttons.filter(button => button.getAttribute("type") === "button"
+          && ["aria-label", "aria-labelledby", "role", "title"].every(name => button.getAttribute(name) === null)
+          && button.textContent === ui.showPastedTextName);
+        const open = buttons.filter(button => !remove.includes(button) && !show.includes(button));
         const hasLabel = node => node.nodeType === 1 && (node.textContent === ui.pastedTextLabel || Array.from(node.children).some(hasLabel));
-        if (buttons.length !== 2 || remove.length !== 1 || open.length !== 1 || !buttons.every(visibleEnabled) || !hasLabel(card)) return null;
+        const knownShape = buttons.length === 2 && show.length === 0 && hasLabel(card) || buttons.length === 3 && show.length === 1;
+        if (!knownShape || remove.length !== 1 || open.length !== 1 || !buttons.every(visibleEnabled)) return null;
         const name = open[0].getAttribute("aria-label");
         if (typeof name !== "string" || !name.trim()) return null;
         names.push(name);

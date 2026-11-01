@@ -211,6 +211,7 @@ export const browserDom = Object.freeze({
   codeEditorSelector: ".cm-content[data-language]", codeLineClass: "cm-line",
   contentEditableAttribute: "contenteditable", familySelector: '[role="menuitemradio"]', checkedAttribute: "aria-checked",
   pastedTextLabel: "Pasted text", removePastedTextName: "Remove pasted text attachment", closeTextViewerName: "Close viewer",
+  showPastedTextName: "Show in text field",
   pastedTextPreviewSelector: "div.whitespace-pre-wrap.select-text",
   powerValueAttribute: "aria-valuenow", powerMinimumAttribute: "aria-valuemin", powerMaximumAttribute: "aria-valuemax",
   conversationContentSelector: '[data-message-author-role],article,[contenteditable="true"],[role="textbox"],textarea,input',

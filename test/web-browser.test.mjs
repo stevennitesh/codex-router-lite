@@ -347,7 +347,7 @@ test("observer and mutation generations invalidate only their exact dependency s
 test("default compact programs omit UI data and decode to the complete resident control contract", () => {
   const operationKeys = ["modelButtonName", "modelMenuName", "modelExpandName", "powerMenuItemName", "powerSliderSelector", "addButtonName",
     "temporaryButtonName", "sendButtonExactName", "contentEditableAttribute", "familySelector", "checkedAttribute", "powerValueAttribute", "powerMinimumAttribute", "powerMaximumAttribute",
-    "pastedTextLabel", "removePastedTextName", "closeTextViewerName", "pastedTextPreviewSelector"];
+    "pastedTextLabel", "removePastedTextName", "showPastedTextName", "closeTextViewerName", "pastedTextPreviewSelector"];
   const expectedUi = { ...browserDom };
   for (const key of operationKeys) delete expectedUi[key];
   for (const operation of ["observe", "retain"]) {
@@ -545,7 +545,8 @@ function fixture({ texts = [], currentPower = 3, fastTimers = false, nativeConte
       const open = domElement("button", { "aria-label": value.openerName ?? value.text?.slice(0, 80) ?? `Pasted text preview ${index}` });
       const remove = domElement("button", { "aria-label": value.kind === "unknown" ? "Remove other attachment" : browserDom.removePastedTextName });
       value.card = domElement("span", { class: "composer-attachment-surface group/resource-card" }, open,
-        domElement("span", {}, domText(value.caption ?? (value.kind === "unknown" ? "Other attachment" : "Pasted text"))), remove);
+        domElement("span", {}, domText(value.caption ?? (value.kind === "unknown" ? "Other attachment" : "Pasted text"))),
+        ...(value.extraButtons ?? []), remove);
       return value.card;
     });
     const wrapper = domElement("div", { class: "flex flex-wrap items-end gap-2 p-1" }, ...cards, ...(ui.unknownAttachmentChildren ?? []));
@@ -1928,18 +1929,24 @@ const convertedPaste = (f, change = () => {}) => {
   };
 };
 
+const showPastedTextControl = (text = "Show in text field", attributes = {}) => domElement("button", { type: "button", ...attributes }, domText(text));
+
 test("generated Send proves the full current attachment and actual submitted body, suffix and model", async () => {
-  for (const delayed of [false, true]) {
+  for (const showControl of [false, true]) for (const length of [24493, 30730]) for (const delayed of [false, true]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    const prompt = `Full 'quoted' \"context\"\r\n  Unicode \u03bb\t\r\n`.repeat(1800) + "trailing spaces  \n\n";
+    const suffix = "trailing spaces  \n\n";
+    const prompt = (`Full 'quoted' \"context\"\n  Unicode \u03bb\t\n`.repeat(1800).slice(0, length - suffix.length - 1) + suffix).replace(/\n/gu, "\r\n");
     const turnToken = "web_turn_0123456789abcdef0123456789abcdef";
-    convertedPaste(f);
+    convertedPaste(f, () => {
+      if (showControl) Object.assign(f.ui.pastedAttachments[0], { caption: "", extraButtons: [showPastedTextControl()] });
+    });
     if (delayed) {
       f.ui.onPastedViewerOpen = () => { f.ui.pastedViewerText = "Short not-ready preview"; };
       f.ui.onPastedPreviewWait = () => { f.ui.pastedViewerText = f.ui.pastedAttachments[0].text; };
     }
     const result = await f.run("send", { ...plugin, prompt, turnToken, power: 4 });
     const submitted = f.ui.userMessages[0], source = ` ${prompt}`.replace(/\r\n?/gu, "\n");
+    assert.equal(source.length, length, "Both card variants prove each complete payload length independently.");
     assert.deepEqual(submitted.attachments, [{ kind: "pasted", text: source }]);
     assert.equal(submitted.text, f.ui.typed[1], "Only the fresh marker/directive remain inline.");
     assert.equal(f.ui.typed.length, 2); assert.equal(f.ui.typed[0], source);
@@ -1954,12 +1961,22 @@ test("generated Send proves the full current attachment and actual submitted bod
 });
 
 test("generated Send refuses unproved or ambiguous attachment payloads and retains the actual draft", async () => {
-  for (const variant of ["truncated", "different", "duplicate preview", "unrelated preview", "foreign close control", "opener failure", "missing caption", "wrong caption", "multiple cards", "unknown card", "unknown tray child", "wrong form", "ownership", "lost chip", "deadline"]) {
+  for (const showControl of [false, true]) for (const variant of ["truncated", "different", "duplicate preview", "unrelated preview", "foreign close control", "opener failure", "missing caption", "wrong caption", "unknown third control", "named convert control", "duplicate convert control", "disabled convert control", "hidden convert control", "multiple cards", "unknown card", "unknown tray child", "wrong form", "ownership", "lost chip", "deadline"]) {
+    if (showControl && ["missing caption", "wrong caption"].includes(variant)) continue;
     const f = fixture({ fastTimers: true }); await f.ready();
     const prompt = "Complete source context\n".repeat(1600);
     convertedPaste(f, () => {
+      if (showControl) Object.assign(f.ui.pastedAttachments[0], { caption: "", extraButtons: [showPastedTextControl()] });
       if (variant === "missing caption") f.ui.pastedAttachments[0].caption = "";
       if (variant === "wrong caption") f.ui.pastedAttachments[0].caption = "Different attachment kind";
+      const card = f.ui.pastedAttachments[0];
+      if (variant === "unknown third control") card.extraButtons = [showPastedTextControl("Unknown action")];
+      if (variant === "named convert control") card.extraButtons = [showPastedTextControl(undefined, { "aria-label": "Other action" })];
+      if (variant === "duplicate convert control") card.extraButtons = [showPastedTextControl(), showPastedTextControl()];
+      if (variant === "disabled convert control") card.extraButtons = [showPastedTextControl(undefined, { disabled: "" })];
+      if (variant === "hidden convert control") {
+        const control = showPastedTextControl(); control.getBoundingClientRect = () => ({ width: 0, height: 0 }); card.extraButtons = [control];
+      }
       if (variant === "multiple cards") f.ui.pastedAttachments.push({ kind: "pasted", text: "Extra" });
       if (variant === "unknown card") f.ui.pastedAttachments.push({ kind: "unknown", text: "Foreign attachment" });
       if (variant === "unknown tray child") f.ui.unknownAttachmentChildren = [domElement("div", {}, domText("Unclassified attachment"))];
@@ -1987,16 +2004,24 @@ test("generated Send refuses unproved or ambiguous attachment payloads and retai
   }
 });
 
-test("generated Send rechecks current attachment content and suffix after model selection", async () => {
-  for (const variant of ["replaced payload", "extra card", "missing suffix", "lost chip"]) {
+test("generated Send rechecks current attachment content, controls and suffix after model selection and handoff", async () => {
+  for (const showControl of [false, true]) for (const stage of ["selection", "handoff"]) for (const variant of ["replaced payload", "extra card", "unknown control", "missing suffix", "lost chip"]) {
     const f = fixture({ fastTimers: true }); await f.ready();
-    convertedPaste(f);
-    f.ui.onModel = () => {
+    convertedPaste(f, () => {
+      if (showControl) Object.assign(f.ui.pastedAttachments[0], { caption: "", extraButtons: [showPastedTextControl()] });
+    });
+    const change = () => {
       if (variant === "replaced payload") f.ui.pastedAttachments = [{ kind: "pasted", text: "Replacement attachment content" }];
       if (variant === "extra card") f.ui.pastedAttachments.push({ kind: "unknown", text: "New foreign file" });
+      if (variant === "unknown control") f.ui.pastedAttachments[0].extraButtons = [showPastedTextControl("Unexpected action")];
       if (variant === "missing suffix") f.ui.composerText = "";
       if (variant === "lost chip") f.ui.chip = false;
     };
+    if (stage === "selection") f.ui.onModel = change;
+    else {
+      const handoff = f.tab.markHandoff;
+      f.tab.markHandoff = async () => { await handoff(); change(); };
+    }
     await assert.rejects(f.run("send", { ...plugin, prompt: "Original source\n".repeat(2000) }), /nothing sent/u, variant);
     assert.equal(f.ui.sendClicks, 0); assert.equal(f.ui.draftCleared, false); assert.equal(f.ui.typed.length, 2);
   }
