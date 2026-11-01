@@ -348,14 +348,25 @@ Native context envelopes never supply incoming-user authority.
 While recovery is armed, a later native turn may retain the earlier rebuilt
 context cohort. `src/web-native-compaction.mjs` can qualify it only from one exact
 canonical native compaction record in that thread's current canonical home. The
-session, compact owner, trusted local carrier and source receipt must agree, and
-the full ordered context contents and provenance must match `replacement_history`.
+session, compact owner, trusted local carrier and source receipt must agree.
+Canonical context in `replacement_history` must retain complete valid provenance.
+The observed native HTTP projection may omit the entire `content_item_metadata`
+array while retaining exact type, role, content, turn and part kinds. That shape
+is only a proof candidate: it must match the deliberate one-field projection of
+the exact canonical record. Present partial, null or invalid provenance is never
+ignored. Counted source copies are reconciled independently on both sides before
+checking the exact order of unmatched context, so an extra counted leading copy
+cannot shift the proof and an excess copy cannot gain context authority.
 Acquisition refuses links, changed reads, incomplete or ambiguous records and
 multiple rollout candidates. This proof also covers a pre-user receipt that has
 no compact-owner field; it obtains the owner from the exact native record rather
 than inventing user evidence. The context remains wholly quarantined. A missing
 proof fails preparation with `web_native_context_proof_unavailable`; no browser
 action, Send retry or user-admission authority follows from elapsed time.
+After the boundary is bounded, the same exact transport proof may preserve newly
+rebuilt context only when the canonical compact owner is the current native turn.
+That context remains in the exact new tail. A different owner's retrospective
+cohort cannot be reclassified as new material after the fence.
 An armed prefix/source rejection carries `ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC`
 through the ordinary local HTTP error. Its fixed stage/reason are
 `prefix-source-match`/`source-copies-changed`. The fallback category distinguishes
@@ -368,8 +379,8 @@ prefix items, four source mismatches and four parts per mismatch; counts cap at
 10,000 and serialized diagnostics at 6 KiB. Missing array counts remain null.
 An optional bounded, read-only comparison with the exact native record reports
 only role/type/text/metadata match flags and `matched-record`, `unavailable` or
-`not-attempted` acquisition status. Even matching text cannot qualify a stripped
-or changed transport projection. No text, unknown key names, identities, tokens,
+`not-attempted` acquisition status. Diagnostic text matches alone cannot qualify
+any projection; only the exact canonical contract above can. No text, unknown key names, identities, tokens,
 opaque values or content hashes are exposed, and diagnostics grant no authority.
 A carrier can stand in for compacted
 user input only when its receipt binds a nonempty user message attributed to

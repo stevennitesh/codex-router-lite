@@ -302,26 +302,54 @@ const nativeContextParts = new Map([
     "plugins.usage_instructions", "plugins.recommendations"].map(kind => [kind, ["developer", { type: "harness", hook: false }]]),
   ...["multi_agent.usage_hint", "multi_agent.mode_instructions"].map(kind => [kind, ["developer", { type: "tool", namespace: "collaboration" }]]),
 ]);
-function isCurrentNativeContext(item, owner) {
+function nativeContextShape(item, owner, requireProvenance) {
   const metadata = item?.internal_chat_message_metadata_passthrough;
   return record(item) && item.type === "message" && (item.id === undefined || nonempty(item.id))
     && Object.keys(item).filter(key => key !== "id").sort().join() === "content,internal_chat_message_metadata_passthrough,role,type"
-    && record(metadata) && Object.keys(metadata).sort().join() === "content_item_kinds,content_item_metadata,turn_id"
+    && record(metadata) && Object.keys(metadata).sort().join() === (requireProvenance ? "content_item_kinds,content_item_metadata,turn_id" : "content_item_kinds,turn_id")
     && typeof metadata.turn_id === "string" && metadata.turn_id.toLowerCase() === owner?.turnId
     && Array.isArray(item.content) && item.content.length > 0 && Array.isArray(metadata.content_item_kinds)
-    && metadata.content_item_kinds.length === item.content.length && Array.isArray(metadata.content_item_metadata)
-    && metadata.content_item_metadata.length === item.content.length && item.content.every((part, index) => {
-      const definition = nativeContextParts.get(metadata.content_item_kinds[index]), evidence = metadata.content_item_metadata[index];
+    && metadata.content_item_kinds.length === item.content.length
+    && (!requireProvenance || Array.isArray(metadata.content_item_metadata) && metadata.content_item_metadata.length === item.content.length)
+    && item.content.every((part, index) => {
+      const definition = nativeContextParts.get(metadata.content_item_kinds[index]), evidence = metadata.content_item_metadata?.[index];
       if (!definition || item.role !== definition[0] || !record(part) || Object.keys(part).sort().join() !== "text,type"
-          || part.type !== "input_text" || typeof part.text !== "string" || !record(evidence) || Object.keys(evidence).join() !== "provenance") return false;
+          || part.type !== "input_text" || typeof part.text !== "string") return false;
+      if (!requireProvenance) return true; // Candidate shape only; never sufficient authority without exact native proof.
+      if (!record(evidence) || Object.keys(evidence).join() !== "provenance") return false;
       const provenance = evidence.provenance, expected = definition[1];
       return record(provenance) && Object.keys(provenance).sort().join() === Object.keys(expected).sort().join()
         && Object.keys(expected).every(key => provenance[key] === expected[key]);
     });
 }
+const isCurrentNativeContext = (item, owner) => nativeContextShape(item, owner, true);
+const isProjectedNativeContext = (item, owner) => nativeContextShape(item, owner, false);
 const nativeContextHash = item => digest({ type: item.type, role: item.role, content: item.content,
   internal_chat_message_metadata_passthrough: item.internal_chat_message_metadata_passthrough });
-const matchesNativeContextProof = (prefix, proof) => !!proof && digest(prefix.filter(item => isCurrentNativeContext(item, { turnId: proof.turnId })).map(nativeContextHash)) === digest(proof.contextHashes);
+const projectedNativeContextHash = item => {
+  const { content_item_metadata: _provenance, ...metadata } = item.internal_chat_message_metadata_passthrough;
+  return nativeContextHash({ ...item, internal_chat_message_metadata_passthrough: metadata });
+};
+function matchesNativeContextProof(prefix, current, sourceHashes, proof, owner) {
+  if (!proof) return false;
+  const remaining = (items, hash) => {
+    const counts = new Map();
+    for (const value of sourceHashes ?? []) counts.set(value, (counts.get(value) ?? 0) + 1);
+    return items.filter((item, index) => {
+      const value = hash(item, index), count = counts.get(value) ?? 0;
+      if (!count) return true;
+      counts.set(value, count - 1); return false;
+    });
+  };
+  // Counted source copies may precede or surround the native context cohort.
+  // Reconcile them independently on both sides before checking exact new order.
+  const expected = remaining(proof.context, item => item.sourceHash);
+  const actual = remaining(prefix, (_item, index) => digest(current[index]))
+    .filter(item => owner.turnId === proof.turnId || !isCurrentNativeContext(item, owner));
+  return actual.length === expected.length && actual.every((item, index) => isCurrentNativeContext(item, proof)
+    ? nativeContextHash(item) === expected[index].fullHash
+    : isProjectedNativeContext(item, proof) && nativeContextHash(item) === expected[index].projectedHash);
+}
 
 const contextDiagnosticMarker = "ROUTER_WEB_NATIVE_CONTEXT_DIAGNOSTIC";
 const diagnosticCount = value => Math.min(Math.max(0, value), 10000);
@@ -728,6 +756,8 @@ export function createInAppWebRuntime({
       if (indexes.length !== 1) continue;
       const index = indexes[0];
       const context = [];
+      const projected = !!owner?.nativeContextProof && owner.nativeContextProof.turnId === owner.turnId
+        && matchesNativeContextProof(raw.slice(0, index), current, alias.inputHashes, owner.nativeContextProof, owner);
       if (alias.protocol === "v2") {
         const checkpoint = decodeCompaction(raw[index].encrypted_content)?.checkpoint;
         if (checkpoint?.retained_tail_id !== alias.id || checkpoint.retained_tail?.length !== alias.retainedHashes.length
@@ -737,7 +767,7 @@ export function createInAppWebRuntime({
         for (const item of raw.slice(0, index)) {
           const hash = digest(transcript({ input: [item] })[0]), count = sources.get(hash) ?? 0;
           if (count) sources.set(hash, count - 1);
-          else if (isCurrentNativeContext(item, owner)) context.push(item);
+          else if (isCurrentNativeContext(item, owner) || projected && isProjectedNativeContext(item, owner)) context.push(item);
           else throw fail("Native source copies changed before the quarantined compaction checkpoint.", "web_history_mismatch");
         }
       } else if (index !== 0 || raw[0].id !== alias.id || !alias.retainedHashes.every((hash, offset) => raw[offset + 1] !== undefined && digest(raw[offset + 1]) === hash)) continue;
@@ -757,15 +787,18 @@ export function createInAppWebRuntime({
         const raw = readableInput(payload), matches = raw.flatMap((item, index) => item.type === "compaction" && typeof item.encrypted_content === "string"
           ? [{ sources: recovery.compactionSources.filter(source => textDigest(item.encrypted_content) === source.encryptedSha256), index }].filter(match => match.sources.length) : []);
         if (matches.length !== 1) throw fail("The approved recovery compaction carrier changed.", "web_history_mismatch");
-        const proven = matchesNativeContextProof(raw.slice(0, matches[0].index), owner?.nativeContextProof);
+        let proven = false;
         // V1 source-free carriers have identical bytes across compactions.
         // One actual carrier may therefore have several valid source receipts.
         const sourceCopies = matches[0].sources.some(source => {
+          const candidateProven = matchesNativeContextProof(raw.slice(0, matches[0].index), current, source.inputHashes, owner?.nativeContextProof, owner);
+          proven ||= candidateProven;
           const counts = new Map();
           for (const hash of source.inputHashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
           return current.slice(0, matches[0].index).every((item, index) => {
             const hash = digest(item), count = counts.get(hash) ?? 0;
-            if (!count) return isCurrentNativeContext(raw[index], owner) || proven && isCurrentNativeContext(raw[index], owner.nativeContextProof);
+            if (!count) return isCurrentNativeContext(raw[index], owner) || candidateProven
+              && (isCurrentNativeContext(raw[index], owner.nativeContextProof) || isProjectedNativeContext(raw[index], owner.nativeContextProof));
             counts.set(hash, count - 1); return true;
           });
         });
@@ -788,8 +821,7 @@ export function createInAppWebRuntime({
   const contextOwner = async (conversation, payload, owner) => {
     try { conversationInput(conversation, payload, owner); return owner; }
     catch (error) {
-      if (error.code !== "web_history_mismatch" || conversation.recovery?.inputPolicy !== WEB_RECOVERY_INPUT_POLICY
-          || conversation.recovery.stage !== "armed") throw error;
+      if (error.code !== "web_history_mismatch" || conversation.recovery?.inputPolicy !== WEB_RECOVERY_INPUT_POLICY) throw error;
       const raw = nativeInput(conversation, payload), lineage = conversation.recovery.compactionLineage;
       const records = [...(conversation.recovery.compactionSources ?? []), ...[conversation.pendingCompaction, conversation.activeCompaction, lineage]
         .filter(alias => alias && (alias === lineage || digest(conversation.checkpoint) === alias.deliverySha256))];
@@ -799,7 +831,8 @@ export function createInAppWebRuntime({
       const { item, index, sources } = matches[0], prefix = raw.slice(0, index);
       const eligible = prefix.some(value => {
         const turn = value.internal_chat_message_metadata_passthrough?.turn_id;
-        return typeof turn === "string" && !isCurrentNativeContext(value, owner) && isCurrentNativeContext(value, { turnId: turn.toLowerCase() });
+        return typeof turn === "string" && (isProjectedNativeContext(value, { turnId: turn.toLowerCase() })
+          || !isCurrentNativeContext(value, owner) && isCurrentNativeContext(value, { turnId: turn.toLowerCase() }));
       });
       const carrierSha256 = digest(transcript({ input: [item] })[0]), sourceSha256 = digest(sources);
       const sourceReceiptMatches = !sources.some(source => source.carrierSha256 !== undefined && source.carrierSha256 !== carrierSha256);
@@ -819,11 +852,18 @@ export function createInAppWebRuntime({
       let proof;
       try { proof = await readNativeCompactionContext(query); }
       catch { throw explain("The retained native context has no exact canonical compaction proof.", "web_native_context_proof_unavailable", "canonical-proof-unavailable"); }
+      if (conversation.recovery.stage !== "armed" && proof.turnId !== owner.turnId) {
+        throw explain("Only exact current-turn native context may cross the bounded quarantine fence.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
+      }
       const context = proof.prefix.filter(value => value?.internal_chat_message_metadata_passthrough?.content_item_kinds !== undefined
         || value?.internal_chat_message_metadata_passthrough?.content_item_metadata !== undefined);
-      const nativeContextProof = { turnId: proof.turnId, contextHashes: context.map(nativeContextHash) };
-      if (!context.length || context.some(value => !isCurrentNativeContext(value, proof))
-          || proof.sourceSha256 !== digest(sources) || !matchesNativeContextProof(prefix, nativeContextProof)) {
+      if (!context.length || context.some(value => !isCurrentNativeContext(value, proof))) {
+        throw explain("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
+      }
+      const nativeContextProof = { turnId: proof.turnId, context: context.map(value => ({ sourceHash: digest(transcript({ input: [value] })[0]),
+        fullHash: nativeContextHash(value), projectedHash: projectedNativeContextHash(value) })) };
+      const current = transcript({ input: raw }, conversation.recovery);
+      if (proof.sourceSha256 !== digest(sources) || !sources.some(source => matchesNativeContextProof(prefix, current, source.inputHashes, nativeContextProof, owner))) {
         throw explain("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable", "canonical-cohort-mismatch", proof);
       }
       return { ...owner, nativeContextProof };

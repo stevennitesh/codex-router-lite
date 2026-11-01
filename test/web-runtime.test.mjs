@@ -472,6 +472,81 @@ test("an exact recorded native context cohort survives a new recovery owner and 
   });
 });
 
+test("the observed provenance-array omission requires exact canonical content and counted source-copy alignment", async t => {
+  const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  const wire = context => structuredClone(context).map(item => { delete item.internal_chat_message_metadata_passthrough.content_item_metadata; return item; });
+  for (const nextCompaction of [false, true]) await t.test(`new owner compacts ${nextCompaction}`, async t => {
+    const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const retained = rebuiltNativeContext(oldOwner, "exact observed native context"), leading = { role: "developer", content: "Exact leading native source copy" };
+    h.append(leading, ...retained.slice(1, 3));
+    const compact = owner => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: [...h.input(), { type: "compaction_trigger" }], stream: true },
+      { compactV2: true, headers: headers(owner) }).then(nativeV2Checkpoint);
+    const carrier = await compact(oldOwner), firstRecord = canonicalContextRecord(carrier, retained, oldOwner);
+    const file = publishCanonicalContextFixture(t, [firstRecord]);
+    const projected = wire(retained);
+    // Native HTTP context is grouped before the counted collaboration copies;
+    // its extra leading exact source copy must not shift canonical matching.
+    h.input().splice(0, h.input().length, leading, projected[0], projected[3], projected[1], projected[2], carrier);
+    await h.restartRuntime(); h.loseKernel(); h.newTurn(nextOwner, "The new app ingress follows preturn work"); h.input().pop();
+    if (nextCompaction) {
+      const next = await compact(nextOwner), current = rebuiltNativeContext(nextOwner, "new exact observed context");
+      publishCanonicalContextFixture(t, [firstRecord, canonicalContextRecord(next, current, nextOwner)]);
+      const nextProjected = wire(current);
+      h.input().splice(0, h.input().length, leading, nextProjected[0], nextProjected[3], nextProjected[1], nextProjected[2], next);
+      await h.restartRuntime(); h.loseKernel();
+    }
+    const original = readFileSync(file), sends = h.browser.ui.sends.length;
+    assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.compactionSources.at(-1).user, undefined);
+    h.append({ type: "function_call_output", id: "actual-current-app-user", namespace: "codex_app", name: "send_message_to_thread", output: "The actual fresh user instruction",
+      internal_chat_message_metadata_passthrough: { turn_id: nextOwner, create_time: 1 } });
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    const bounded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(bounded.recovery.stage, "bounded"); assert.deepEqual(bounded.checkpoint, accepted.checkpoint);
+    assert.equal(h.browser.ui.sends.length, sends); assert.deepEqual(readFileSync(file), original);
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Only post-quarantine input is sent");
+    await h.toObserve(); assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only post-quarantine input is sent" }]);
+  });
+});
+
+test("projected native context rejects changed, partial, unproved and over-counted prefixes without user authority", async t => {
+  const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  for (const kind of ["text", "kinds", "role", "owner", "partial provenance", "null provenance", "present bad provenance", "unknown metadata", "canonical provenance missing",
+    "order", "missing context", "duplicate context", "extra source copy", "missing canonical record", "no current user"]) await t.test(kind, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const context = rebuiltNativeContext(oldOwner, "exact projected context"), leading = { role: "developer", content: "Counted exact native source copy" };
+    h.append(leading, ...context.slice(1, 3));
+    const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+      { compactV2: true, headers: headers(oldOwner) }));
+    const record = canonicalContextRecord(carrier, structuredClone(context), oldOwner);
+    if (kind === "canonical provenance missing") delete record.payload.replacement_history[0].internal_chat_message_metadata_passthrough.content_item_metadata;
+    const file = publishCanonicalContextFixture(t, [record]);
+    if (kind === "missing canonical record") rmSync(file);
+    const projected = structuredClone(context);
+    for (const item of projected) delete item.internal_chat_message_metadata_passthrough.content_item_metadata;
+    const metadata = projected[0].internal_chat_message_metadata_passthrough;
+    if (kind === "text") projected[0].content[0].text += " changed";
+    else if (kind === "kinds") metadata.content_item_kinds[0] = "permissions.instructions";
+    else if (kind === "role") projected[0].role = "user";
+    else if (kind === "owner") metadata.turn_id = nextOwner;
+    else if (kind === "partial provenance") metadata.content_item_metadata = context[0].internal_chat_message_metadata_passthrough.content_item_metadata.slice(1);
+    else if (kind === "null provenance") metadata.content_item_metadata = null;
+    else if (kind === "present bad provenance") { metadata.content_item_metadata = structuredClone(context[0].internal_chat_message_metadata_passthrough.content_item_metadata); metadata.content_item_metadata[0].provenance.from_additional_requirements = true; }
+    else if (kind === "unknown metadata") metadata.extra = "Unrecorded native context metadata";
+    let prefix = [leading, projected[0], projected[3], projected[1], projected[2]];
+    if (kind === "order") [prefix[1], prefix[2]] = [prefix[2], prefix[1]];
+    else if (kind === "missing context") prefix.splice(2, 1);
+    else if (kind === "duplicate context") prefix.splice(2, 0, structuredClone(projected[0]));
+    else if (kind === "extra source copy") prefix.unshift(structuredClone(leading));
+    h.input().splice(0, h.input().length, ...prefix, carrier); h.newTurn(nextOwner, "The current native user is independent of context proof");
+    if (kind === "no current user") h.input().pop();
+    await h.restartRuntime(); h.loseKernel(); const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: kind === "no current user" ? "web_history_mismatch" : "web_native_context_proof_unavailable" });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+});
+
 test("retained native context proof refuses missing, foreign, ambiguous and changed canonical records", async t => {
   const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
   for (const kind of ["missing", "foreign session", "foreign compact owner", "changed context", "changed provenance", "duplicate record", "changed carrier", "changed source receipt"]) await t.test(kind, async t => {
@@ -500,7 +575,7 @@ test("retained native context proof refuses missing, foreign, ambiguous and chan
   });
 });
 
-test("native context rejection reports bounded wire structure without accepting transport projections or exposing contents", async t => {
+test("native context rejection reports bounded wire structure for unqualified projections without exposing contents", async t => {
   const compactOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
   const secret = "PRIVATE_TOKEN_https://private.invalid/opaque-context-value";
   for (const kind of ["omitted type", "omitted metadata", "scalar content", "extra item fields", "extra part fields", "text part type", "private unknown fields", "bounded prefix"]) await t.test(kind, async t => {
@@ -566,7 +641,7 @@ test("quarantine retains rebuilt current native context around its exact compact
   const normalize = item => ({ role: item.role, content: item.content.map(part => part.text).join("\n") });
   const ingress = turn => ({ type: "function_call_output", id: `native-${turn}`, namespace: "codex_app", name: "send_message_to_thread",
     output: `Current app instruction for ${turn}`, internal_chat_message_metadata_passthrough: { turn_id: turn, create_time: 1 } });
-  for (const restart of [false, true]) await t.test(`restart ${restart}`, async t => {
+  for (const restart of [false, true]) for (const projection of [false, true]) await t.test(`restart ${restart}, projection ${projection}`, async t => {
     const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
     const { plan, confirmationSha256 } = await fixture.prepare();
     await confirmControlledWebRecovery(plan, confirmationSha256, options);
@@ -588,6 +663,10 @@ test("quarantine retains rebuilt current native context around its exact compact
     h.append(...fresh);
     h.newTurn(freshId, "The fresh app instruction also arrives after compaction"); h.input().pop();
     const next = await compact(freshId), freshContext = rebuiltNativeContext(freshId, "current post-boundary context"), freshIngress = ingress(freshId);
+    if (projection) {
+      publishCanonicalContextFixture(t, [canonicalContextRecord(next, structuredClone(freshContext), freshId)]);
+      for (const item of freshContext) delete item.internal_chat_message_metadata_passthrough.content_item_metadata;
+    }
     h.input().splice(0, h.input().length, ...freshContext, next, freshIngress);
     if (restart) { await h.restartRuntime(); h.loseKernel(); }
     const observation = await h.toObserve();
@@ -596,6 +675,24 @@ test("quarantine retains rebuilt current native context around its exact compact
     assert.equal(h.browser.ui.sends.length, sends + 1);
     await h.completeAnswer(observation.call, "The exact rebuilt context and new work reached the saved chat.");
   });
+});
+
+test("bounded quarantine never reclassifies a different native owner's projected context as new material", async t => {
+  const recoveredOwner = "33002233-4455-6677-8899-aabbccddeeff", compactOwner = "44002233-4455-6677-8899-aabbccddeeff", newOwner = "55002233-4455-6677-8899-aabbccddeeff";
+  const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+  const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+  h.newTurn(recoveredOwner, "Record the approved boundary only");
+  const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+  h.append({ role: "developer", content: "Actual new post-boundary context" });
+  const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+    { compactV2: true, headers: headers(compactOwner) }));
+  const context = rebuiltNativeContext(compactOwner, "a different owner's context");
+  publishCanonicalContextFixture(t, [canonicalContextRecord(carrier, structuredClone(context), compactOwner)]);
+  for (const item of context) delete item.internal_chat_message_metadata_passthrough.content_item_metadata;
+  h.input().splice(0, h.input().length, ...context, carrier); h.newTurn(newOwner, "A fresh user does not authorize relabeling old context");
+  await h.restartRuntime(); h.loseKernel(); const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+  await assert.rejects(h.request(), { code: "web_native_context_proof_unavailable" });
+  assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
 });
 
 test("rebuilt-context recognition preserves source-copy checks and cannot supply user admission", async t => {
