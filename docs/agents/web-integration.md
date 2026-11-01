@@ -338,7 +338,25 @@ retains exact source-item hashes plus encoded and readable carrier digests in
 that bound fails before returning replacement history. Repeated compaction and
 restart accept only an unchanged recorded source prefix or an exact returned
 carrier with counted source copies. These receipts do not acknowledge delivery
-or replace the required saved-chat proof. A carrier can stand in for compacted
+or replace the required saved-chat proof. Native V2 may rebuild current instruction
+and AGENTS/environment context before the exact carrier. Those messages qualify
+as new context only through matching current-turn metadata and aligned, recognized
+part kinds, roles and provenance. Their full items remain in the recorded quarantine
+boundary; after that boundary, newly rebuilt context is retained in the exact new
+tail. Unattributed or malformed prefix items still require counted source matches.
+Native context envelopes never supply incoming-user authority.
+While recovery is armed, a later native turn may retain the earlier rebuilt
+context cohort. `src/web-native-compaction.mjs` can qualify it only from one exact
+canonical native compaction record in that thread's current canonical home. The
+session, compact owner, trusted local carrier and source receipt must agree, and
+the full ordered context contents and provenance must match `replacement_history`.
+Acquisition refuses links, changed reads, incomplete or ambiguous records and
+multiple rollout candidates. This proof also covers a pre-user receipt that has
+no compact-owner field; it obtains the owner from the exact native record rather
+than inventing user evidence. The context remains wholly quarantined. A missing
+proof fails preparation with `web_native_context_proof_unavailable`; no browser
+action, Send retry or user-admission authority follows from elapsed time.
+A carrier can stand in for compacted
 user input only when its receipt binds a nonempty user message attributed to
 that exact native turn. The same rule recognizes the maintained canonical
 `codex_app` create/send ingress with matching turn metadata, even when native

@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { createNativeCompactionWitness, validNativeCompactionWitness, validNativeCompactionReference,
   nativeCompactionWitnessReference, nativeCompactionWitnessPath, readNativeCompactionWitness,
-  expandNativeCompactionWitnesses, nativeCompactionResponse } from "../src/web-native-compaction.mjs";
+  expandNativeCompactionWitnesses, nativeCompactionResponse, readNativeCompactionContext } from "../src/web-native-compaction.mjs";
+import { webCompactOutput } from "../src/web-response.mjs";
+import { renderCompactionValue } from "../src/compaction-checkpoint.mjs";
 
 const threadId = "00112233-4455-6677-8899-aabbccddeeff";
 const requestId = "11002233-4455-6677-8899-aabbccddeeff";
@@ -20,6 +22,60 @@ const make = (overrides = {}) => createNativeCompactionWitness({ threadId, sourc
   responseId: "resp_native", checkpoint: [digest(original)], provenance: { kind: "router-native-request", requestId }, ...overrides });
 const frame = value => `event: ${value.type}\r\ndata: ${JSON.stringify(value)}\r\n\r\n`;
 const completed = { type: "response.completed", response: { id: "resp_native", status: "completed", output: [opaqueItem] } };
+
+function contextProofFixture(t) {
+  const scratch = path.resolve(".tmp"); mkdirSync(scratch, { recursive: true });
+  const codexHome = mkdtempSync(path.join(scratch, "native-context-proof-"));
+  t.after(() => rmSync(codexHome, { recursive: true, force: true }));
+  const directory = path.join(codexHome, "sessions", "2026", "11", "01"); mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, `rollout-2026-11-01T05-00-00-${threadId}.jsonl`);
+  const carrier = webCompactOutput({ input: [] }, { compactV2: true })[0];
+  const prefix = [{ type: "message", role: "developer", content: [{ type: "input_text", text: "Exact retained native context" }],
+    internal_chat_message_metadata_passthrough: { turn_id: requestId, content_item_kinds: ["memories.instructions"],
+      content_item_metadata: [{ provenance: { type: "harness", hook: false } }] } }];
+  const rows = [{ timestamp: "2026-11-01T05:00:00.000Z", type: "session_meta", payload: { id: threadId, session_id: threadId } },
+    { timestamp: "2026-11-01T05:01:00.000Z", type: "compacted", payload: { replacement_history: [...prefix, structuredClone(carrier)],
+      resume_metadata: { last_started_turn_id: requestId, turn_attribution: { turn_id: requestId }, dynamic_tools: { thread_id: threadId } },
+      latest_token_usage_record: { thread_id: threadId, session_id: threadId } } }];
+  const options = { codexHome, threadId, carrier, encryptedSha256: createHash("sha256").update(carrier.encrypted_content).digest("hex"),
+    carrierSha256: digest({ role: "developer", content: renderCompactionValue(carrier.encrypted_content) }), sourceSha256: "a".repeat(64) };
+  const publish = () => writeFileSync(file, rows.map(row => JSON.stringify(row)).join("\n") + "\n", "utf8");
+  publish(); return { file, rows, options, prefix, publish };
+}
+
+test("canonical context acquisition binds one native session and exact trusted local carrier without changing originals", async t => {
+  const fixture = contextProofFixture(t), original = readFileSync(fixture.file);
+  const proof = await readNativeCompactionContext(fixture.options);
+  assert.equal(proof.turnId, requestId); assert.equal(proof.sourceSha256, fixture.options.sourceSha256);
+  assert.deepEqual(proof.prefix, fixture.prefix); assert.match(proof.recordSha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(readFileSync(fixture.file), original);
+  assert.deepEqual(await readNativeCompactionContext(fixture.options), proof);
+});
+
+test("canonical context acquisition refuses foreign owners, ambiguity and changed or incomplete evidence", async t => {
+  for (const kind of ["foreign thread", "foreign session", "foreign usage", "foreign dynamic owner", "foreign turn", "changed carrier", "changed carrier receipt",
+    "changed readable receipt", "duplicate carrier", "duplicate record", "multiple rollouts", "trailing source", "partial line", "ambiguous JSON"]) await t.test(kind, async t => {
+    const f = contextProofFixture(t), compact = f.rows[1].payload;
+    if (kind === "foreign thread") f.rows[0].payload.id = otherId;
+    else if (kind === "foreign session") f.rows[0].payload.session_id = otherId;
+    else if (kind === "foreign usage") compact.latest_token_usage_record.session_id = otherId;
+    else if (kind === "foreign dynamic owner") compact.resume_metadata.dynamic_tools.thread_id = otherId;
+    else if (kind === "foreign turn") compact.resume_metadata.turn_attribution.turn_id = otherId;
+    else if (kind === "changed carrier") compact.replacement_history.at(-1).encrypted_content += " changed";
+    else if (kind === "changed carrier receipt") f.options.encryptedSha256 = "0".repeat(64);
+    else if (kind === "changed readable receipt") f.options.carrierSha256 = "0".repeat(64);
+    else if (kind === "duplicate carrier") compact.replacement_history.push(structuredClone(f.options.carrier));
+    else if (kind === "duplicate record") f.rows.push(structuredClone(f.rows[1]));
+    else if (kind === "trailing source") compact.replacement_history.push(original);
+    f.publish();
+    if (kind === "multiple rollouts") writeFileSync(path.join(path.dirname(f.file), `rollout-2026-11-01T05-00-01-${threadId}.jsonl`), readFileSync(f.file));
+    else if (kind === "partial line") writeFileSync(f.file, readFileSync(f.file).subarray(0, -1));
+    else if (kind === "ambiguous JSON") writeFileSync(f.file, readFileSync(f.file, "utf8").replace('"type":"compacted"', '"type":"compacted","type":"compacted"'), "utf8");
+    const before = readFileSync(f.file);
+    await assert.rejects(readNativeCompactionContext(f.options), { code: "web_native_context_proof_unavailable" });
+    assert.deepEqual(readFileSync(f.file), before);
+  });
+});
 
 test("native witness exact immutable identities survive restart and reject foreign or tampered evidence", t => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "web-native-witness-"));

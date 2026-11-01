@@ -1,7 +1,7 @@
 // Explicit same-chat abandonment. Inspection never changes the browser or a
 // conversation ledger; confirmation is an offline, locked state transaction.
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, lstatSync, openSync, fstatSync, closeSync, constants } from "node:fs";
+import { readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { browserScript, parseBrowserOutput } from "../src/web-browser.mjs";
@@ -19,7 +19,7 @@ import { conclusivelyRefused } from "../src/transport-error-graph.mjs";
 import { isUtf8 } from "node:buffer";
 import { jsonIsUnambiguousForRewrite } from "../src/namespace-relay.mjs";
 import { createNativeCompactionWitness, nativeCompactionSource, nativeCompactionWitnessReference,
-  nativeCompactionWitnessPath, validNativeCompactionWitness } from "../src/web-native-compaction.mjs";
+  nativeCompactionWitnessPath, validNativeCompactionWitness, readCanonicalNativeSource as acquireCanonicalNativeSource } from "../src/web-native-compaction.mjs";
 import { guardedWebConversation, inspectNativeCompactionSource, isCanonicalWebAppIngress } from "../src/web-runtime.mjs";
 
 const hash = bytes => createHash("sha256").update(typeof bytes === "string" || Buffer.isBuffer(bytes) ? bytes : JSON.stringify(bytes)).digest("hex");
@@ -50,28 +50,8 @@ function readOptionalProtected(file, isPrivate) {
 // a bound descriptor, then retain a protected immutable copy at Router's owner;
 // never harden, rewrite or require Router-specific ACLs on native history.
 export function readCanonicalNativeSource(file) {
-  if (!path.isAbsolute(file ?? "")) throw failure("Canonical native source requires an absolute path.");
-  const before = lstatSync(file);
-  if (!before.isFile() || before.isSymbolicLink() || before.size > 16 * 1024 * 1024) throw failure("Canonical native source requires a bounded regular file.");
-  for (let cursor = path.dirname(file); ; cursor = path.dirname(cursor)) {
-    if (lstatSync(cursor).isSymbolicLink()) throw failure("Canonical native source refuses linked paths.");
-    if (cursor === path.dirname(cursor)) break;
-  }
-  let fd;
-  try {
-    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const opened = fstatSync(fd);
-    const same = (left, right) => left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino
-      && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
-    if (!same(before, opened)) throw failure("Canonical native source changed while opening.");
-    const bytes = readFileSync(fd), after = fstatSync(fd), named = lstatSync(file);
-    if (named.isSymbolicLink() || bytes.length !== before.size || !same(opened, after) || !same(after, named)) throw failure("Canonical native source changed during acquisition.");
-    for (let cursor = path.dirname(file); ; cursor = path.dirname(cursor)) {
-      if (lstatSync(cursor).isSymbolicLink()) throw failure("Canonical native source refuses linked paths.");
-      if (cursor === path.dirname(cursor)) break;
-    }
-    return bytes;
-  } finally { if (fd !== undefined) closeSync(fd); }
+  try { return acquireCanonicalNativeSource(file); }
+  catch (error) { throw failure(error.message); }
 }
 const nativeSourceSnapshotPath = (threadId, sha256, options) => path.join(options.stateDir ?? STATE_DIR,
   "web-in-app", "restoration", `${threadId}.native-source-${sha256}.jsonl`);

@@ -19,7 +19,8 @@ function unavailable(reason) {
 
 // Discovery reads names only. Never scan another conversation's contents or
 // accept a rollout path from the Responses caller.
-async function findRollout(codexHome, threadId) {
+export async function findNativeRollout(codexHome, threadId) {
+  if (!path.isAbsolute(codexHome ?? "") || !UUID.test(threadId ?? "")) throw unavailable("rollout_path");
   let home;
   try { home = await realpath(codexHome); }
   catch (error) { if (error.code === "ENOENT") return null; throw error; }
@@ -209,7 +210,7 @@ export function watchWebTurnCancellation({
         dirty = false;
         if (watchError) throw watchError;
         if (!sessionsGeneration) await subscribeSessions();
-        if (sessionsGeneration) filePath = await findRollout(home, threadId);
+        if (sessionsGeneration) filePath = await findNativeRollout(home, threadId);
         if (closed) break;
         if (!filePath) {
           if (watchError) throw watchError;

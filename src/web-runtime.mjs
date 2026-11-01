@@ -18,7 +18,8 @@ import { startWebTunnel } from "./web-tunnel.mjs";
 import { watchWebTurnCancellation } from "./web-turn-cancellation.mjs";
 import { webToolIdentity, webToolKinds, validWebToolSearchCall, completedWebToolSearchOutput, terminalWebToolSearchOutput } from "./web-tool-contract.mjs";
 import { nativeCompactionSource, validNativeCompactionReference, createNativeCompactionWitness, nativeCompactionWitnessReference,
-  nativeCompactionWitnessPath, readNativeCompactionWitness, validNativeCompactionWitness, expandNativeCompactionWitnesses } from "./web-native-compaction.mjs";
+  nativeCompactionWitnessPath, readNativeCompactionWitness, validNativeCompactionWitness, expandNativeCompactionWitnesses,
+  readNativeCompactionContext } from "./web-native-compaction.mjs";
 
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
@@ -289,9 +290,42 @@ export function isCanonicalWebAppIngress(item) {
     && uuid.test(metadata.turn_id ?? "") && Number.isFinite(metadata.create_time) && metadata.create_time > 0;
 }
 
+// Native V2 reconstructs these attributed context parts outside the retained
+// source window. They remain transcript data, never incoming-user authority.
+const nativeContextParts = new Map([
+  ["generic.developer_instructions", ["developer", { type: "developer_instructions", from_additional_requirements: false }]],
+  ["host_skills.instructions", ["developer", { type: "skills" }]],
+  ["agents_md.instructions", ["user", { type: "agents_md" }]],
+  ["environments.environment_context", ["user", { type: "harness", hook: false }]],
+  ...["memories.instructions", "permissions.instructions", "collaboration_mode.instructions", "apps.instructions",
+    "plugins.usage_instructions", "plugins.recommendations"].map(kind => [kind, ["developer", { type: "harness", hook: false }]]),
+  ...["multi_agent.usage_hint", "multi_agent.mode_instructions"].map(kind => [kind, ["developer", { type: "tool", namespace: "collaboration" }]]),
+]);
+function isCurrentNativeContext(item, owner) {
+  const metadata = item?.internal_chat_message_metadata_passthrough;
+  return record(item) && item.type === "message" && (item.id === undefined || nonempty(item.id))
+    && Object.keys(item).filter(key => key !== "id").sort().join() === "content,internal_chat_message_metadata_passthrough,role,type"
+    && record(metadata) && Object.keys(metadata).sort().join() === "content_item_kinds,content_item_metadata,turn_id"
+    && typeof metadata.turn_id === "string" && metadata.turn_id.toLowerCase() === owner?.turnId
+    && Array.isArray(item.content) && item.content.length > 0 && Array.isArray(metadata.content_item_kinds)
+    && metadata.content_item_kinds.length === item.content.length && Array.isArray(metadata.content_item_metadata)
+    && metadata.content_item_metadata.length === item.content.length && item.content.every((part, index) => {
+      const definition = nativeContextParts.get(metadata.content_item_kinds[index]), evidence = metadata.content_item_metadata[index];
+      if (!definition || item.role !== definition[0] || !record(part) || Object.keys(part).sort().join() !== "text,type"
+          || part.type !== "input_text" || typeof part.text !== "string" || !record(evidence) || Object.keys(evidence).join() !== "provenance") return false;
+      const provenance = evidence.provenance, expected = definition[1];
+      return record(provenance) && Object.keys(provenance).sort().join() === Object.keys(expected).sort().join()
+        && Object.keys(expected).every(key => provenance[key] === expected[key]);
+    });
+}
+const nativeContextHash = item => digest({ type: item.type, role: item.role, content: item.content,
+  internal_chat_message_metadata_passthrough: item.internal_chat_message_metadata_passthrough });
+const matchesNativeContextProof = (prefix, proof) => !!proof && digest(prefix.filter(item => isCurrentNativeContext(item, { turnId: proof.turnId })).map(nativeContextHash)) === digest(proof.contextHashes);
+
 function recoveryUserInput(raw, current, owner, { requireAttribution = false } = {}) {
-  const final = raw.at(-1), finalUser = current.at(-1), attributedTurn = final?.internal_chat_message_metadata_passthrough?.turn_id;
-  if (finalUser?.role === "user" && finalUser.content.trim()
+  const final = raw.at(-1), finalUser = current.at(-1), metadata = final?.internal_chat_message_metadata_passthrough, attributedTurn = metadata?.turn_id;
+  const contextEnvelope = metadata?.content_item_kinds !== undefined || metadata?.content_item_metadata !== undefined;
+  if (finalUser?.role === "user" && finalUser.content.trim() && !contextEnvelope
       && (!requireAttribution || typeof attributedTurn === "string" && attributedTurn.toLowerCase() === owner.turnId)) {
     return { turnId: owner.turnId, inputSha256: digest(finalUser) };
   }
@@ -585,7 +619,7 @@ export function createInAppWebRuntime({
   };
   // Native V2 retains source user copies before its checkpoint. They remain
   // native evidence, but cannot seed a summary or a capacity successor.
-  const quarantineContext = (conversation, raw, current) => {
+  const quarantineContext = (conversation, raw, current, owner) => {
     const recovery = conversation.recovery;
     if (recovery.inputHashes.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) {
       const input = raw.slice(recovery.inputHashes.length);
@@ -597,6 +631,7 @@ export function createInAppWebRuntime({
       const indexes = raw.flatMap((item, index) => item.type === "compaction" && textDigest(item.encrypted_content) === alias.encryptedSha256 ? [index] : []);
       if (indexes.length !== 1) continue;
       const index = indexes[0];
+      const context = [];
       if (alias.protocol === "v2") {
         const checkpoint = decodeCompaction(raw[index].encrypted_content)?.checkpoint;
         if (checkpoint?.retained_tail_id !== alias.id || checkpoint.retained_tail?.length !== alias.retainedHashes.length
@@ -605,15 +640,16 @@ export function createInAppWebRuntime({
         for (const hash of alias.inputHashes) sources.set(hash, (sources.get(hash) ?? 0) + 1);
         for (const item of raw.slice(0, index)) {
           const hash = digest(transcript({ input: [item] })[0]), count = sources.get(hash) ?? 0;
-          if (!count) throw fail("Native source copies changed before the quarantined compaction checkpoint.", "web_history_mismatch");
-          sources.set(hash, count - 1);
+          if (count) sources.set(hash, count - 1);
+          else if (isCurrentNativeContext(item, owner)) context.push(item);
+          else throw fail("Native source copies changed before the quarantined compaction checkpoint.", "web_history_mismatch");
         }
       } else if (index !== 0 || raw[0].id !== alias.id || !alias.retainedHashes.every((hash, offset) => raw[offset + 1] !== undefined && digest(raw[offset + 1]) === hash)) continue;
-      return { input: raw.slice(index), alias };
+      return { input: [...context, ...raw.slice(index)], alias };
     }
     throw fail("The quarantined history has no trusted readable compaction lineage.", "web_history_mismatch");
   };
-  const conversationInput = (conversation, payload) => {
+  const conversationInput = (conversation, payload, owner) => {
     payload = projectedPayload(conversation, payload);
     const current = transcript(payload, conversation.recovery), recovery = conversation.recovery;
     if (recovery?.stage === "armed" && recovery.compactionSources) {
@@ -625,14 +661,15 @@ export function createInAppWebRuntime({
         const raw = readableInput(payload), matches = raw.flatMap((item, index) => item.type === "compaction" && typeof item.encrypted_content === "string"
           ? [{ sources: recovery.compactionSources.filter(source => textDigest(item.encrypted_content) === source.encryptedSha256), index }].filter(match => match.sources.length) : []);
         if (matches.length !== 1) throw fail("The approved recovery compaction carrier changed.", "web_history_mismatch");
+        const proven = matchesNativeContextProof(raw.slice(0, matches[0].index), owner?.nativeContextProof);
         // V1 source-free carriers have identical bytes across compactions.
         // One actual carrier may therefore have several valid source receipts.
         const sourceCopies = matches[0].sources.some(source => {
           const counts = new Map();
           for (const hash of source.inputHashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
-          return current.slice(0, matches[0].index).every(item => {
+          return current.slice(0, matches[0].index).every((item, index) => {
             const hash = digest(item), count = counts.get(hash) ?? 0;
-            if (!count) return false;
+            if (!count) return isCurrentNativeContext(raw[index], owner) || proven && isCurrentNativeContext(raw[index], owner.nativeContextProof);
             counts.set(hash, count - 1); return true;
           });
         });
@@ -647,9 +684,39 @@ export function createInAppWebRuntime({
       if (!anchored && compactTail(conversation, readableInput(payload), undefined, false) === undefined) {
         throw fail("Native history no longer matches the quarantine fence or an authorized compaction transition.", "web_history_mismatch");
       }
-      quarantineContext(conversation, readableInput(payload), current);
+      quarantineContext(conversation, readableInput(payload), current, owner);
     }
     return current;
+  };
+  const contextOwner = async (conversation, payload, owner) => {
+    try { conversationInput(conversation, payload, owner); return owner; }
+    catch (error) {
+      if (error.code !== "web_history_mismatch" || conversation.recovery?.inputPolicy !== WEB_RECOVERY_INPUT_POLICY
+          || conversation.recovery.stage !== "armed") throw error;
+      const raw = nativeInput(conversation, payload), lineage = conversation.recovery.compactionLineage;
+      const records = [...(conversation.recovery.compactionSources ?? []), ...[conversation.pendingCompaction, conversation.activeCompaction, lineage]
+        .filter(alias => alias && (alias === lineage || digest(conversation.checkpoint) === alias.deliverySha256))];
+      const matches = raw.flatMap((item, index) => item.type === "compaction" && typeof item.encrypted_content === "string"
+        ? [{ item, index, sources: records.filter(source => source.encryptedSha256 === textDigest(item.encrypted_content)) }].filter(match => match.sources.length) : []);
+      if (matches.length !== 1) throw error;
+      const { item, index, sources } = matches[0], prefix = raw.slice(0, index);
+      if (!prefix.some(value => {
+        const turn = value.internal_chat_message_metadata_passthrough?.turn_id;
+        return typeof turn === "string" && !isCurrentNativeContext(value, owner) && isCurrentNativeContext(value, { turnId: turn.toLowerCase() });
+      })) throw error;
+      const carrierSha256 = digest(transcript({ input: [item] })[0]), sourceSha256 = digest(sources);
+      if (sources.some(source => source.carrierSha256 !== undefined && source.carrierSha256 !== carrierSha256)) throw fail("The retained native context source receipt changed.", "web_native_context_proof_unavailable");
+      const proof = await readNativeCompactionContext({ threadId: owner.threadId, carrier: item,
+        encryptedSha256: textDigest(item.encrypted_content), carrierSha256, sourceSha256 });
+      const context = proof.prefix.filter(value => value?.internal_chat_message_metadata_passthrough?.content_item_kinds !== undefined
+        || value?.internal_chat_message_metadata_passthrough?.content_item_metadata !== undefined);
+      const nativeContextProof = { turnId: proof.turnId, contextHashes: context.map(nativeContextHash) };
+      if (!context.length || context.some(value => !isCurrentNativeContext(value, proof))
+          || proof.sourceSha256 !== digest(sources) || !matchesNativeContextProof(prefix, nativeContextProof)) {
+        throw fail("The retained native context differs from its exact canonical compaction cohort.", "web_native_context_proof_unavailable");
+      }
+      return { ...owner, nativeContextProof };
+    }
   };
   const compactHistory = async (payload, headers, compactV2) => {
     if (!Array.isArray(payload.input)) return webCompactResponse(payload, { compactV2 });
@@ -677,7 +744,8 @@ export function createInAppWebRuntime({
     conversation.compacting = true;
     try {
       await conversation.writeTail;
-      const current = conversationInput(conversation, clean);
+      const qualifiedOwner = await contextOwner(conversation, clean, owner);
+      const current = conversationInput(conversation, clean, qualifiedOwner);
       const retained = compactTail(conversation, raw, undefined, false);
       await reconcileCoding(conversation, retained ? { input: retained } : payload);
       if (pendingRecovery && conversation.recovery.stage === "armed") {
@@ -703,9 +771,9 @@ export function createInAppWebRuntime({
       }
       compactTail(conversation, raw);
       if (!conversation.checkpoint || conversation.needsHistory) return seed(conversation.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-        ? quarantineContext(conversation, raw, current).input : raw);
+        ? quarantineContext(conversation, raw, current, qualifiedOwner).input : raw);
       let tail = retained;
-      if (pendingRecovery && conversation.recovery.stage === "bounded") tail ??= quarantineContext(conversation, raw, current).input;
+      if (pendingRecovery && conversation.recovery.stage === "bounded") tail ??= quarantineContext(conversation, raw, current, qualifiedOwner).input;
       if (!tail && conversation.checkpoint.every((hash, index) => current[index] !== undefined && digest(current[index]) === hash)) tail = raw.slice(conversation.checkpoint.length);
       if (!tail) throw fail("Native Web compaction no longer matches the confirmed delivery checkpoint.", "web_history_mismatch");
       // The latest Web answer is already in that chat. Preserve every other raw
@@ -715,7 +783,7 @@ export function createInAppWebRuntime({
       // The confirmed prefix is retained in native history and its journal;
       // only later readable history may enter a new local summary.
       const compactInput = quarantine?.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-        ? { ...clean, input: quarantineContext(conversation, raw, current).input } : clean;
+        ? { ...clean, input: quarantineContext(conversation, raw, current, qualifiedOwner).input } : clean;
       const output = webCompactOutput(compactInput, { retainedTail: tail, compactV2 }), checkpoint = output[0];
       const response = webCompactResponse(clean, { output, compactV2 });
       conversation.pendingCompaction = { id: checkpoint.id,
@@ -921,13 +989,13 @@ export function createInAppWebRuntime({
   const preparePrompt = async (turn, payload) => {
     const conversation = turn.conversation;
     if (conversation.uncertainSend) throw fail("The preceding ChatGPT Send was not confirmed. Its message cannot be replayed.", "web_send_uncertain");
-    const current = conversationInput(conversation, payload), hashes = current.map(digest);
+    const current = conversationInput(conversation, payload, turn), hashes = current.map(digest);
     turn.releaseNativeProjection = !!conversation.nativeCompactionProjection && Array.isArray(payload.input)
       && payload.input.some(item => item?.type === "compaction" && decodeCompaction(item.encrypted_content))
       && !payload.input.some(item => item?.type === "compaction" && !decodeCompaction(item.encrypted_content))
       && compactTail(conversation, readableInput(payload), undefined, false) !== undefined;
     const safeContext = conversation.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY
-      ? quarantineContext(conversation, nativeInput(conversation, payload), current) : undefined;
+      ? quarantineContext(conversation, nativeInput(conversation, payload), current, turn) : undefined;
     turn.compactionLineage = safeContext?.alias;
     // Abandonment is a replay fence, separate from the accepted checkpoint.
     const recoveryBoundary = conversation.recovery?.stage === "bounded";
@@ -1066,7 +1134,7 @@ export function createInAppWebRuntime({
     if (operation === "recover") {
       const conversation = turn.conversation, recovery = conversation.recovery;
       if (recovery?.stage !== (turn.recoveryResume ? "bounded" : "armed") || value.inspectionOnly !== false || value.snapshotSha256 !== recovery.snapshotSha256
-          || digest(value.snapshot) !== recovery.snapshotSha256 || digest(conversationInput(conversation, payload).map(digest)) !== digest(turn.recoveryInputHashes)
+          || digest(value.snapshot) !== recovery.snapshotSha256 || digest(conversationInput(conversation, payload, turn).map(digest)) !== digest(turn.recoveryInputHashes)
           || !nonempty(value.tabId) || conversation.unresolvedCoding.size) throw fail("The recovery receipt or native input changed; the failed attempt remains guarded.", "web_recovery_changed");
       recovery.boundTabId = value.tabId; conversation.tabId = value.tabId;
       recovery.boundEffects = value.effects;
@@ -1213,7 +1281,7 @@ export function createInAppWebRuntime({
       const quietSnapshot = completionRevision !== undefined && pending.completionRevision === completionRevision;
       const freshAnswer = freshPostToolAnswer(turn, value);
       if (value.completed === true && quietSnapshot && value.assistantText.trim() && freshAnswer) {
-        const current = conversationInput(turn.conversation, payload), hashes = current.map(digest), checkpoint = turn.conversation.checkpoint;
+        const current = conversationInput(turn.conversation, payload, turn), hashes = current.map(digest), checkpoint = turn.conversation.checkpoint;
         compactTail(turn.conversation, nativeInput(turn.conversation, payload), turn.deliveredCoding);
         if (checkpoint.every((hash, index) => hashes[index] === hash)) {
           let acknowledged = checkpoint.length;
@@ -1297,7 +1365,8 @@ export function createInAppWebRuntime({
     conversation.activeTurn = owner.turnId;
     let retained;
     try {
-      conversationInput(conversation, payload); // Validate history before any browser or persistence effects.
+      owner = await contextOwner(conversation, payload, owner);
+      conversationInput(conversation, payload, owner); // Validate history before any browser or persistence effects.
       const previousWrite = conversation.writeTail;
       try { await previousWrite; }
       catch {
@@ -1319,7 +1388,7 @@ export function createInAppWebRuntime({
       cache: new Map(), processed: new Map(), discovered: [], starting: true, startedAt: Date.now() };
     if (conversation.recovery?.stage === "armed") {
       turn.initialBrowserOperation = "recover";
-      const current = conversationInput(conversation, payload);
+      const current = conversationInput(conversation, payload, owner);
       turn.recoveryInputHashes = current.map(digest);
       turn.recoveryOpaqueItems = current.flatMap((item, index) => item.type === opaqueMarkerType ? [{ index, itemSha256: item.itemSha256 }] : []);
       // A verified alias proves the same accepted history across native
@@ -1344,7 +1413,7 @@ export function createInAppWebRuntime({
       // keep the existing no-replay boundary and this fresh request's input.
       turn.initialBrowserOperation = "recover";
       turn.recoveryResume = true;
-      turn.recoveryInputHashes = conversationInput(conversation, payload).map(digest);
+      turn.recoveryInputHashes = conversationInput(conversation, payload, owner).map(digest);
     }
     conversation.activeTurn = owner.turnId;
     const check = () => {
@@ -1453,7 +1522,7 @@ export function createInAppWebRuntime({
       try {
         if (signal?.aborted) abort();
         if (turn.cancelled) throw turn.error;
-        if (turn.conversation?.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY) conversationInput(turn.conversation, payload);
+        if (turn.conversation?.recovery?.inputPolicy === WEB_RECOVERY_INPUT_POLICY) conversationInput(turn.conversation, payload, turn);
         const fingerprint = digest(payload);
         if (turn.replay?.fingerprint === fingerprint) return new Response(turn.replay.body, turn.replay.init);
         if (turn.cache?.has(fingerprint)) {

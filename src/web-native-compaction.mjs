@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { isUtf8 } from "node:buffer";
 
 import { privateFileIsProtected } from "./file-security.mjs";
-import { decodeCompaction } from "./compaction-checkpoint.mjs";
+import { decodeCompaction, renderCompactionValue } from "./compaction-checkpoint.mjs";
 import { jsonIsUnambiguousForRewrite } from "./namespace-relay.mjs";
 import { ResponseUsageTransform } from "./response-usage.mjs";
 import { SseFrameBuffer, sseFrameFields } from "./sse-framing.mjs";
+import { findNativeRollout } from "./web-turn-cancellation.mjs";
+import { CODEX_HOME } from "./paths.mjs";
 
 export const MAX_NATIVE_COMPACTION_WITNESS_BYTES = 16 * 1024 * 1024;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -18,6 +21,73 @@ const failure = () => Object.assign(new Error("Native compaction has no valid du
 const opaque = item => record(item) && item.type === "compaction" && typeof item.encrypted_content === "string" && item.encrypted_content.length > 0
   && (item.status === undefined || item.status === "completed");
 const ignored = new Set(["reasoning", "additional_tools", "compaction_trigger"]);
+
+// Native owns these permissions. Bind a descriptor to unchanged original bytes;
+// do not harden native history or accept linked acquisition paths.
+export function readCanonicalNativeSource(file) {
+  const refused = message => Object.assign(new Error(message), { code: "web_native_compaction_state", status: 409 });
+  if (!path.isAbsolute(file ?? "")) throw refused("Canonical native source requires an absolute path.");
+  const before = lstatSync(file);
+  if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_NATIVE_COMPACTION_WITNESS_BYTES) throw refused("Canonical native source requires a bounded regular file.");
+  const noLinks = () => {
+    for (let cursor = path.dirname(file); ; cursor = path.dirname(cursor)) {
+      if (lstatSync(cursor).isSymbolicLink()) throw refused("Canonical native source refuses linked paths.");
+      if (cursor === path.dirname(cursor)) break;
+    }
+  };
+  noLinks();
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(fd);
+    const same = (left, right) => left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino
+      && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+    if (!same(before, opened)) throw refused("Canonical native source changed while opening.");
+    const bytes = readFileSync(fd), after = fstatSync(fd), named = lstatSync(file);
+    if (named.isSymbolicLink() || bytes.length !== before.size || !same(opened, after) || !same(after, named)) throw refused("Canonical native source changed during acquisition.");
+    noLinks();
+    return bytes;
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+export async function readNativeCompactionContext({ threadId, carrier, encryptedSha256, carrierSha256, sourceSha256, codexHome = CODEX_HOME } = {}) {
+  const refused = () => Object.assign(new Error("The retained native context has no exact canonical compaction proof."), { code: "web_native_context_proof_unavailable", status: 409 });
+  try {
+    const textHash = value => createHash("sha256").update(value, "utf8").digest("hex");
+    if (!uuid(threadId) || !opaque(carrier) || !decodeCompaction(carrier.encrypted_content)
+        || ![encryptedSha256, carrierSha256, sourceSha256].every(sha256) || textHash(carrier.encrypted_content) !== encryptedSha256
+        || digest({ role: "developer", content: renderCompactionValue(carrier.encrypted_content) }) !== carrierSha256) throw refused();
+    const home = await realpath(codexHome), file = await findNativeRollout(home, threadId);
+    if (!file) throw refused();
+    const bytes = readCanonicalNativeSource(file);
+    if (!bytes.length || bytes.at(-1) !== 10 || !isUtf8(bytes)) throw refused();
+    let session, clock = -Infinity; const matches = [];
+    for (const line of bytes.toString("utf8").split(/\r?\n/u)) {
+      if (!line.length) continue;
+      if (!jsonIsUnambiguousForRewrite(line)) throw refused();
+      const row = JSON.parse(line), timestamp = Date.parse(row.timestamp);
+      if (!Number.isFinite(timestamp) || timestamp < clock) throw refused();
+      clock = timestamp;
+      if (row.type === "session_meta") {
+        if (session || row.payload?.id !== threadId || row.payload.session_id !== threadId) throw refused();
+        session = row.payload;
+      } else if (!session) throw refused();
+      if (row.type !== "compacted") continue;
+      const replacement = row.payload?.replacement_history;
+      if (!Array.isArray(replacement)) throw refused();
+      const indexes = replacement.flatMap((item, index) => item?.type === "compaction" && typeof item.encrypted_content === "string"
+        && textHash(item.encrypted_content) === encryptedSha256 ? [index] : []);
+      if (!indexes.length) continue;
+      const native = row.payload, turnId = native.resume_metadata?.last_started_turn_id;
+      if (indexes.length !== 1 || indexes[0] !== replacement.length - 1 || !uuid(turnId)
+          || native.resume_metadata?.turn_attribution?.turn_id !== turnId || native.resume_metadata?.dynamic_tools?.thread_id !== threadId
+          || native.latest_token_usage_record?.thread_id !== threadId || native.latest_token_usage_record?.session_id !== session.session_id) throw refused();
+      matches.push({ turnId, prefix: replacement.slice(0, indexes[0]), recordSha256: textHash(line), sourceSha256 });
+    }
+    if (!session || matches.length !== 1) throw refused();
+    return matches[0];
+  } catch { throw refused(); }
+}
 
 // Current request tool declarations never enter historical projection authority.
 export function nativeCompactionSource(input) {

@@ -414,6 +414,161 @@ test("recovery-only carriers require a consumed user from their exact native tur
   });
 });
 
+function rebuiltNativeContext(turn, revision) {
+  const message = (role, parts) => ({ type: "message", role, content: parts.map(([kind]) => ({ type: "input_text", text: `${kind}: ${revision}` })),
+    internal_chat_message_metadata_passthrough: { turn_id: turn, content_item_kinds: parts.map(([kind]) => kind),
+      content_item_metadata: parts.map(([, provenance]) => ({ provenance })) } });
+  const context = [message("developer", [
+    ["generic.developer_instructions", { type: "developer_instructions", from_additional_requirements: false }],
+    ["memories.instructions", { type: "harness", hook: false }], ["host_skills.instructions", { type: "skills" }],
+    ...["permissions.instructions", "collaboration_mode.instructions", "apps.instructions", "plugins.usage_instructions", "plugins.recommendations"]
+      .map(kind => [kind, { type: "harness", hook: false }]),
+  ]), ...["multi_agent.usage_hint", "multi_agent.mode_instructions"].map(kind => message("developer", [[kind, { type: "tool", namespace: "collaboration" }]])),
+  message("user", [["agents_md.instructions", { type: "agents_md" }], ["environments.environment_context", { type: "harness", hook: false }]])];
+  // These two messages remain literal source copies; the outer turn metadata
+  // changes when native Codex rebuilds the current instruction context.
+  for (const item of context.slice(1, 3)) item.content[0].text = `Unchanged ${item.internal_chat_message_metadata_passthrough.content_item_kinds[0]} instructions`;
+  return context;
+}
+
+function canonicalContextRecord(carrier, prefix, owner) {
+  return { timestamp: "2026-11-01T05:26:53.875Z", type: "compacted", payload: { replacement_history: [...prefix, structuredClone(carrier)],
+    resume_metadata: { last_started_turn_id: owner, turn_attribution: { turn_id: owner }, dynamic_tools: { thread_id: threadId } },
+    latest_token_usage_record: { thread_id: threadId, session_id: threadId } } };
+}
+function publishCanonicalContextFixture(t, records) {
+  const directory = path.join(syntheticEnvironment.CODEX_HOME, "sessions", "2026", "11", "01"); mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, `rollout-2026-11-01T05-00-00-${threadId}.jsonl`);
+  writeFileSync(file, [{ timestamp: "2026-11-01T05:00:00.000Z", type: "session_meta", payload: { id: threadId, session_id: threadId } }, ...records].map(JSON.stringify).join("\n") + "\n", "utf8");
+  t.after(() => rmSync(file, { force: true })); return file;
+}
+
+test("an exact recorded native context cohort survives a new recovery owner and restart", async t => {
+  const compactOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  for (const nextCompaction of [false, true]) await t.test(`next owner compacts ${nextCompaction}`, async t => {
+    const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const compact = owner => h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: [...h.input(), { type: "compaction_trigger" }], stream: true },
+      { compactV2: true, headers: headers(owner) }).then(nativeV2Checkpoint);
+    const carrier = await compact(compactOwner), retained = rebuiltNativeContext(compactOwner, "retained exact native cohort");
+    const file = publishCanonicalContextFixture(t, [canonicalContextRecord(carrier, retained, compactOwner)]), original = readFileSync(file);
+    h.input().splice(0, h.input().length, ...retained, carrier); await h.restartRuntime(); h.loseKernel();
+    h.newTurn(nextOwner, "The new native owner has not appended its app ingress yet"); h.input().pop();
+    if (nextCompaction) {
+      const next = await compact(nextOwner);
+      assert.equal(JSON.parse(readFileSync(h.stateFile, "utf8")).recovery.compactionSources.length, 2);
+      h.input().splice(0, h.input().length, ...rebuiltNativeContext(nextOwner, "newly rebuilt cohort"), next);
+      await h.restartRuntime(); h.loseKernel();
+    }
+    h.append({ type: "function_call_output", id: "new-native-app-ingress", namespace: "codex_app", name: "send_message_to_thread", output: "The actual new-owner user request",
+      internal_chat_message_metadata_passthrough: { turn_id: nextOwner, create_time: 1 } });
+    const sends = h.browser.ui.sends.length;
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    const bounded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(bounded.recovery.stage, "bounded"); assert.deepEqual(bounded.checkpoint, accepted.checkpoint);
+    assert.equal(h.browser.ui.sends.length, sends); assert.deepEqual(readFileSync(file), original);
+    h.newTurn("55002233-4455-6677-8899-aabbccddeeff", "Only this post-boundary instruction is sent");
+    await h.toObserve(); assert.deepEqual(sentTranscript(h), [{ role: "user", content: "Only this post-boundary instruction is sent" }]);
+  });
+});
+
+test("retained native context proof refuses missing, foreign, ambiguous and changed canonical records", async t => {
+  const oldOwner = "33002233-4455-6677-8899-aabbccddeeff", nextOwner = "44002233-4455-6677-8899-aabbccddeeff";
+  for (const kind of ["missing", "foreign session", "foreign compact owner", "changed context", "changed provenance", "duplicate record", "changed carrier", "changed source receipt"]) await t.test(kind, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare(); await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+      { compactV2: true, headers: headers(oldOwner) }));
+    const retained = rebuiltNativeContext(oldOwner, "exact retained cohort"), record = canonicalContextRecord(carrier, structuredClone(retained), oldOwner);
+    if (kind === "foreign compact owner") record.payload.resume_metadata.turn_attribution.turn_id = nextOwner;
+    else if (kind === "changed context") record.payload.replacement_history[0].content[0].text += " changed";
+    else if (kind === "changed provenance") record.payload.replacement_history[0].internal_chat_message_metadata_passthrough.content_item_metadata[1].provenance.hook = true;
+    else if (kind === "changed carrier") record.payload.replacement_history.at(-1).encrypted_content += " changed";
+    const file = publishCanonicalContextFixture(t, kind === "duplicate record" ? [record, record] : [record]);
+    if (kind === "missing") rmSync(file);
+    else if (kind === "foreign session") {
+      const rows = readFileSync(file, "utf8").trim().split("\n").map(JSON.parse); rows[0].payload.id = nextOwner;
+      writeFileSync(file, rows.map(JSON.stringify).join("\n") + "\n", "utf8");
+    } else if (kind === "changed source receipt") {
+      const saved = JSON.parse(readFileSync(h.stateFile, "utf8")); saved.recovery.compactionSources[0].carrierSha256 = "0".repeat(64);
+      writeFileSync(h.stateFile, JSON.stringify(saved), "utf8");
+    }
+    h.input().splice(0, h.input().length, ...retained, carrier); h.newTurn(nextOwner, "Proof failure cannot send this new instruction");
+    await h.restartRuntime(); h.loseKernel(); const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: "web_native_context_proof_unavailable" });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+});
+
+test("quarantine retains rebuilt current native context around its exact compaction carrier", async t => {
+  const recoveryId = "33002233-4455-6677-8899-aabbccddeeff", freshId = "44002233-4455-6677-8899-aabbccddeeff";
+  const normalize = item => ({ role: item.role, content: item.content.map(part => part.text).join("\n") });
+  const ingress = turn => ({ type: "function_call_output", id: `native-${turn}`, namespace: "codex_app", name: "send_message_to_thread",
+    output: `Current app instruction for ${turn}`, internal_chat_message_metadata_passthrough: { turn_id: turn, create_time: 1 } });
+  for (const restart of [false, true]) await t.test(`restart ${restart}`, async t => {
+    const fixture = await controlledRecoveryFixture(t, { nativeCompaction: true }), { h, options, accepted } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.append(...rebuiltNativeContext(followupId, "before preturn compaction"));
+    h.newTurn(recoveryId, "The current app ingress arrives after preturn compaction"); h.input().pop();
+    const compact = async owner => nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: [...h.input(), { type: "compaction_trigger" }], stream: true },
+      { compactV2: true, headers: headers(owner) }));
+    const carrier = await compact(recoveryId), rebuilt = rebuiltNativeContext(recoveryId, "rebuilt after preturn compaction");
+    h.input().splice(0, h.input().length, ...rebuilt, carrier, ingress(recoveryId));
+    if (restart) { await h.restartRuntime(); h.loseKernel(); }
+    const sends = h.browser.ui.sends.length, saved = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.equal(saved.recovery.compactionSources.at(-1).user, undefined, "Native context is not an incoming user request.");
+    const notice = await h.answerBrowser((await h.request()).output[0]); h.append(notice.output[0]);
+    const bounded = JSON.parse(readFileSync(h.stateFile, "utf8"));
+    assert.deepEqual(bounded.recovery.inputHashes.slice(0, rebuilt.length), rebuilt.map(item => createHash("sha256").update(JSON.stringify(normalize(item))).digest("hex")));
+    assert.deepEqual(bounded.checkpoint, accepted.checkpoint); assert.equal(h.browser.ui.sends.length, sends);
+    const fresh = [{ type: "function_call", call_id: "post-boundary-native-call", name: "read", arguments: "{}" },
+      { type: "function_call_output", call_id: "post-boundary-native-call", output: "Actual post-boundary result" }];
+    h.append(...fresh);
+    h.newTurn(freshId, "The fresh app instruction also arrives after compaction"); h.input().pop();
+    const next = await compact(freshId), freshContext = rebuiltNativeContext(freshId, "current post-boundary context"), freshIngress = ingress(freshId);
+    h.input().splice(0, h.input().length, ...freshContext, next, freshIngress);
+    if (restart) { await h.restartRuntime(); h.loseKernel(); }
+    const observation = await h.toObserve();
+    assert.deepEqual(sentTranscript(h), [normalize(freshContext[0]), normalize(freshContext[3]), ...fresh,
+      { type: "function_call_output", output: freshIngress.output }]);
+    assert.equal(h.browser.ui.sends.length, sends + 1);
+    await h.completeAnswer(observation.call, "The exact rebuilt context and new work reached the saved chat.");
+  });
+});
+
+test("rebuilt-context recognition preserves source-copy checks and cannot supply user admission", async t => {
+  const recoveryId = "33002233-4455-6677-8899-aabbccddeeff";
+  for (const kind of ["foreign turn", "invalid turn attribution", "unknown kind", "changed provenance", "unaligned metadata", "unattributed developer", "changed user copy",
+    "no app ingress", "context user after carrier", "foreign context user after carrier", "malformed context user after carrier", "context-only source"]) await t.test(kind, async t => {
+    const fixture = await controlledRecoveryFixture(t), { h, options } = fixture;
+    const { plan, confirmationSha256 } = await fixture.prepare();
+    await confirmControlledWebRecovery(plan, confirmationSha256, options);
+    h.newTurn(recoveryId, "An actual incoming user is still required"); h.input().pop();
+    if (kind === "context-only source") h.input().splice(0, h.input().length, rebuiltNativeContext(recoveryId, "native environment only")[3]);
+    const carrier = await nativeV2Checkpoint(await h.runtime.request({ model: "chatgpt-web/gpt-6-sol-instant", input: h.input(), stream: true },
+      { compactV2: true, headers: headers(recoveryId) }));
+    const context = rebuiltNativeContext(recoveryId, "new native context");
+    if (kind === "foreign turn") context[0].internal_chat_message_metadata_passthrough.turn_id = followupId;
+    else if (kind === "invalid turn attribution") context[0].internal_chat_message_metadata_passthrough.turn_id = { toLowerCase: "not a callable metadata field" };
+    else if (kind === "unknown kind") context[0].internal_chat_message_metadata_passthrough.content_item_kinds[0] = "unknown.instructions";
+    else if (kind === "changed provenance") context[0].internal_chat_message_metadata_passthrough.content_item_metadata[1].provenance.hook = true;
+    else if (kind === "unaligned metadata") context[0].internal_chat_message_metadata_passthrough.content_item_metadata.pop();
+    else if (kind === "unattributed developer") delete context[0].internal_chat_message_metadata_passthrough;
+    else if (kind === "changed user copy") context[3] = { role: "user", content: "Changed ordinary retained user source" };
+    else if (kind === "foreign context user after carrier") context[3].internal_chat_message_metadata_passthrough.turn_id = followupId;
+    else if (kind === "malformed context user after carrier") context[3].internal_chat_message_metadata_passthrough.content_item_kinds = ["unknown.context"];
+    const app = { type: "function_call_output", id: "current-app-ingress", namespace: "codex_app", name: "send_message_to_thread", output: "Actual current app user input",
+      internal_chat_message_metadata_passthrough: { turn_id: recoveryId, create_time: 1 } };
+    h.input().splice(0, h.input().length, ...(kind === "context-only source" ? [carrier] : kind.endsWith("context user after carrier") ? [carrier, context[3]] : [...context, carrier]),
+      ...["no app ingress", "context-only source"].includes(kind) || kind.endsWith("context user after carrier") ? [] : [app]);
+    await h.restartRuntime(); h.loseKernel();
+    const bytes = readFileSync(h.stateFile), operations = h.observations.nativeOperations.length;
+    await assert.rejects(h.request(), { code: kind === "foreign turn" ? "web_native_context_proof_unavailable" : "web_history_mismatch" });
+    assert.deepEqual(readFileSync(h.stateFile), bytes); assert.equal(h.observations.nativeOperations.length, operations);
+  });
+});
+
 test("bounded recovery compaction rejects changed fences and preserves new material without excerpting it", async t => {
   for (const v2 of [false, true]) for (const kind of ["changed prefix", "changed carrier", "missing result", "oversized tail"]) {
     if (!v2 && kind === "oversized tail") continue;
