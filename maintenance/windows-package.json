@@ -113,6 +113,7 @@
     "src/service-write-guard.mjs",
     "src/service.mjs",
     "src/skills-install.mjs",
+    "src/uninstall-cleanup.mjs",
     "src/spawnable-command.mjs",
     "src/sse-framing.mjs",
     "src/sse-prefix.mjs",

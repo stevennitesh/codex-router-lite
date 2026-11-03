@@ -1371,7 +1371,7 @@ function installSkills(codexHome, options) {
   );
 }
 
-function uninstallSkills(codexHome, options) {
+export function uninstallSkills(codexHome, options) {
   return withAtomicStateLock(
     skillOwnershipPath(codexHome),
     () => uninstallSkillsUnlocked(codexHome, options),

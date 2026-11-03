@@ -102,7 +102,8 @@ Fully quit and reopen Codex to reload the model picker. Optional
 Run `doctor` when diagnosing a problem; it is not another required install step.
 
 [Installation and updates](docs/INSTALL.md) covers managed settings, updates,
-recovery and runtime replacement. [Switchyard maintenance](config/switchyard/maintenance.md)
+and recovery. To return to native Codex, follow the [uninstall guide](docs/INSTALL.md#uninstall-and-return-to-native-codex).
+[Switchyard maintenance](config/switchyard/maintenance.md)
 covers its separate build. For tool failures or lost history, use
 [troubleshooting](docs/TROUBLESHOOTING.md) and the
 [debugging guide](docs/agents/debugging.md).

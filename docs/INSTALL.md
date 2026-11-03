@@ -67,6 +67,50 @@ Switchyard installation is maintainer work. Read its
 [integration boundaries](../config/switchyard/README.md), then
 [build and deployment](../config/switchyard/maintenance.md) only when that task applies.
 
+## Uninstall and return to native Codex
+
+Run this from the installed Router checkout or package under the Windows
+account that installed it:
+
+```powershell
+.\model-router.ps1 codex uninstall
+```
+
+The command drains and removes the Windows background task, restores Codex's
+native connection, rolls back the Router Web Stop hook and its launch
+overrides, and removes Router-owned skills and generated agents. It also
+removes an unchanged optional Switchyard worker, the obsolete disabled
+`codex-router-media` entry, and stale hook trust records for missing hook
+files it can identify. If a hook file still exists, review its entries in
+Codex Settings → Hooks. The command preserves foreign hooks, user settings,
+login, chat history, and the source checkout.
+
+If Router reports unresolved work, let it settle and retry. Use
+`--force-service-replacement` only if you explicitly intend to interrupt
+that work. If a step fails, resolve the reported conflict and rerun uninstall
+before deleting recovery files. Fully quit and reopen Codex afterward, and
+select a built-in model in any chat that had selected a routed model.
+
+To also delete the default Router state directory and its installer-created
+`config.toml.pre-codex-router` backup, run:
+
+```powershell
+.\model-router.ps1 codex uninstall --purge-owned-state
+```
+
+This permanently removes local Router keys, logs, and recovery data in that
+directory. A custom state directory or a separately installed Switchyard
+runtime needs manual review. Remove only verified Router-owned copies and
+backups, including any manually created configuration snapshots. If you added
+the checkout as a Codex project, remove the saved project from the sidebar and
+review its checkout-specific trust entry in `config.toml`. Keep the checkout
+itself and general Codex backups.
+
+For verification, `node src/service.mjs status` should report
+`installed: false` and `node src/config-manager.mjs status` should report native
+mode with no managed Router settings. Check Settings → Hooks after reopening
+Codex if the Stop adapter was installed.
+
 ## Optional diagnostics
 
 The installer already waits for service readiness. No separate Doctor run or

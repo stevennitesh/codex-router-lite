@@ -42,6 +42,21 @@ function Remove-CodexIntegration([string[]]$Arguments = @()) {
   Invoke-RouterNode "src\service.mjs" (@("uninstall") + $Arguments)
 }
 
+function Uninstall-CodexRouter([string[]]$Arguments = @()) {
+  $ServiceArguments = @()
+  $CleanupArguments = @()
+  foreach ($Argument in $Arguments) {
+    switch -CaseSensitive ($Argument) {
+      "--force-service-replacement" { $ServiceArguments += $Argument }
+      "--purge-owned-state" { $CleanupArguments += $Argument }
+      default { throw "Usage: model-router.ps1 codex uninstall [--purge-owned-state] [--force-service-replacement]." }
+    }
+  }
+  Invoke-RouterNode "src\service.mjs" (@("uninstall") + $ServiceArguments)
+  Invoke-RouterNode "src\config-manager.mjs" @("disable")
+  Invoke-RouterNode "src\uninstall-cleanup.mjs" $CleanupArguments
+}
+
 switch ($Command) {
   "install" { & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex @CommandArguments }
   "enable" { & (Join-Path $Root "install.ps1") -CheckoutInstall -Target codex @CommandArguments }
@@ -51,7 +66,7 @@ switch ($Command) {
   "provider-key" { Invoke-RouterNode "src\provider-key.mjs" $CommandArguments }
   "caller-key" { Invoke-RouterNode "src\caller-key.mjs" $CommandArguments }
   "disable" { Remove-CodexIntegration $CommandArguments }
-  "uninstall" { Remove-CodexIntegration $CommandArguments }
+  "uninstall" { Uninstall-CodexRouter $CommandArguments }
   "update" {
     $UpdateArguments = if ($CommandArguments.Count) { $CommandArguments } else { @("update") }
     Invoke-RouterNode "src\update.mjs" $UpdateArguments

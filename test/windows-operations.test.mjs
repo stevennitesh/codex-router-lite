@@ -330,7 +330,7 @@ test("Windows commands dispatch from their checkout and preserve service, foregr
   copyFileSync(path.join(root, "model-router.ps1"), path.join(source, "model-router.ps1"));
   writeFileSync(log, "");
   writeFileSync(path.join(source, "src/start.mjs"), "// checkout identity fixture\n");
-  for (const script of ["service.mjs", "foreground-start.mjs", "doctor.mjs", "switchyard-trace.mjs", "switchyard-certification-evidence.mjs"]) {
+  for (const script of ["service.mjs", "config-manager.mjs", "uninstall-cleanup.mjs", "foreground-start.mjs", "doctor.mjs", "switchyard-trace.mjs", "switchyard-certification-evidence.mjs"]) {
     writeFileSync(path.join(source, "src", script), `import {appendFileSync} from 'node:fs';import path from 'node:path';appendFileSync(${JSON.stringify(log)},JSON.stringify({script:path.basename(process.argv[1]),args:process.argv.slice(2)})+'\\n');`);
   }
   try {
@@ -359,6 +359,16 @@ test("Windows commands dispatch from their checkout and preserve service, foregr
     assert.notEqual(refused.status, 0);
     assert.match(refused.stderr, /Usage: model-router\.ps1 codex start/u);
     assert.equal(readFileSync(log, "utf8").trim().split(/\r?\n/u).length, cases.length);
+    const uninstall = spawnSync("powershell.exe", [
+      "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      path.join(source, "model-router.ps1"), "codex", "uninstall", "--purge-owned-state", "--force-service-replacement",
+    ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    assert.equal(uninstall.status, 0, uninstall.stderr);
+    assert.deepEqual(readFileSync(log, "utf8").trim().split(/\r?\n/u).slice(cases.length).map(JSON.parse), [
+      { script: "service.mjs", args: ["uninstall", "--force-service-replacement"] },
+      { script: "config-manager.mjs", args: ["disable"] },
+      { script: "uninstall-cleanup.mjs", args: ["--purge-owned-state"] },
+    ]);
     assert.doesNotMatch(readScript("src/doctor.mjs"), /service\.mjs.*(?:install|start|restart)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
